@@ -1,0 +1,5 @@
+build/
+build-*/
+*.wav
+compile_commands.json
+.cache/

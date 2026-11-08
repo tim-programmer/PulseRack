@@ -1,0 +1,18 @@
+# Pink noise through a band-pass filter, swept by a slow triangle LFO; the low-pass and band-pass go to the two channels.
+pulserack 1
+node 1 noise x=0 y=0
+param 1 colour pink
+param 1 seed 7
+node 2 lfo x=0 y=10
+param 2 shape triangle
+param 2 frequency 0.2
+node 3 svf x=10 y=0
+param 3 cutoff 800
+param 3 resonance 0.75
+param 3 mod_depth 3
+node 4 out x=20 y=0
+param 4 level 0.9
+cable 1.out -> 3.in
+cable 2.out -> 3.cutoff
+cable 3.lp -> 4.l
+cable 3.bp -> 4.r

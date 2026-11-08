@@ -1,0 +1,51 @@
+# A sequenced bass line: clock -> sequencer -> oscillator and envelope -> VCA -> filter (swept by an LFO) -> output.
+# The same patch as tools/render.c's 'events' acid patch, built from modules instead of C code.
+pulserack 1
+node 1 clock x=0 y=0
+param 1 bpm 124
+param 1 ppqn 24
+param 1 run 1
+node 2 seq x=8 y=0
+param 2 length 8
+param 2 division 6
+param 2 gate 3
+param 2 swing 1
+param 2 direction forward
+param 2 transpose 0
+step 2 0 note=36 vel=110 gate=0 tie=0
+step 2 1 note=36 vel=90 gate=0 tie=0
+step 2 2 note=48 vel=90 gate=0 tie=0
+step 2 3 note=36 vel=90 gate=5 tie=0
+step 2 4 note=39 vel=110 gate=0 tie=0
+step 2 5 note=36 vel=90 gate=0 tie=0
+step 2 6 note=51 vel=90 gate=0 tie=0
+step 2 7 note=43 vel=90 gate=0 tie=0
+node 3 osc x=18 y=0
+param 3 waveform saw
+param 3 frequency 110
+node 4 adsr x=26 y=0
+param 4 attack 2
+param 4 decay 150
+param 4 sustain 0.25
+param 4 release 80
+node 5 vca x=34 y=0
+param 5 gain 0.5
+node 6 svf x=38 y=0
+param 6 cutoff 500
+param 6 resonance 0.6
+param 6 mod_depth 2.5
+param 6 saturate 1
+node 7 lfo x=46 y=0
+param 7 shape sine
+param 7 frequency 0.4
+param 7 unipolar 0
+node 8 out x=54 y=0
+param 8 level 0.7
+cable 1.clock -> 2.in
+cable 2.out -> 3.note
+cable 2.out -> 4.note
+cable 3.out -> 5.in
+cable 4.out -> 5.gain
+cable 5.out -> 6.in
+cable 7.out -> 6.cutoff
+cable 6.lp -> 8.l
