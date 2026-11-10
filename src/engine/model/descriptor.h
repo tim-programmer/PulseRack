@@ -35,11 +35,6 @@ enum class Control : uint8_t
     Selector
 };
 
-struct PanelPos
-{ // assigned in milestone 2 (the panel layout); zero until then
-    float x = 0, y = 0;
-};
-
 struct PortDesc
 {
     std::string_view id, name;
@@ -53,8 +48,7 @@ struct ParamDesc
     float                             min, max, def;  // natural units
     Scale                             scale;
     std::span<const std::string_view> labels; // Enum: the names of the choices (value = index)
-    Control                           control;
-    PanelPos                          pos;
+    Control control; // where it sits on the panel is computed (src/ui/geometry.h)
     bool (*apply)(void *state,
         float value); // natural units -> the library's setter; false if the library refused
 };
@@ -108,6 +102,7 @@ struct ModuleDesc
     bool (*apply_step)(void *state, size_t index, const StepData &step);
     size_t (*evt_out_cap)(size_t
             total_in_cap); // event output capacity from the capacity of its event inputs; null = 64
+    std::string_view description; // one line for the browser's card
 };
 
 // Where a port sits among the ports of its kind and direction (the index a wrapper uses).

@@ -720,32 +720,41 @@ namespace
 } // namespace
 
 #define RACK_DESC(                                                                                 \
-    var, id, name, cat, hp, T, ports, params, steps, init, reset, process, apply_step, cap)        \
+    var, id, name, cat, hp, T, ports, params, steps, init, reset, process, apply_step, cap, blurb) \
     const ModuleDesc var = { id, name, cat, hp, sizeof(T), alignof(T), ports, params, steps, init, \
-        reset, process, apply_step, cap }
+        reset, process, apply_step, cap, blurb }
 
 RACK_DESC(kOscDesc, "osc", "Oscillator", kSource, 8, OscNode, kOscPorts, kOscParams, false,
-    osc_init, osc_reset, osc_process, nullptr, nullptr);
+    osc_init, osc_reset, osc_process, nullptr, nullptr,
+    "Band-limited sine, triangle, saw and pulse; plays notes, with pitch, PWM and hard sync");
 RACK_DESC(kNoiseDesc, "noise", "Noise", kSource, 6, NoiseNode, kNoisePorts, kNoiseParams, false,
-    noise_init, noise_reset, noise_process, nullptr, nullptr);
+    noise_init, noise_reset, noise_process, nullptr, nullptr, "White, pink or brown noise");
 RACK_DESC(kSahDesc, "sah", "Sample & Hold", kSource, 6, SahNode, kSahPorts, kSahParams, false,
-    sah_init, sah_reset, sah_process, nullptr, nullptr);
+    sah_init, sah_reset, sah_process, nullptr, nullptr,
+    "Samples and holds a random value on a trigger, a clock or its own rate");
 RACK_DESC(kLfoDesc, "lfo", "LFO", kModulator, 8, LfoNode, kLfoPorts, kLfoParams, false, lfo_init,
-    lfo_reset, lfo_process, nullptr, nullptr);
+    lfo_reset, lfo_process, nullptr, nullptr,
+    "Slow oscillator for modulation, with random shapes and a rate input");
 RACK_DESC(kAdsrDesc, "adsr", "ADSR", kModulator, 8, AdsrNode, kAdsrPorts, kAdsrParams, false,
-    adsr_init, adsr_reset, adsr_process, nullptr, nullptr);
+    adsr_init, adsr_reset, adsr_process, nullptr, nullptr,
+    "Attack-decay-sustain-release envelope from a gate or from notes");
 RACK_DESC(kVcaDesc, "vca", "VCA", kModulator, 4, VcaNode, kVcaPorts, kVcaParams, false, vca_init,
-    vca_reset, vca_process, nullptr, nullptr);
+    vca_reset, vca_process, nullptr, nullptr, "Amplifier whose gain a signal can control");
 RACK_DESC(kSvfDesc, "svf", "State-variable filter", kFilter, 8, SvfNode, kSvfPorts, kSvfParams,
-    false, svf_init, svf_reset, svf_process, nullptr, nullptr);
+    false, svf_init, svf_reset, svf_process, nullptr, nullptr,
+    "Resonant filter with low-, band- and high-pass outputs at once");
 RACK_DESC(kBiquadDesc, "biquad", "Biquad filter", kFilter, 8, BiquadNode, kBiquadPorts,
-    kBiquadParams, false, biquad_init, biquad_reset, biquad_process, nullptr, nullptr);
+    kBiquadParams, false, biquad_init, biquad_reset, biquad_process, nullptr, nullptr,
+    "Second-order filter: low-, high- and band-pass, notch, all-pass, peak, shelves");
 RACK_DESC(kClockDesc, "clock", "Clock", kEvent, 6, ClockNode, kClockPorts, kClockParams, false,
-    clock_init, clock_reset, clock_process, nullptr, clock_cap);
+    clock_init, clock_reset, clock_process, nullptr, clock_cap,
+    "Tempo clock: sends clock pulses, start and stop");
 RACK_DESC(kArpDesc, "arp", "Arpeggiator", kEvent, 8, ArpNode, kArpPorts, kArpParams, false,
-    arp_init, arp_reset, arp_process, nullptr, arp_cap);
+    arp_init, arp_reset, arp_process, nullptr, arp_cap,
+    "Plays the held keys one after another, in time with a clock");
 RACK_DESC(kSeqDesc, "seq", "Sequencer", kEvent, 16, SeqNode, kSeqPorts, kSeqParams, true, seq_init,
-    seq_reset, seq_process, seq_apply_step, seq_cap);
+    seq_reset, seq_process, seq_apply_step, seq_cap,
+    "Step sequencer, up to 64 steps of note, velocity, gate and tie");
 
 uint32_t dropped_events(const ModuleDesc &desc, const void *state)
 {

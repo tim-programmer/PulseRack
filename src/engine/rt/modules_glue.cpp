@@ -281,21 +281,23 @@ bool keyboard_push(void *state, uint64_t at, uint8_t type, uint8_t note, uint8_t
     return true;
 }
 
-#define RACK_GLUE(var, id, name, cat, hp, T, ports, params, init, reset, process, cap)             \
+#define RACK_GLUE(var, id, name, cat, hp, T, ports, params, init, reset, process, cap, blurb)      \
     const ModuleDesc var = { id, name, cat, hp, sizeof(T), alignof(T), ports, params, false, init, \
-        reset, process, nullptr, cap }
+        reset, process, nullptr, cap, blurb }
 
 RACK_GLUE(kKeyboardDesc, "keyboard", "Keyboard", kEvent, 6, KeyboardNode, kKeyboardPorts, { },
-    kb_init, kb_reset, kb_process, kb_cap);
+    kb_init, kb_reset, kb_process, kb_cap,
+    "The computer keyboard and an on-screen strip as a piano");
 RACK_GLUE(kAudioOutDesc, "out", "Audio Output", kUtility, 4, AudioOutNode, kOutPorts, kOutParams,
-    out_init, nullptr, out_process, nullptr);
+    out_init, nullptr, out_process, nullptr,
+    "Sends a signal to the speakers; L alone plays on both");
 RACK_GLUE(kMixerDesc, "mixer", "Mixer", kUtility, 6, MixerNode, kMixerPorts, kMixerParams,
-    mixer_init, nullptr, mixer_process, nullptr);
+    mixer_init, nullptr, mixer_process, nullptr, "Mixes four signals, each with its own level");
 RACK_GLUE(kAttenuverterDesc, "attenuverter", "Attenuverter", kUtility, 4, AttNode, kAttPorts,
-    kAttParams, att_init, nullptr, att_process, nullptr);
+    kAttParams, att_init, nullptr, att_process, nullptr, "Scales, inverts and offsets a signal");
 RACK_GLUE(kNoteToGateDesc, "note_to_gate", "Note to Gate", kEvent, 4, GateNode, kGatePorts, { },
-    gate_init, gate_reset, gate_process, nullptr);
+    gate_init, gate_reset, gate_process, nullptr, "Turns notes into a gate signal");
 RACK_GLUE(kMergeDesc, "merge", "Merge", kEvent, 4, EmptyNode, kMergePorts, { }, merge_init, nullptr,
-    merge_process, merge_cap);
+    merge_process, merge_cap, "Merges two event streams into one, in time order");
 
 } // namespace rack

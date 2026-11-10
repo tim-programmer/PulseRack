@@ -1,25 +1,25 @@
 # An arpeggio: keys held (a script), merged with the clock, played up and down over two octaves by a triangle voice.
 pulserack 1
 node 1 keyboard x=0 y=0
-node 2 clock x=8 y=0
+node 2 clock x=6 y=0
 param 2 bpm 118
 param 2 ppqn 24
-node 3 merge x=16 y=0
-node 4 arp x=22 y=0
+node 3 merge x=12 y=0
+node 4 arp x=16 y=0
 param 4 mode up/down
 param 4 octaves 2
 param 4 division 6
 param 4 gate 4
-node 5 osc x=32 y=0
+node 5 osc x=24 y=0
 param 5 waveform triangle
-node 6 adsr x=40 y=0
+node 6 adsr x=32 y=0
 param 6 attack 3
 param 6 decay 120
 param 6 sustain 0.5
 param 6 release 140
-node 7 vca x=48 y=0
+node 7 vca x=40 y=0
 param 7 gain 0.8
-node 8 out x=52 y=0
+node 8 out x=44 y=0
 param 8 level 0.6
 key 1 0.000 on 57 100
 key 1 0.000 on 60 94

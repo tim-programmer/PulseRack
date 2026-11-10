@@ -291,7 +291,8 @@ recommended answer for each and chose the rest. Each is cheap to change.
 13. Event output capacities: clock 64 (53 is the worst case at the fastest tempo and lowest sample rate); arpeggiator 32 per input event
     (a chord's releases and starts), capped at 4096; sequencer 2 per input event plus 2; merge the sum of its inputs.
 14. **Single-threaded.** The command ring, the atomic plan swap and the telemetry of `architecture.md` arrive with the audio device
-    (milestone 4). `PanelPos` exists in the descriptors but is zero until milestone 2.
+    (milestone 4). *(Milestone 2 removed `PanelPos`: the panel layout is computed from the descriptor; see `gui.md`,
+    *As built*.)*
 
 **Findings in PulseCoreLib** (the first one has since been fixed there, uncommitted; the second is a note):
 * **Signed overflow in the Q31 oscillator with a negative `sync_in`.** `pcl_osc_process` takes `sync_in` as "master wrap fractions" in

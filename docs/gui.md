@@ -1,6 +1,6 @@
 # GUI
 
-Status: **draft for review**. Reference for the look and the workflow: Voltage Modular (a browser on the left,
+Status: **milestone 2 is built** (see *As built* at the end; where the two differ, it and the code win). Reference for the look and the workflow: Voltage Modular (a browser on the left,
 a rack of coloured panels with knobs and sliders, cables between jacks, a toolbar above).
 
 The GUI is a *view* of the patch engine (see *patch-engine.md*). It owns no audio state; it edits the
@@ -103,8 +103,8 @@ knob drag. The SVG stand-in is dropped, together with its two rules (batched rel
 ## How the view is built (gpuic)
 
 The UI is written with gpuic's C++ layer (`gpuic.hpp`, C++20; it only calls the public C functions, so the `gp_*` names
-below are what it wraps). Handlers that have a data pointer may capture; `on_drag`, `on_mouse_up` and `on_layout`
-cannot, so a knob's drag state lives in its panel's view state.
+below are what it wraps). Handlers may capture (since gpuic `771626e` also `on_drag` and `on_mouse_up`; not `on_layout`);
+a knob's drag state lives in its panel's view state.
 
 * The rack is a view; **each panel is its own view entity** and is shown as a *cached* child
   (`gp_child_view_cached`), so dragging a knob rebuilds that one panel and not the whole rack
@@ -150,3 +150,60 @@ beside the browser, to compare with the reference before any more modules are dr
 5. **Dragging a module from the browser onto the rack** as well as the *Add* button: later (recommended).
    Not needed for now.
 6. **A second window** (scope, a larger sequencer): not planned.
+
+## As built (milestone 2)
+
+**Code:** `src/ui/geometry.{h,cpp}` (panel layout, knob mapping, value text, placement: no window, so it is tested headless),
+`src/ui/rack_ui.{h,cpp}` (the views and the `Editor` that every edit goes through), `src/ui/style.h` (colours and chrome sizes),
+`src/main.cpp`. **Run:** `build/src/pulserack [patch.rack]`. gpuic is fetched like PulseCoreLib (`FetchContent`, branch `main`,
+the commit printed at configure; `gpuic 771626e` when this was built), with `GPUIC_DEPENDENCIES=SYSTEM` by default.
+
+**What works.** The toolbar (patch name, module count, *no audio yet*); the browser (search over name, category and description,
+category chips, a card per module with its description and *Add*); the rack (a scrolling surface: wheel, Shift+wheel, or drag empty
+space to pan); a panel per module, each a cached view with a `gp_key` (the node id); **knobs and sliders** (drag 200 px for the whole
+travel, Shift at the press for a tenth, double-click for the default, the wheel 1 % per notch and Shift+wheel 0.1 %, one step for
+whole-number controls, the value in a bubble while dragging); **selectors** (click either half, or the wheel); **switches and the
+Run button** (click, with an LED); jacks drawn (round for signals, square for events, outputs on a dark plate) and inert; moving a
+panel by its title (snapped to the grid, refused where it would overlap); right-click on the title for *Delete*; the hint line.
+Every change goes through `Editor`, which changes the patch and the running module together (`Engine::set_param`, `compile`).
+
+**Tests.** `rack_tests` gains 9 geometry cases (every panel of the catalogue fits with nothing overlapping, rows in reading order,
+travel round trips and exact ends, the log mapping, drag and wheel steps, value text, collisions, free places, moving overlapping
+panels apart, the example patches) and an engine case (below). `ui_smoke` drives the real window with gpuic's synthetic input
+(65 checks: *Add* from the browser and after a search, knob drag, Shift-drag, double-click, wheel, selector halves, switch,
+slider, a refused and an accepted panel move, panning, the menu's *Delete*, then every module added once); `ui_screenshot` opens
+`examples/sequence.rack` and checks the picture is not blank. Both need a display and report *skipped* (77) without one. Float,
+Q15 and Q31.
+
+**Decisions taken while building (mine, for your review; each is cheap to change).**
+1. **The panel layout is computed from the descriptor**, not placed by hand: controls flow in rows under the title in descriptor
+   order (a selector takes a row), jacks flow from the bottom edge (inputs, then outputs). `PanelPos` is removed from the
+   descriptors; cables (milestone 3) find a jack with `panel_layout()` from the model alone, as planned. A module still needs no UI
+   code. A hand-placed override can come later if a panel looks wrong.
+2. **Units:** a position is in rack units (HP) on both axes; **1 HP = 16 px**; **a panel is 26 HP (416 px) high**, so two rows fit
+   the 1400 x 900 window. Knob cells are 52 x 72 px, so a 4 HP panel holds one knob per row.
+3. **The example patches overlapped** (they were written before panels had a size): they are moved apart (only `x=`, `y=`; the
+   audio is the same). A file whose panels overlap is opened with them moved right on their row, and the hint line says so.
+4. **`ModuleDesc` gains `description`**, the browser card's line (17 written).
+5. **Shift for fine adjustment is taken at the press** and holds for the drag: gpuic gives drag events no modifiers (below).
+6. **The hint line describes the last control pressed or turned**, not the one under the pointer: gpuic has no hover callback.
+7. Selectors stop at their ends (no wrap). The Clock's *Run* (a `Button`) latches. **No dead buttons**: New/Open/Save and Undo/Redo
+   are absent until milestones 5 and 6.
+8. The browser is a plain scrolling column, not `gp_list`: 17 cards do not need virtualising.
+
+**Engine fix found while building:** `Engine::compile` kept a running module's state by node id alone, so a patch replaced
+wholesale (a file loaded over another) could hand a clock the oscillator's state memory under the same id: heap corruption (the new
+test aborts with `malloc(): unaligned tcache chunk detected` without the fix). It now also compares the type. Editing could not
+trigger it (`Patch::add_node` never reuses an id); loading a file over a patch (milestone 5) would have.
+
+**gpuic findings (requests for gpuic):**
+* **Drag events carry no modifiers.** `app.c` fires the captured `on_drag` with `mods = 0` (and the platform layer only smuggles
+  modifiers into button events), so Shift pressed *during* a drag is not seen, with real or synthetic input. Wanted: the current
+  modifiers on every drag event.
+* **No hover callback.** Hover *styles* exist; a callback when the pointer enters or leaves an element (or moves over it) does not,
+  so a hint line or a tooltip cannot follow the pointer.
+
+**Not done** (milestone 2 stops here): cables and the jacks' behaviour (milestone 3); sound, meters, LEDs from telemetry and the
+computer keyboard as a piano (4); the sequencer's **step grid** (its 64 steps are kept in the patch but not editable in the window
+yet); the on-screen keyboard strip; arrow keys on a focused knob; undo; a Delete key; zoom (decided: not in the first version).
+

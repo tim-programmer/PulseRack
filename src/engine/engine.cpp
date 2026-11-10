@@ -38,9 +38,12 @@ bool Engine::init_state(const Node &n, void *mem)
 Err Engine::compile()
 {
     failed_node_ = 0;
-    // modules that are gone
+    // modules that are gone, or whose id now belongs to another type (a patch replaced wholesale)
     for (auto it = live_.begin(); it != live_.end();)
-        it = patch_.find(it->first) ? std::next(it) : live_.erase(it);
+    {
+        const Node *n = patch_.find(it->first);
+        it = n && n->desc == it->second.desc ? std::next(it) : live_.erase(it);
+    }
 
     // modules that are new
     for (const Node &n : patch_.nodes())

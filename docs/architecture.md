@@ -1,6 +1,6 @@
 # Architecture
 
-Status: **draft for review**. Nothing here is built. Where something has not been checked against
+Status: **reviewed; milestones 0 to 2 are built** (the table at the end). Where something has not been checked against
 the real code or library it says so.
 
 ## Repository layout
@@ -68,9 +68,10 @@ test runs headless.
     `pcl_svf_config_t` and `PCL_HZ(440.0)` compile cleanly under `g++ -std=c++20 -Wall -Wextra -Wpedantic
     -Werror` for FLOAT, Q15 and Q31 (the headers use `extern "C"` through `PCL_BEGIN_DECLS`). That covers the
     umbrella header and one macro; every wrapper will exercise the rest, and the first build will tell.
-  * **gpuic's C++ layer has one constraint that shapes the knobs**: its `on_drag`, `on_mouse_up`, `on_layout` and
-    `on_ime` lambdas cannot capture (the C library has no data pointer for them). A knob keeps its
-    drag state in its panel's view state, which the handler receives, not in a closure.
+  * **gpuic's C++ layer**: since gpuic `771626e` the `on_drag` and `on_mouse_up` lambdas may capture (the knobs capture their
+    parameter's index); `on_layout` and `on_ime` still cannot. Captures live in the frame's arena and are never destroyed, so they
+    are numbers, pointers, handles or `string_view`s into static data, never a `std::string` (gpuic refuses those at compile time).
+    A knob keeps its drag state in its panel's view state, which the handler receives.
   * **The audio thread runs a restricted subset** of C++ (`engine/rt/`): plain structs, function pointers, spans,
     `std::atomic`; no exceptions, no `new`/`delete`, no growing containers, no `std::function`, no locks,
     no virtual calls into UI code. `engine/model/` and `ui/` use the full language. The split is a directory
@@ -150,9 +151,9 @@ Two threads matter: the **UI thread** (gpuic's main loop) and the **audio thread
 | # | Item | Done when |
 |---|------|-----------|
 | 0 | **gpuic spike** (throw-away) | **done**, see [spike.md](spike.md): cable stand-in cost, cached-panel knob drag, wheel, 30 Hz redraw, 64-step grid, one CMake tree in three sample types, SDL audio next to the window |
-| – | **gpuic curve primitive** (in the gpuic repository, from `gpuic-prompt.md`) | **done and checked** (gpuic `bc442de`, `spike.md` *Follow-up*); milestone 3 uses `gp_curve` directly |
+| – | **gpuic curve primitive** (in the gpuic repository, from `gpuic-prompt.md`) | **done and checked** (gpuic `bc442de`, `spike.md` *Follow-up*; re-checked at `b5e2679` and `771626e`, no regressions; dragged elements need a `gp_key`); milestone 3 uses `gp_curve` directly |
 | 1 | Engine + `rack-render` | **built**: the headless engine passes its tests in float, Q15 and Q31; all 11 library modules and 6 glue modules are wrapped; see `patch-engine.md`, *As built* |
-| 2 | Window without cables | browser, rack with draggable panels, knobs, sliders, switches working on the engine |
+| 2 | Window without cables | **built**: browser, rack with draggable panels, knobs, sliders, selectors, switches working on the engine; see `gui.md`, *As built* |
 | 3 | Cables | jacks, dragging cables, deleting them, the engine updated live |
 | 4 | Sound | SDL3 output, keyboard as a piano, meters |
 | 5 | Save and load | the patch file, a few factory patches |

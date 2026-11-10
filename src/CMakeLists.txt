@@ -12,3 +12,15 @@ target_link_libraries(rack_engine PUBLIC pcl::pcl PRIVATE rack_warnings)
 
 add_executable(rack-render render_main.cpp)
 target_link_libraries(rack-render PRIVATE rack_engine rack_warnings)
+
+# The rack's geometry (panel layout, knob mapping, placement): no window, so the headless tests use it.
+add_library(rack_geometry STATIC ui/geometry.cpp)
+target_link_libraries(rack_geometry PUBLIC rack_engine PRIVATE rack_warnings)
+
+# The application (milestone 2: the window, without cables or sound).
+if(PULSERACK_BUILD_GUI)
+    add_library(rack_ui STATIC ui/rack_ui.cpp)
+    target_link_libraries(rack_ui PUBLIC rack_geometry gpuic::gpuic gpuic::cpp PRIVATE rack_warnings)
+    add_executable(pulserack main.cpp)
+    target_link_libraries(pulserack PRIVATE rack_ui rack_warnings)
+endif()

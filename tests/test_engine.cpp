@@ -308,3 +308,29 @@ TEST(engine_delivers_a_script_longer_than_the_keyboard_queue)
     }
     CHECK(rising == 1500);
 }
+
+TEST(engine_replacing_the_patch_does_not_reuse_a_state_of_another_type)
+{
+    // id 1 is a noise source first, then (a new patch loaded over it) an oscillator: the engine
+    // must make a new oscillator, not keep the noise state under the same id
+    const char *first
+        = "pulserack 1\nnode 1 noise x=0 y=0\nnode 2 out x=6 y=0\ncable 1.out -> 2.l\n";
+    const char *second
+        = "pulserack 1\nnode 1 osc x=0 y=0\nnode 2 out x=8 y=0\ncable 1.out -> 2.l\n";
+    Engine e(48000);
+    CHECK(load_patch(first, e.patch()).ok && e.compile() == Err::Ok);
+    std::vector<float> l(4000), r(4000);
+    e.render(l.size(), l.data(), r.data());
+    const void *noise_state = e.state(1);
+    CHECK(load_patch(second, e.patch()).ok && e.compile() == Err::Ok);
+    CHECK(e.state(1) != nullptr && e.state(1) != noise_state);
+    e.reset();
+    e.render(l.size(), l.data(), r.data());
+
+    Engine fresh(48000); // the same patch in an engine that never saw the first one
+    CHECK(load_patch(second, fresh.patch()).ok && fresh.compile() == Err::Ok);
+    std::vector<float> fl(4000), fr(4000);
+    fresh.render(fl.size(), fl.data(), fr.data());
+    CHECK(same_bits(l, fl));
+    CHECK(e.nonfinite_samples() == 0);
+}

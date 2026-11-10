@@ -13,7 +13,7 @@ using ApplyFn = bool (*)(void *, float);
 inline ParamDesc param(std::string_view id, std::string_view name, std::string_view unit, float mn,
     float mx, float def, Scale scale, Control control, ApplyFn apply, Labels labels = { })
 {
-    return ParamDesc { id, name, unit, mn, mx, def, scale, labels, control, PanelPos { }, apply };
+    return ParamDesc { id, name, unit, mn, mx, def, scale, labels, control, apply };
 }
 
 template <class T> inline T *as(void *s) { return static_cast<T *>(s); }
