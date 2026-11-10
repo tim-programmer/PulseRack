@@ -44,8 +44,8 @@ The window tests need a display and are skipped without one.
   refused.** **An input takes one cable** (a Mixer module sums).
 * **Libraries**: both are fetched with `FetchContent` from GitHub, branch `main` for now (pin later by changing `GIT_TAG`);
   both are Apache-2.0. A local checkout is used through CMake's `FETCHCONTENT_SOURCE_DIR_*`.
-* **GUI** (answered in `gui.md`): a restrained look; free panel placement; no zoom and no drag-from-browser in the first
-  version; cables are drawn by a **new primitive added to gpuic** (`gp_curve`, commit `bc442de`, requested in
+* **GUI** (answered in `gui.md`): a restrained look; free panel placement; no zoom in the first version; modules are added with
+  *Add* or by dragging them from the browser onto the rack; cables are drawn by a **new primitive added to gpuic** (`gp_curve`, commit `bc442de`, requested in
   `docs/gpuic-prompt.md`; landed and checked, and the spike re-checked against gpuic `da89032`, see `docs/spike.md`).
 
 ## Open questions

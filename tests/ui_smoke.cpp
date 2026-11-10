@@ -4,6 +4,7 @@
 //   ui_smoke --check-ppm F    F is a screenshot that is not blank (several colours, not all one)
 //   ui_smoke --pose PATCH NODE PORT X Y   opens PATCH, presses on that jack and holds a cable at
 //                             window (X, Y), for a screenshot of a drag (GPUIC_SCREENSHOT,
+//   ui_smoke --pose-module PATCH CARD X Y   the same with the browser's CARD-th card held at (X, Y)
 //                             GPUIC_WAIT_MS)
 #include "engine/model/registry.h"
 #include "ui/geometry.h"
@@ -405,6 +406,52 @@ struct Driver
         CHECK(e().panels.size() == patch.nodes().size());
         for (const Node &a : patch.nodes())
             CHECK(!collides(patch, *a.desc, (int)a.x, (int)a.y, a.id));
+
+        // ---- drag a module from the browser onto the rack
+        click({ style::kBrowserPad + 40,
+            style::kToolbarH + style::kBrowserPad + style::kSearchH / 2 });
+        gp_simulate_keystrokes(
+            app, "ctrl-a backspace"); // every card again: the first is the oscillator
+        wait(0.15);
+        // the two visible rows are full by now: scroll down to the empty third (the wheel over a
+        // title)
+        const gp_point over_title = control_center(cx(), ed, newest(), -1);
+        move(over_title);
+        gp_simulate_wheel(app, over_title.x, over_title.y, 0, -20, 0);
+        wait(0.15);
+        const ModuleDesc  &oscd = *find_module("osc");
+        const RackViewport v = rack_viewport(cx(), ed);
+        const Slot         spot = free_slot(patch, oscd, (int)std::ceil(v.x / kHp),
+            (int)std::lround(v.y / kHp), (int)(v.w / kHp), std::max(1, (int)(v.h / kPanelHeight)));
+        const gp_point     to { rack_origin().x + spot.x * kHp + oscd.width_hp * kHp / 2 - v.x,
+            rack_origin().y + spot.y * kHp + kTitleHeight / 2 - v.y };
+        const gp_point     card { style::kBrowserPad + 40,
+            add_button(0).y + 32 }; // the card's text, not its button
+        size_t             count = patch.nodes().size();
+        click(card); // a click on a card adds nothing (its Add button does)
+        CHECK(patch.nodes().size() == count && !e().mdrag.active);
+        press(card);
+        for (int i = 1; i <= 12; i++)
+        {
+            move({ card.x + (to.x - card.x) * i / 12, card.y + (to.y - card.y) * i / 12 });
+            wait(0.02);
+        }
+        wait();
+        CHECK(e().mdrag.moved && e().mdrag.over_rack && e().mdrag.fits
+            && hint_has("Release to add Oscillator"));
+        CHECK(e().mdrag.x == spot.x && e().mdrag.y == spot.y);
+        release(to);
+        CHECK(patch.nodes().size() == count + 1 && !e().mdrag.active);
+        const uint32_t dropped = newest();
+        CHECK(node(dropped)->desc == &oscd && node(dropped)->x == spot.x
+            && node(dropped)->y == spot.y);
+        CHECK(e().engine.state(dropped) != nullptr && e().panels.count(dropped));
+        // onto a panel: refused, with the reason
+        drag(card, control_center(cx(), ed, dropped, -1), 12);
+        CHECK(patch.nodes().size() == count + 1 && hint_has("no room"));
+        // off the rack (onto the toolbar): nothing
+        drag(card, { 600, style::kToolbarH / 2 }, 12);
+        CHECK(patch.nodes().size() == count + 1 && hint_has("drop a module on the rack"));
     }
 };
 } // namespace
@@ -413,6 +460,35 @@ int main(int argc, char **argv)
 {
     if (argc == 3 && !std::strcmp(argv[1], "--check-ppm"))
         return check_ppm(argv[2]);
+    if (argc == 6 && !std::strcmp(argv[1], "--pose-module"))
+    {
+        static Options  opt;
+        static int      card;
+        static gp_point to;
+        opt.patch_path = argv[2];
+        card = std::atoi(argv[3]);
+        to = { (float)std::atof(argv[4]), (float)std::atof(argv[5]) };
+        setenv("GPUIC_IGNORE_REAL_MOUSE", "1", 1);
+        return gpuic::run(
+            [](App app)
+            {
+                std::string error;
+                auto        ed = open_rack(app, opt, &error);
+                app.ctx(ed).spawn(
+                    [app, ed](Co &co)
+                    {
+                        co.sleep(0.2);
+                        Driver         d { co, app, ed };
+                        const gp_point a { style::kBrowserPad + 40, d.add_button(card).y + 32 };
+                        d.press(a);
+                        for (int i = 1; i <= 8; i++)
+                        {
+                            d.move({ a.x + (to.x - a.x) * i / 8, a.y + (to.y - a.y) * i / 8 });
+                            d.wait(0.02);
+                        }
+                    });
+            });
+    }
     if (argc == 7 && !std::strcmp(argv[1], "--pose"))
     {
         static Options  opt;

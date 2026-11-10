@@ -24,6 +24,7 @@ struct Toolbar;
 struct HintLine;
 struct CableView;
 struct DragView;
+struct PointerChip;
 
 // The model of the window: the engine, the patch's name, the hint line's text, and the handles of
 // the views that show them. An entity, so handlers anywhere reach it through a handle.
@@ -67,6 +68,19 @@ struct Editor
         std::optional<Cable>   picked;  // the cable lifted off an input, if it began that way
     } drag;
 
+    // ---- a module dragged from the browser onto the rack
+    struct ModuleDrag
+    {
+        bool              active = false; // a card is pressed
+        bool              moved = false;  // ... and has moved far enough to be a drag
+        const ModuleDesc *desc = nullptr;
+        gp_point          start { }, at { }; // window pixels
+        bool              over_rack = false;
+        int               x = 0, y = 0; // where it would go (rack units)
+        bool              fits = false;
+    } mdrag;
+    gpuic::Entity<PointerChip> chip; // the module's name following the pointer
+
     // ---- edits (each updates the patch, the engine and the views that show it)
     // Adds a module at the first free place near the visible part of the rack; 0 if the library
     // refused its settings.
@@ -81,7 +95,10 @@ struct Editor
     void hover(gpuic::Ctx cx, uint32_t node, int item, bool inside);
     // What the hint line shows: while a cable is dragged, what releasing it would do; otherwise
     // what is under the pointer, or the last action.
-    std::string hint() const { return drag.active || hover_text.empty() ? status : hover_text; }
+    std::string hint() const
+    {
+        return drag.active || mdrag.moved || hover_text.empty() ? status : hover_text;
+    }
     std::string describe_item(uint32_t node, int item) const;
 
     // Cables: either end may be given first (a drag can start at an input). Each compiles the
@@ -92,9 +109,17 @@ struct Editor
     void delete_selected(gpuic::Ctx cx);
     // A press on a jack starts a cable: from an output or an empty input a new one, from a
     // connected input its cable is lifted off. Positions are window pixels.
-    void        jack_press(gpuic::Ctx cx, PortRef jack, gp_point window);
-    void        jack_drag(gpuic::Ctx cx, gp_point window);
-    void        jack_release(gpuic::Ctx cx, gp_point window);
+    void jack_press(gpuic::Ctx cx, PortRef jack, gp_point window);
+    void jack_drag(gpuic::Ctx cx, gp_point window);
+    void jack_release(gpuic::Ctx cx, gp_point window);
+    // A press on a browser card, then moves: past a few pixels it becomes a drag; released on a
+    // free place on the rack it adds the module there.
+    void module_drag_begin(gpuic::Ctx cx, const ModuleDesc &d, gp_point window);
+    void module_drag_move(gpuic::Ctx cx, gp_point window);
+    void module_drag_end(gpuic::Ctx cx, gp_point window);
+    // Where a module dragged by its title's middle would land, for a pointer at `window`.
+    Slot drop_slot(gpuic::Ctx cx, const ModuleDesc &d, gp_point window);
+
     Pt          to_rack(gpuic::Ctx cx, gp_point window); // window pixels -> rack pixels
     std::string port_name(PortRef r) const;              // "Oscillator OUT"
 

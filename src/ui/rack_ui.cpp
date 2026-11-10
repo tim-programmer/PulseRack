@@ -159,8 +159,21 @@ struct Browser
             .flex_col()
             .rounded(5)
             .bg(st::kSurfaceHi)
+            .hover_bg(st::kSurface)
             .border_left(3)
             .border_color(cc.chip)
+            // drag the card onto the rack to add the module there (the Add button adds it near the
+            // view)
+            .on_mouse_down(
+                [d](Browser &self, Ctx cx, const gp_mouse_event &ev)
+                {
+                    if (ev.button == GP_MOUSE_LEFT)
+                        self.ed.get(cx)->module_drag_begin(cx, *d, ev.position);
+                })
+            .on_drag([](Browser &self, Ctx cx, const gp_mouse_event &ev)
+                { self.ed.get(cx)->module_drag_move(cx, ev.position); })
+            .on_mouse_up([](Browser &self, Ctx cx, const gp_mouse_event &ev)
+                { self.ed.get(cx)->module_drag_end(cx, ev.position); })
             .child(div()
                     .flex_row()
                     .items_center()
@@ -735,11 +748,32 @@ struct DragView
     Element render(Ctx cx)
     {
         Editor *e = ed.get(cx);
-        if (!e || !e->drag.active)
+        if (!e)
             return div();
+        Element w = div().absolute().left(0).top(0);
+        if (const auto &m = e->mdrag; m.active && m.moved && m.over_rack)
+        { // where a module dragged from the browser would land
+            const Rect  r = node_rect(*m.desc, (float)m.x, (float)m.y);
+            const Color c = m.fits ? st::kLedOn : st::kDanger;
+            w.child(div()
+                    .absolute()
+                    .left(r.x)
+                    .top(r.y)
+                    .w(r.w)
+                    .h(r.h)
+                    .rounded(4)
+                    .bg(with_alpha(st::category(m.desc->category).top, m.fits ? 0.45f : 0.25f))
+                    .border(2)
+                    .border_color(c)
+                    .flex_col()
+                    .items_center()
+                    .pt(3)
+                    .child(label(std::string(m.desc->name), 11, st::kText).font_bold()));
+        }
+        if (!e->drag.active)
+            return w;
         const auto  &d = e->drag;
         const Patch &p = e->engine.patch();
-        Element      w = div().absolute().left(0).top(0);
         for (const PortRef &t : d.targets) // every jack it fits
             if (const Node *n = p.find(t.node))
                 w.child(ring(jack_center(*n, t.port), 13, with_alpha(st::kLedOn, 0.5f), 2));
@@ -954,6 +988,37 @@ void open_cable_menu(Ctx cx, Editor &e, PortRef to, Pt at)
 // =====================================================================================================
 // The window
 
+// The name of the module being dragged from the browser, under the pointer (window pixels).
+struct PointerChip
+{
+    Entity<Editor> ed;
+    Element        render(Ctx cx)
+    {
+        Editor *e = ed.get(cx);
+        if (!e || !e->mdrag.active || !e->mdrag.moved)
+            return div();
+        const auto &m = e->mdrag;
+        // the pill needs room to size itself to its text, so while it is shown it lays out a
+        // window-sized area (no handlers: the pointer goes through it, though the wheel would not
+        // reach the rack, which does not matter during the drag); otherwise the view is empty
+        return div().absolute().left(0).top(0).w(8000).h(8000).child(div()
+                .absolute()
+                .left(m.at.x + 14)
+                .top(m.at.y + 10)
+                .px(8)
+                .h(22)
+                .rounded(11)
+                .flex_row()
+                .items_center()
+                .bg(with_alpha(st::category(m.desc->category).title, 0.95f))
+                .border(1)
+                .border_color(st::category(m.desc->category).chip)
+                .flex_shrink_0()
+                .child(
+                    label(std::string(m.desc->name), 11, st::kText).font_bold().whitespace_pre()));
+    }
+};
+
 struct Root
 {
     Entity<Editor> ed;
@@ -972,7 +1037,8 @@ struct Root
                     .min_h(0)
                     .child(e->browser.cached())
                     .child(div().flex_1().h_full().min_w(0).child(e->rack.cached())))
-            .child(e->hint_line.cached());
+            .child(e->hint_line.cached())
+            .child(div().absolute().left(0).top(0).child(e->chip.cached()));
     }
 };
 
@@ -1044,6 +1110,71 @@ Pt Editor::to_rack(Ctx cx, gp_point w)
     const RackViewport vp = viewport_of(cx, *this);
     const gp_point     o = rack_origin();
     return { w.x - o.x + vp.x, w.y - o.y + vp.y };
+}
+
+// ---- modules dragged from the browser
+
+Slot Editor::drop_slot(Ctx cx, const ModuleDesc &d, gp_point window)
+{ // the pointer holds the panel by the middle of its title
+    const Pt q = to_rack(cx, window);
+    return { (int)std::lround((q.x - d.width_hp * kHp / 2) / kHp),
+        (int)std::lround((q.y - kTitleHeight / 2) / kHp) };
+}
+
+void Editor::module_drag_begin(Ctx, const ModuleDesc &d, gp_point window)
+{
+    mdrag = ModuleDrag { };
+    mdrag.active = true;
+    mdrag.desc = &d;
+    mdrag.start = mdrag.at = window;
+}
+
+void Editor::module_drag_move(Ctx cx, gp_point window)
+{
+    if (!mdrag.active)
+        return;
+    mdrag.at = window;
+    if (!mdrag.moved && std::hypot(window.x - mdrag.start.x, window.y - mdrag.start.y) < 4)
+        return; // a click, so far
+    mdrag.moved = true;
+    const gp_point     o = rack_origin();
+    const RackViewport vp = viewport_of(cx, *this);
+    mdrag.over_rack
+        = window.x >= o.x && window.y >= o.y && window.x < o.x + vp.w && window.y < o.y + vp.h;
+    const std::string name(mdrag.desc->name);
+    if (mdrag.over_rack)
+    {
+        const Slot s = drop_slot(cx, *mdrag.desc, window);
+        mdrag.x = s.x;
+        mdrag.y = s.y;
+        mdrag.fits = !collides(engine.patch(), *mdrag.desc, s.x, s.y);
+        status = mdrag.fits ? "Release to add " + name + " here."
+                            : "No room here for " + name + ": it would overlap another panel.";
+    }
+    else
+        status = "Drop " + name + " on the rack to add it.";
+    hint_line.update(cx, [](HintLine &, Ctx c) { c.notify(); });
+    drag_view.update(cx, [](DragView &, Ctx c) { c.notify(); });
+    chip.update(cx, [](PointerChip &, Ctx c) { c.notify(); });
+}
+
+void Editor::module_drag_end(Ctx cx, gp_point window)
+{
+    if (!mdrag.active)
+        return;
+    module_drag_move(cx, window);
+    const ModuleDrag m = mdrag;
+    mdrag = ModuleDrag { };
+    drag_view.update(cx, [](DragView &, Ctx c) { c.notify(); });
+    chip.update(cx, [](PointerChip &, Ctx c) { c.notify(); });
+    if (!m.moved)
+        return; // a click: the card does nothing, its Add button does
+    if (m.over_rack && m.fits)
+        add_module_at(cx, *m.desc, m.x, m.y);
+    else if (m.over_rack)
+        say(cx, "Not added: no room there for " + std::string(m.desc->name) + ".");
+    else
+        say(cx, "Not added: drop a module on the rack.");
 }
 
 // ---- cables
@@ -1453,6 +1584,8 @@ Entity<Editor> open_rack(App app, const Options &opt, std::string *error)
     app.get(e->rack)->scroll = app.new_scroll();
     e->drag_view = app.new_view<DragView>();
     app.get(e->drag_view)->ed = ed;
+    e->chip = app.new_view<PointerChip>();
+    app.get(e->chip)->ed = ed;
     // Delete or Backspace removes the selected cable, unless something focused (the search box)
     // takes the key
     app.bind_key("delete", "rack::delete_cable");
@@ -1522,7 +1655,7 @@ gp_point port_center(Ctx cx, Entity<Editor> ed, uint32_t node, size_t port)
 {
     Editor     *e = ed.get(cx);
     const Node *n = e ? e->engine.patch().find(node) : nullptr;
-    if (!n)
+    if (!n || port >= n->desc->ports.size())
         return { -1, -1 };
     const RackViewport vp = viewport_of(cx, *e);
     const gp_point     o = rack_origin();

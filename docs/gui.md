@@ -148,7 +148,7 @@ beside the browser, to compare with the reference before any more modules are dr
 4. **Zoom**: needed for the first version, or later?
    Zoom not needed for now.
 5. **Dragging a module from the browser onto the rack** as well as the *Add* button: later (recommended).
-   Not needed for now.
+   Not needed for now. *(Asked for after milestone 3, and built: see* As built: dragging modules from the browser*.)*
 6. **A second window** (scope, a larger sequencer): not planned.
 
 ## As built (milestone 2)
@@ -262,4 +262,31 @@ that `memcpy`. Not changed here: gpuic is its own repository.
 **Not done** (milestone 3 stops here): the rack does not scroll by itself when a cable is dragged to its edge (scroll first, then
 drag); an output's cables cannot be moved by their output end (a press on an output always starts a new cable); no undo; no
 colour choice; sound (milestone 4).
+
+## As built: dragging modules from the browser (after milestone 3)
+
+Asked for after milestone 3 ("dragging them feels more natural"), alongside the *Add* button.
+
+**What works.** Press on a browser card (anywhere but its *Add* button) and move: past 4 px it becomes a drag. A pill with the
+module's name follows the pointer; over the rack, an outline of the panel shows where it will land, held by the middle of its
+title and snapped to the grid, **green** where it fits and **red** where it would overlap another panel; the hint line says which.
+Release on green adds the module there (`Editor::add_module_at`, the same path as *Add*); release on red, or off the rack, adds
+nothing and says why. A click on a card (no movement) does nothing, so the *Add* button works as before.
+
+**Decisions (mine, for your review).**
+1. **An overlapping drop is refused**, as a panel move onto another panel is; it does not push panels aside or pick the nearest
+   free place, either of which could put the module somewhere you did not aim.
+2. **The panel is held by the middle of its title**, as when it is moved.
+3. The rack does not scroll by itself when the pointer reaches its edge (as with cables).
+
+**Code and tests.** `Editor::module_drag_begin/move/end` and `drop_slot`; the outline is drawn by `DragView`, the pill by a
+`PointerChip` view at window level. `ui_smoke` (113 checks) adds: a click on a card adds nothing; a drag to a free place (the
+outline and the hint checked mid-drag, the module added there and running in the engine); a drop onto a panel (refused, with the
+reason); a drop off the rack (nothing). `ui_smoke --pose-module PATCH CARD X Y` holds a card mid-drag for a screenshot.
+
+**Found while building:** an overlay the size of the window with no handlers lets clicks through but **not the wheel** (gpuic
+scrolls the innermost scroller under the pointer, and the overlay is not inside the rack's): checked, the rack's scroll stayed at 0
+under the wheel with such an overlay. The pill's view therefore lays out its large area only while a card is dragged. *Possible
+request for gpuic:* let the wheel pass through elements with no handlers, as clicks do. `port_center` now checks its port index (a harness run against a half-built rack
+indexed a jack with -1).
 
