@@ -1,6 +1,6 @@
 # Architecture
 
-Status: **reviewed; milestones 0 to 2 are built** (the table at the end). Where something has not been checked against
+Status: **reviewed; milestones 0 to 3 are built** (the table at the end). Where something has not been checked against
 the real code or library it says so.
 
 ## Repository layout
@@ -154,7 +154,7 @@ Two threads matter: the **UI thread** (gpuic's main loop) and the **audio thread
 | – | **gpuic curve primitive** (in the gpuic repository, from `gpuic-prompt.md`) | **done and checked** (gpuic `bc442de`, `spike.md` *Follow-up*; re-checked at `b5e2679`, `771626e` and `da89032`, no regressions); milestone 3 uses `gp_curve` directly |
 | 1 | Engine + `rack-render` | **built**: the headless engine passes its tests in float, Q15 and Q31; all 11 library modules and 6 glue modules are wrapped; see `patch-engine.md`, *As built* |
 | 2 | Window without cables | **built**: browser, rack with draggable panels, knobs, sliders, selectors, switches working on the engine; see `gui.md`, *As built* |
-| 3 | Cables | jacks, dragging cables, deleting them, the engine updated live |
+| 3 | Cables | **built**: jacks, dragging cables (lit targets, reasons for refusals), moving and deleting them, the engine updated live; see `gui.md`, *As built (milestone 3)* |
 | 4 | Sound | SDL3 output, keyboard as a piano, meters |
 | 5 | Save and load | the patch file, a few factory patches |
 | 6 | Polish and the later modules | search/filter, undo, delay/sampler/reverb as PulseCoreLib gains them |

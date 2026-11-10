@@ -123,3 +123,40 @@ TEST(patch_removing_a_module_keeps_the_other_keyboards_keys)
     CHECK(r.e.patch().keys.size() == 1 && r.e.patch().keys[0].node == k2
         && r.e.patch().keys[0].note == 62);
 }
+
+TEST(patch_can_connect_agrees_with_connect_and_changes_nothing)
+{
+    // every ordered pair of jacks in a small patch, tried in a random order: can_connect predicts
+    // connect exactly, and leaves the patch as it was
+    Rig            r;
+    const uint32_t ids[] = { r.add("osc"), r.add("vca"), r.add("svf"), r.add("seq"),
+        r.add("keyboard"), r.add("out"), r.add("adsr") };
+    Patch         &p = r.e.patch();
+    std::vector<PortRef> all;
+    for (uint32_t id : ids)
+        for (uint16_t k = 0; k < p.find(id)->desc->ports.size(); k++)
+            all.push_back(PortRef { id, k });
+    std::vector<std::pair<PortRef, PortRef>> pairs;
+    for (const PortRef &a : all)
+        for (const PortRef &b : all)
+            pairs.push_back({ a, b });
+    uint32_t seed = 7;
+    for (size_t i = pairs.size() - 1; i > 0; i--)
+    {
+        seed = seed * 1664525u + 1013904223u;
+        std::swap(pairs[i], pairs[(seed >> 8) % (i + 1)]);
+    }
+    int made = 0;
+    for (const auto &[a, b] : pairs)
+    {
+        const size_t before = p.cables().size();
+        const Err    predicted = p.can_connect(a, b);
+        CHECK(p.cables().size() == before);
+        const Err actual = p.connect(a, b);
+        CHECK(predicted == actual);
+        CHECK(p.cables().size() == before + (actual == Err::Ok));
+        made += actual == Err::Ok;
+    }
+    CHECK(made > 5);
+    CHECK(p.can_connect(PortRef { 999, 0 }, all[0]) == Err::NoSuchNode);
+}

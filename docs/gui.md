@@ -1,6 +1,6 @@
 # GUI
 
-Status: **milestone 2 is built** (see *As built* at the end; where the two differ, it and the code win). Reference for the look and the workflow: Voltage Modular (a browser on the left,
+Status: **milestones 2 and 3 are built** (see the *As built* sections at the end; where the two differ, it and the code win). Reference for the look and the workflow: Voltage Modular (a browser on the left,
 a rack of coloured panels with knobs and sliders, cables between jacks, a toolbar above).
 
 The GUI is a *view* of the patch engine (see *patch-engine.md*). It owns no audio state; it edits the
@@ -211,4 +211,55 @@ trigger it (`Patch::add_node` never reuses an id); loading a file over a patch (
 **Not done** (milestone 2 stops here): cables and the jacks' behaviour (milestone 3); sound, meters, LEDs from telemetry and the
 computer keyboard as a piano (4); the sequencer's **step grid** (its 64 steps are kept in the patch but not editable in the window
 yet); the on-screen keyboard strip; arrow keys on a focused knob; undo; a Delete key; zoom (decided: not in the first version).
+
+## As built (milestone 3: cables)
+
+**What works.** Press on a jack and drag: a cable hangs from it and follows the pointer, **every jack it could connect to is lit**
+(a faint green ring), and the jack under the pointer gets a green ring, or a red one with the reason on the hint line ("a signal
+cannot go to an event input...", "this input already has a cable", "this would make a loop"). Release on a lit jack connects;
+anywhere else does not. **Press on a plugged input** lifts its cable off: drop it on another input to move it (same cable, same
+colour), on empty rack to remove it. A cable is **selected by a click on its stroke** (gpuic's stroke-only hit test, 4 px of
+tolerance) and removed with **Delete or Backspace**, or from its **right-click menu**. Cables are cubic Beziers that sag more the
+longer they are, take a colour each from a palette of eight in turn, have a plug drawn over each jack, and **follow a panel while
+it is dragged** (their ends come from the model: panel position + `panel_layout()`). Deleting a module takes its cables with it.
+Every edit compiles the engine at once (`Editor::connect` / `disconnect` -> `Engine::compile`); the smoke test renders the engine
+before and after a cable and hears the difference.
+
+**Code.** `Patch::can_connect` (what `connect` would say, changing nothing; `connect` calls it), in the engine. In
+`src/ui/geometry`: `jack_center`, `jack_at`, `cable_curve`, `as_cable`. In `src/ui/rack_ui`: `CableView` (one cached view per cable,
+keyed by its input, drawn over the panels), `DragView` (the cable being dragged, the lit jacks and the ring under the pointer), and
+the `Editor`'s cable operations.
+
+**Tests.** `rack_tests`: `can_connect` agrees with `connect` on every ordered pair of jacks in a patch, in a random order, and
+changes nothing (1,461 checks); jacks are found where they are drawn; cables sag and are oriented output -> input. `ui_smoke`
+(105 checks) adds: a drag from an output with the lit jacks checked (its own inputs are not lit: a loop), a red verdict over an event
+input, a release on a VCA's input and the engine's output going from silence to sound; refusals (event input, loop, empty release);
+lifting a plug onto another input (same colour) and onto empty rack (removed); a drag from an empty input to an output; selecting by
+a click, Backspace going to the focused search box and not to the cable, Delete removing it; the menu's *Delete cable*; a cable
+following its panel; and the module's cables going when it is deleted. `ui_smoke --pose PATCH NODE PORT X Y` holds a cable in
+mid-drag for a screenshot. Float, Q15 and Q31 pass; clang with ASan and UBSan passes the engine tests, and the window tests pass
+all their checks under ASan but **stop on one UBSan report inside gpuic** (below).
+
+**gpuic finding (a request for gpuic):** `src/paint.c:983` copies a cached view's paint chunk with
+`memcpy(vv->chunk, pc->scene->items + start, count * sizeof *vv->chunk)`; when the view painted nothing (`count == 0`) and has never
+had a chunk, `vv->chunk` is NULL, and `memcpy(NULL, ..., 0)` is undefined behaviour in C (UBSan: "null pointer passed as argument 1,
+which is declared to never be null"). Harmless in practice; it stops a UBSan run. Cables brought the first cached views that can be
+empty (`DragView` when no cable is being dragged, a `CableView` while its cable is lifted). The fix is a guard, `if (count)`, before
+that `memcpy`. Not changed here: gpuic is its own repository.
+
+**Decisions taken while building (mine, for your review).**
+1. **A lifted cable stays in the patch until it is released**, so the sound goes on during the drag; where it may go is judged on a
+   copy of the patch without it. A release on an incompatible jack leaves it where it was.
+2. **A cable can also start at an empty input** and end on an output (the design only had outputs and connected inputs).
+3. **All the jacks a cable fits are lit for the whole drag**, not only the one under the pointer.
+4. **A cable over a panel takes the press**, title bars included; a press on a plug is a press on its jack. Cables are drawn at 85 %
+   opacity (the selected one opaque and thicker): about twice the cost of opaque cables (`spike.md`), well inside a frame.
+5. **Delete and Backspace** remove the selected cable unless a text field has the keyboard; a click in the rack takes it away from
+   the search box.
+6. **The hint line shows what an action did at once** (it used to wait for the pointer to leave the element it was over).
+7. **Cable colours are not saved**: they are handed out in turn, in file order when a patch is opened.
+
+**Not done** (milestone 3 stops here): the rack does not scroll by itself when a cable is dragged to its edge (scroll first, then
+drag); an output's cables cannot be moved by their output end (a press on an output always starts a new cable); no undo; no
+colour choice; sound (milestone 4).
 

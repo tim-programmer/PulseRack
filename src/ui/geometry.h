@@ -7,6 +7,9 @@
 
 #include "engine/model/patch.h"
 
+#include <array>
+#include <optional>
+
 #include <string>
 #include <vector>
 
@@ -19,7 +22,8 @@ inline constexpr float kHp = 16;
 inline constexpr int   kPanelHeightHp = 26;
 inline constexpr float kPanelHeight = kPanelHeightHp * kHp; // 416 px
 inline constexpr float kTitleHeight = 20;
-inline constexpr float kPad = 4; // inside the panel's edge
+inline constexpr float kPad = 4;         // inside the panel's edge
+inline constexpr float kPanelBorder = 1; // the panel's border: its contents start inside it
 
 struct Rect
 {
@@ -92,5 +96,21 @@ Slot free_slot(const Patch &p, const ModuleDesc &d, int x0, int y0, int width_hp
 // first free place on its row (rightwards). Returns how many had to move for an overlap. For
 // patches written before panels had a size.
 int resolve_overlaps(Patch &p);
+
+// ---- cables (milestone 3). Everything in rack pixels, from the model alone, so a cable follows a
+// panel while it is dragged without waiting for a layout pass.
+struct Pt
+{
+    float x = 0, y = 0;
+};
+Pt jack_center(const Node &n, size_t port); // where a cable plugs in
+// The jack under a rack point (within `slack` pixels of its edge), if any.
+std::optional<PortRef> jack_at(const Patch &p, float x, float y, float slack = 4);
+// A cable from a to b as a cubic Bezier that sags under gravity: both control points hang below
+// their ends, further for a longer cable.
+std::array<Pt, 4> cable_curve(Pt a, Pt b);
+// A cable is output -> input whichever end a drag started from: returns (from, to), or the pair as
+// given when it is not one output and one input (Patch::can_connect then says why).
+std::pair<PortRef, PortRef> as_cable(const Patch &p, PortRef a, PortRef b);
 
 } // namespace rack::ui

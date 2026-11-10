@@ -19,7 +19,6 @@ namespace st = style;
 
 namespace
 {
-    constexpr float kPanelBorder = 1; // absolute children are placed inside the panel's border
 
     Element label(std::string s, float size, Color c)
     {
@@ -522,7 +521,19 @@ struct PanelView
                     .justify_center()
                     .child(label(std::string(p.name), 8, st::kText).whitespace_pre()))
             .on_hover([i](PanelView &self, Ctx cx, bool inside)
-                { self.ed.get(cx)->hover(cx, self.node, Editor::kHoverPort - (int)i, inside); });
+                { self.ed.get(cx)->hover(cx, self.node, Editor::kHoverPort - (int)i, inside); })
+            .cursor_pointer()
+            .on_mouse_down(
+                [i](PanelView &self, Ctx cx, const gp_mouse_event &ev)
+                {
+                    if (ev.button == GP_MOUSE_LEFT)
+                        self.ed.get(cx)->jack_press(
+                            cx, PortRef { self.node, (uint16_t)i }, ev.position);
+                })
+            .on_drag([](PanelView &self, Ctx cx, const gp_mouse_event &ev)
+                { self.ed.get(cx)->jack_drag(cx, ev.position); })
+            .on_mouse_up([](PanelView &self, Ctx cx, const gp_mouse_event &ev)
+                { self.ed.get(cx)->jack_release(cx, ev.position); });
         return cell;
     }
 
@@ -617,16 +628,156 @@ struct PanelView
     }
 };
 
+void open_cable_menu(Ctx cx, Editor &e, PortRef to, Pt at); // a cable's right-click menu
+
+// =====================================================================================================
+// Cables: each a cached view of its own (moving one rebuilds that view only), drawn over the panels
+// in rack pixels computed from the model, with a plug over each jack. The cable being dragged is
+// DragView.
+
+namespace
+{
+    Element ring(Pt c, float r, Color col, float width)
+    {
+        return div()
+            .absolute()
+            .left(c.x - r)
+            .top(c.y - r)
+            .w(2 * r)
+            .h(2 * r)
+            .rounded_full()
+            .border(width)
+            .border_color(col);
+    }
+    Element plug(Pt c, Color col)
+    {
+        return div()
+            .absolute()
+            .left(c.x - 7)
+            .top(c.y - 7)
+            .w(14)
+            .h(14)
+            .rounded_full()
+            .bg(col)
+            .border(2)
+            .border_color(st::kKnobEdge);
+    }
+    Element cable_curve_element(const std::array<Pt, 4> &p, Color col, float width)
+    {
+        return curve(xy(p[0].x, p[0].y), xy(p[1].x, p[1].y), xy(p[2].x, p[2].y), xy(p[3].x, p[3].y))
+            .stroke_width(width)
+            .stroke_color(col);
+    }
+} // namespace
+
+struct CableView
+{
+    Entity<Editor> ed;
+    PortRef        to; // the cable into this input
+
+    Element render(Ctx cx)
+    {
+        Editor *e = ed.get(cx);
+        if (!e)
+            return div();
+        const Patch &p = e->engine.patch();
+        const Cable *c = p.cable_into(to);
+        if (!c || (e->drag.active && e->drag.picked && e->drag.picked->to == to))
+            return div(); // gone, or lifted off and drawn by the drag view
+        const Pt    a = jack_center(*p.find(c->from.node), c->from.port);
+        const Pt    b = jack_center(*p.find(c->to.node), c->to.port);
+        const bool  sel = e->selected && *e->selected == to;
+        const auto  it = e->cable_colour.find({ to.node, to.port });
+        const Color col = st::cable_colour(it == e->cable_colour.end() ? 0 : it->second);
+        // a press near either end is a press on that jack (the plug covers it); elsewhere it
+        // selects the cable, and a right-click opens its menu
+        return div()
+            .absolute()
+            .left(0)
+            .top(0)
+            .child(cable_curve_element(
+                cable_curve(a, b), with_alpha(col, sel ? 1.f : 0.85f), sel ? 7.f : 4.5f)
+                    .hit_tolerance(4)
+                    .hover_bg(with_alpha(col, 1.f))
+                    .cursor_pointer()
+                    .on_mouse_down(
+                        [](CableView &self, Ctx cx, const gp_mouse_event &ev)
+                        {
+                            Editor  *e = self.ed.get(cx);
+                            const Pt q = e->to_rack(cx, ev.position);
+                            cx.blur();
+                            if (ev.button == GP_MOUSE_RIGHT)
+                                open_cable_menu(cx, *e, self.to, q);
+                            else if (auto j = jack_at(e->engine.patch(), q.x, q.y, 0))
+                                e->jack_press(cx, *j, ev.position);
+                            else if (ev.button == GP_MOUSE_LEFT)
+                                e->select_cable(cx, self.to);
+                        })
+                    .on_drag([](CableView &self, Ctx cx, const gp_mouse_event &ev)
+                        { self.ed.get(cx)->jack_drag(cx, ev.position); })
+                    .on_mouse_up([](CableView &self, Ctx cx, const gp_mouse_event &ev)
+                        { self.ed.get(cx)->jack_release(cx, ev.position); })
+                    .on_hover(
+                        [](CableView &self, Ctx cx, bool inside)
+                        {
+                            self.ed.get(cx)->hover(
+                                cx, self.to.node, Editor::kHoverCable - self.to.port, inside);
+                        }))
+            .child(plug(a, col))
+            .child(plug(b, col));
+    }
+};
+
+struct DragView
+{
+    Entity<Editor> ed;
+
+    Element render(Ctx cx)
+    {
+        Editor *e = ed.get(cx);
+        if (!e || !e->drag.active)
+            return div();
+        const auto  &d = e->drag;
+        const Patch &p = e->engine.patch();
+        Element      w = div().absolute().left(0).top(0);
+        for (const PortRef &t : d.targets) // every jack it fits
+            if (const Node *n = p.find(t.node))
+                w.child(ring(jack_center(*n, t.port), 13, with_alpha(st::kLedOn, 0.5f), 2));
+        if (d.over)
+            if (const Node *n = p.find(d.over->node))
+                w.child(ring(jack_center(*n, d.over->port), 15,
+                    d.verdict == Err::Ok ? st::kLedOn : st::kDanger, 3));
+        const Node *fn = p.find(d.fixed.node);
+        if (!fn)
+            return w;
+        int colour = e->next_colour;
+        if (d.picked)
+        {
+            const auto it = e->cable_colour.find({ d.picked->to.node, d.picked->to.port });
+            if (it != e->cable_colour.end())
+                colour = it->second;
+        }
+        const Color col = st::cable_colour(colour);
+        const Pt    a = jack_center(*fn, d.fixed.port);
+        w.child(cable_curve_element(cable_curve(a, d.loose), with_alpha(col, 0.9f), 4.5f))
+            .child(plug(a, col))
+            .child(plug(d.loose, col));
+        return w;
+    }
+};
+
 // =====================================================================================================
 // The rack: a scrolling surface with the panels at their places; drag empty space to pan.
 
 struct RackView
 {
-    Entity<Editor> ed;
-    Scroll         scroll;
-    bool           panning = false;
-    gp_point       pan_p0 { }, pan_off0 { };
-    uint32_t       menu_node = 0; // the panel whose menu is open
+    Entity<Editor>         ed;
+    Scroll                 scroll;
+    bool                   panning = false;
+    gp_point               pan_p0 { }, pan_off0 { };
+    uint32_t               menu_node = 0; // the panel whose menu is open
+    std::optional<PortRef> menu_cable; // or the cable whose menu is open, at menu_at (rack pixels)
+    Pt                     menu_at;
 
     template <class F> static Element menu_item(std::string text, Color c, F &&f)
     {
@@ -667,11 +818,16 @@ struct RackView
                   .on_mouse_down(
                       [](RackView &self, Ctx cx, const gp_mouse_event &ev)
                       {
-                          if (self.menu_node)
+                          if (self.menu_node || self.menu_cable)
                           {
                               self.menu_node = 0;
+                              self.menu_cable.reset();
                               cx.notify();
                           }
+                          cx.blur(); // the search box lets go of the keyboard (Delete is the
+                                     // rack's)
+                          if (Editor *e = self.ed.get(cx); e && e->selected)
+                              e->select_cable(cx, std::nullopt);
                           self.panning = ev.button == GP_MOUSE_LEFT;
                           self.pan_p0 = ev.position;
                           self.pan_off0 = self.scroll.offset(cx);
@@ -696,7 +852,46 @@ struct RackView
                         .top(n->y * kHp)
                         .key_id(id)
                         .child(view.cached()));
+        for (auto &[key, view] : e->cable_views) // over the panels
+            content.child(div()
+                    .absolute()
+                    .left(0)
+                    .top(0)
+                    .key_id((uint64_t)1 << 40 | (uint64_t)key.first << 16 | key.second)
+                    .child(view.cached()));
+        content.child(
+            div().absolute().left(0).top(0).key_id((uint64_t)1 << 41).child(e->drag_view.cached()));
 
+        if (menu_cable && patch.cable_into(*menu_cable))
+        {
+            const PortRef to = *menu_cable;
+            content.child(div()
+                    .absolute()
+                    .left(menu_at.x + 4)
+                    .top(menu_at.y + 4)
+                    .w(180)
+                    .p(4)
+                    .rounded(5)
+                    .bg(st::kSurfaceHi)
+                    .border(1)
+                    .border_color(st::kBorder)
+                    .shadow(0, 6, 16, with_alpha(rgb(0x000000), 0.5f))
+                    .on_mouse_down([](RackView &) { })
+                    .child(menu_item("Delete cable", st::kDanger,
+                        [to](RackView &self, Ctx cx)
+                        {
+                            self.menu_cable.reset();
+                            cx.notify();
+                            if (Editor *ed = self.ed.get(cx))
+                                ed->disconnect(cx, to);
+                        }))
+                    .child(menu_item("Cancel", st::kText,
+                        [](RackView &self, Ctx cx)
+                        {
+                            self.menu_cable.reset();
+                            cx.notify();
+                        })));
+        }
         if (const Node *n = menu_node ? patch.find(menu_node) : nullptr)
         {
             const uint32_t id = menu_node;
@@ -738,6 +933,20 @@ void open_menu(Ctx cx, Editor &e, uint32_t node)
         [node](RackView &r, Ctx c)
         {
             r.menu_node = node;
+            r.menu_cable.reset();
+            c.notify();
+        });
+}
+
+void open_cable_menu(Ctx cx, Editor &e, PortRef to, Pt at)
+{
+    e.select_cable(cx, to);
+    e.rack.update(cx,
+        [to, at](RackView &r, Ctx c)
+        {
+            r.menu_node = 0;
+            r.menu_cable = to;
+            r.menu_at = at;
             c.notify();
         });
 }
@@ -788,6 +997,8 @@ namespace
 void Editor::say(Ctx cx, std::string text)
 {
     status = std::move(text);
+    hover_text.clear(); // what an action did shows at once; the next element the pointer enters
+                        // describes itself again
     hint_line.update(cx, [](HintLine &, Ctx c) { c.notify(); });
 }
 
@@ -808,9 +1019,247 @@ std::string Editor::describe_item(uint32_t node, int item) const
         const PortDesc &p = d.ports[(size_t)port];
         return std::string(d.name) + "  ·  " + std::string(p.name) + ": "
             + (p.kind == Kind::Event ? "event " : "signal ") + (p.is_output ? "output" : "input")
-            + "      cables arrive in milestone 3";
+            + (p.is_output ? "      drag from it to an input to connect"
+                           : "      drag from it to an output to connect");
     }
+    const int in_port = kHoverCable - item;
+    if (in_port >= 0 && (size_t)in_port < d.ports.size())
+        if (const Cable *c = engine.patch().cable_into(PortRef { node, (uint16_t)in_port }))
+            return "Cable  " + port_name(c->from) + "  ->  " + port_name(c->to)
+                + "      click to select (then Delete); right-click for its menu; drag a plug to "
+                  "move it";
     return { };
+}
+
+std::string Editor::port_name(PortRef r) const
+{
+    const Node *n = engine.patch().find(r.node);
+    if (!n || r.port >= n->desc->ports.size())
+        return "?";
+    return std::string(n->desc->name) + " " + std::string(n->desc->ports[r.port].name);
+}
+
+Pt Editor::to_rack(Ctx cx, gp_point w)
+{
+    const RackViewport vp = viewport_of(cx, *this);
+    const gp_point     o = rack_origin();
+    return { w.x - o.x + vp.x, w.y - o.y + vp.y };
+}
+
+// ---- cables
+
+void Editor::sync_cables(Ctx cx)
+{
+    App          app = cx.app();
+    const Patch &patch = engine.patch();
+    for (auto it = cable_views.begin(); it != cable_views.end();)
+    {
+        if (patch.cable_into(PortRef { it->first.first, it->first.second }))
+            ++it;
+        else
+        {
+            app.release(it->second);
+            cable_colour.erase(it->first);
+            it = cable_views.erase(it);
+        }
+    }
+    for (const Cable &c : patch.cables())
+    {
+        const CableKey key { c.to.node, c.to.port };
+        if (cable_views.count(key))
+            continue;
+        auto v = app.new_view<CableView>();
+        app.get(v)->ed = self;
+        app.get(v)->to = c.to;
+        cable_views[key] = v;
+        if (!cable_colour.count(key))
+            cable_colour[key] = next_colour++;
+    }
+    if (selected && !patch.cable_into(*selected))
+        selected.reset();
+    refresh_rack(cx);
+}
+
+void Editor::refresh_cables_of(Ctx cx, uint32_t node)
+{
+    for (const Cable &c : engine.patch().cables())
+        if (c.from.node == node || c.to.node == node)
+            if (auto it = cable_views.find({ c.to.node, c.to.port }); it != cable_views.end())
+                it->second.update(cx, [](CableView &, Ctx v) { v.notify(); });
+}
+
+Err Editor::connect(Ctx cx, PortRef a, PortRef b)
+{
+    Patch &patch = engine.patch();
+    const auto [from, to] = as_cable(patch, a, b);
+    const Err e = patch.connect(from, to);
+    if (e != Err::Ok)
+    {
+        say(cx, "Not connected: " + std::string(describe(e)) + ".");
+        return e;
+    }
+    if (engine.compile() != Err::Ok)
+    {
+        patch.disconnect(to);
+        engine.compile();
+        say(cx, "Not connected: the engine could not build the patch with it.");
+        return Err::BadPatch;
+    }
+    sync_cables(cx);
+    say(cx, "Connected " + port_name(from) + "  ->  " + port_name(to) + ".");
+    return Err::Ok;
+}
+
+void Editor::disconnect(Ctx cx, PortRef to)
+{
+    const Cable *c = engine.patch().cable_into(to);
+    if (!c)
+        return;
+    const std::string what = port_name(c->from) + "  ->  " + port_name(c->to);
+    engine.patch().disconnect(to);
+    engine.compile();
+    sync_cables(cx);
+    say(cx, "Removed the cable " + what + ".");
+}
+
+void Editor::select_cable(Ctx cx, std::optional<PortRef> to)
+{
+    const std::optional<PortRef> old = selected;
+    selected = to && engine.patch().cable_into(*to) ? to : std::nullopt;
+    for (const auto &k : { old, selected })
+        if (k)
+            if (auto it = cable_views.find({ k->node, k->port }); it != cable_views.end())
+                it->second.update(cx, [](CableView &, Ctx v) { v.notify(); });
+    if (selected)
+    {
+        const Cable *c = engine.patch().cable_into(*selected);
+        say(cx,
+            "Selected the cable " + port_name(c->from) + "  ->  " + port_name(c->to)
+                + ".      Delete or Backspace removes it.");
+    }
+}
+
+void Editor::delete_selected(Ctx cx)
+{
+    if (selected)
+        disconnect(cx, *selected);
+}
+
+namespace
+{
+    // The patch as it would be without the cable being moved, to judge where it may go.
+    Patch without(const Patch &p, const std::optional<Cable> &c)
+    {
+        Patch q = p;
+        if (c)
+            q.disconnect(c->to);
+        return q;
+    }
+} // namespace
+
+void Editor::jack_press(Ctx cx, PortRef jack, gp_point window)
+{
+    const Patch &p = engine.patch();
+    const Node  *n = p.find(jack.node);
+    if (!n || jack.port >= n->desc->ports.size())
+        return;
+    const bool output = n->desc->ports[jack.port].is_output;
+    drag = CableDrag { };
+    drag.active = true;
+    if (!output)
+        if (const Cable *c = p.cable_into(jack))
+            drag.picked = *c; // lift the cable off this input; it hangs from its output
+    drag.fixed = drag.picked ? drag.picked->from : jack;
+    drag.loose = to_rack(cx, window);
+    const Patch probe = without(p, drag.picked);
+    for (const Node &m : probe.nodes())
+        for (uint16_t k = 0; k < m.desc->ports.size(); k++)
+        {
+            const PortRef q { m.id, k };
+            const auto [f, t] = as_cable(probe, drag.fixed, q);
+            if (!(q == drag.fixed) && probe.can_connect(f, t) == Err::Ok)
+                drag.targets.push_back(q);
+        }
+    if (selected)
+        select_cable(cx, std::nullopt);
+    if (drag.picked)
+        if (auto it = cable_views.find({ drag.picked->to.node, drag.picked->to.port });
+            it != cable_views.end())
+            it->second.update(cx, [](CableView &, Ctx v) { v.notify(); });
+    status = drag.picked
+        ? "Move the plug to another input, or drop it on empty rack to remove the cable."
+        : std::string("Drag to ") + (output ? "an input" : "an output")
+            + " to connect; the jacks it fits are lit (" + std::to_string(drag.targets.size())
+            + ").";
+    hint_line.update(cx, [](HintLine &, Ctx c) { c.notify(); });
+    drag_view.update(cx, [](DragView &, Ctx c) { c.notify(); });
+}
+
+void Editor::jack_drag(Ctx cx, gp_point window)
+{
+    if (!drag.active)
+        return;
+    drag.loose = to_rack(cx, window);
+    const Patch &p = engine.patch();
+    drag.over = jack_at(p, drag.loose.x, drag.loose.y);
+    if (drag.over && *drag.over == drag.fixed)
+        drag.over.reset();
+    if (drag.over)
+    {
+        const Patch probe = without(p, drag.picked);
+        const auto [f, t] = as_cable(probe, drag.fixed, *drag.over);
+        drag.verdict = probe.can_connect(f, t);
+        status = drag.verdict == Err::Ok
+            ? "Release to connect " + port_name(f) + "  ->  " + port_name(t) + "."
+            : "Cannot connect here: " + std::string(describe(drag.verdict)) + ".";
+    }
+    else
+        status = drag.picked ? "Release here to remove the cable."
+                             : "Release on a lit jack to connect; anywhere else cancels.";
+    hint_line.update(cx, [](HintLine &, Ctx c) { c.notify(); });
+    drag_view.update(cx, [](DragView &, Ctx c) { c.notify(); });
+}
+
+void Editor::jack_release(Ctx cx, gp_point window)
+{
+    if (!drag.active)
+        return;
+    jack_drag(cx, window); // where it ends
+    const CableDrag d = drag;
+    drag = CableDrag { };
+    drag_view.update(cx, [](DragView &, Ctx c) { c.notify(); });
+    if (d.picked)
+        if (auto it = cable_views.find({ d.picked->to.node, d.picked->to.port });
+            it != cable_views.end())
+            it->second.update(cx, [](CableView &, Ctx v) { v.notify(); });
+
+    if (d.over && d.verdict == Err::Ok)
+    {
+        const auto [f, t] = as_cable(engine.patch(), d.fixed, *d.over);
+        if (d.picked && d.picked->to == t)
+        {
+            say(cx, "The cable is where it was.");
+            return;
+        }
+        if (d.picked)
+        { // moved to another input: same cable, same colour
+            const auto it = cable_colour.find({ d.picked->to.node, d.picked->to.port });
+            if (it != cable_colour.end())
+                cable_colour[{ t.node, t.port }] = it->second;
+            engine.patch().disconnect(d.picked->to);
+        }
+        else
+            cable_colour[{ t.node, t.port }] = next_colour++;
+        if (connect(cx, f, t) != Err::Ok
+            && d.picked) // cannot happen after can_connect; put it back
+            connect(cx, d.picked->from, d.picked->to);
+    }
+    else if (d.picked && !d.over)
+        disconnect(cx, d.picked->to);
+    else if (d.over)
+        say(cx, "Not connected: " + std::string(describe(d.verdict)) + ".");
+    else
+        say(cx, "No cable: release on a lit jack to connect.");
 }
 
 void Editor::hover(Ctx cx, uint32_t node, int item, bool inside)
@@ -914,7 +1363,7 @@ void Editor::remove_module(Ctx cx, uint32_t node)
     }
     engine.compile();
     sync_panels(cx);
-    refresh_rack(cx);
+    sync_cables(cx); // its cables went with it
     say(cx, "Deleted " + name + ".");
 }
 
@@ -930,6 +1379,7 @@ bool Editor::move_module(Ctx cx, uint32_t node, int x, int y)
     n->x = (float)x;
     n->y = (float)y;
     refresh_rack(cx);
+    refresh_cables_of(cx, node); // its cables follow
     return true;
 }
 
@@ -974,7 +1424,7 @@ bool Editor::load_file(Ctx cx, const std::string &path, std::string *error)
     const size_t slash = path.find_last_of('/');
     patch_name = slash == std::string::npos ? path : path.substr(slash + 1);
     sync_panels(cx);
-    refresh_rack(cx);
+    sync_cables(cx);
     std::string msg = "Opened " + patch_name + ".";
     if (moved)
         msg += "  " + std::to_string(moved) + " panel(s) moved apart: they overlapped.";
@@ -1001,6 +1451,18 @@ Entity<Editor> open_rack(App app, const Options &opt, std::string *error)
     e->rack = app.new_view<RackView>();
     app.get(e->rack)->ed = ed;
     app.get(e->rack)->scroll = app.new_scroll();
+    e->drag_view = app.new_view<DragView>();
+    app.get(e->drag_view)->ed = ed;
+    // Delete or Backspace removes the selected cable, unless something focused (the search box)
+    // takes the key
+    app.bind_key("delete", "rack::delete_cable");
+    app.bind_key("backspace", "rack::delete_cable");
+    app.on_global_action("rack::delete_cable",
+        [ed](Ctx cx)
+        {
+            if (Editor *e2 = ed.get(cx))
+                e2->delete_selected(cx);
+        });
     e->browser = app.new_view<Browser>();
     Browser *b = app.get(e->browser);
     b->ed = ed;

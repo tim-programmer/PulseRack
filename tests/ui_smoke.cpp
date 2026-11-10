@@ -2,6 +2,9 @@
 // event path: hit testing, capture, handlers). Needs a display; exits 77 (skipped) without one.
 //   ui_smoke                  the interaction test
 //   ui_smoke --check-ppm F    F is a screenshot that is not blank (several colours, not all one)
+//   ui_smoke --pose PATCH NODE PORT X Y   opens PATCH, presses on that jack and holds a cable at
+//                             window (X, Y), for a screenshot of a drag (GPUIC_SCREENSHOT,
+//                             GPUIC_WAIT_MS)
 #include "engine/model/registry.h"
 #include "ui/geometry.h"
 #include "ui/rack_ui.h"
@@ -11,6 +14,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <algorithm>
 #include <fstream>
 #include <set>
 #include <vector>
@@ -120,6 +124,140 @@ struct Driver
             id = std::max(id, n.id);
         return id;
     }
+
+    PortRef P(uint32_t n, const char *id)
+    {
+        return PortRef { n, (uint16_t)find_port(*node(n)->desc, id) };
+    }
+    gp_point     J(uint32_t n, const char *id) { return port_center(cx(), ed, n, P(n, id).port); }
+    const Cable *into(uint32_t n, const char *id)
+    {
+        return e().engine.patch().cable_into(P(n, id));
+    }
+    bool  hint_has(const char *s) { return e().hint().find(s) != std::string::npos; }
+    float peak() // the engine's output, rendered here (there is no audio device yet)
+    {
+        std::vector<float> l(4800), r(4800);
+        e().engine.render(l.size(), l.data(), r.data());
+        float m = 0;
+        for (float v : l)
+            m = std::max(m, std::fabs(v));
+        return m;
+    }
+    // the window position of the middle of the cable into `to`
+    gp_point cable_middle(PortRef to)
+    {
+        const Patch &p = e().engine.patch();
+        const Cable *c = p.cable_into(to);
+        const auto   q = cable_curve(jack_center(*p.find(c->from.node), c->from.port),
+            jack_center(*p.find(c->to.node), c->to.port));
+        const float  x = 0.125f * q[0].x + 0.375f * q[1].x + 0.375f * q[2].x + 0.125f * q[3].x;
+        const float  y = 0.125f * q[0].y + 0.375f * q[1].y + 0.375f * q[2].y + 0.125f * q[3].y;
+        const RackViewport vp = rack_viewport(cx(), ed);
+        return { rack_origin().x + x - vp.x, rack_origin().y + y - vp.y };
+    }
+
+    void cables(uint32_t osc, uint32_t vca, uint32_t adsr)
+    {
+        const Patch   &patch = e().engine.patch();
+        const uint32_t out = e().add_module(cx(), *find_module("out"));
+        wait();
+        CHECK(out != 0);
+        CHECK(e().connect(cx(), P(vca, "out"), P(out, "l")) == Err::Ok);
+        CHECK(peak() == 0); // nothing into the VCA yet
+
+        // ---- a cable from an output to an input, with what the drag shows on the way
+        const gp_point a = J(osc, "out");
+        press(a);
+        move({ a.x + 30, a.y + 40 });
+        wait();
+        CHECK(e().drag.active);
+        auto lit = [&](PortRef q)
+        {
+            return std::find(e().drag.targets.begin(), e().drag.targets.end(), q)
+                != e().drag.targets.end();
+        };
+        CHECK(lit(P(vca, "in")) && lit(P(adsr, "gate"))
+            && lit(P(osc, "pitch")) == false); // its own input: a loop
+        CHECK(!lit(P(adsr, "note")) && !lit(P(vca, "out"))
+            && !lit(P(out, "l"))); // event, an output, in use
+        move(J(adsr, "note"));
+        wait();
+        CHECK(e().drag.over && e().drag.verdict == Err::KindMismatch
+            && hint_has("Cannot connect here"));
+        move(J(vca, "in"));
+        wait();
+        CHECK(e().drag.over && e().drag.verdict == Err::Ok && hint_has("Release to connect"));
+        release(J(vca, "in"));
+        CHECK(!e().drag.active);
+        CHECK(into(vca, "in") && into(vca, "in")->from == P(osc, "out"));
+        CHECK(peak() > 0.05f); // the engine took the cable at once: osc -> VCA -> out
+        CHECK(e().cable_views.size() == patch.cables().size());
+
+        // ---- refused: an event input, a loop, an empty release
+        drag(a, J(adsr, "note"));
+        CHECK(!into(adsr, "note") && hint_has("Not connected"));
+        drag(J(vca, "out"), J(osc, "pitch"));
+        CHECK(!into(osc, "pitch") && hint_has("loop"));
+        const size_t n_cables = patch.cables().size();
+        drag(a, { a.x + 150, a.y + 160 });
+        CHECK(patch.cables().size() == n_cables && hint_has("No cable"));
+
+        // ---- lift a plug off an input and put it on another: the same cable, the same colour
+        const int colour = e().cable_colour.at({ vca, P(vca, "in").port });
+        drag(J(vca, "in"), J(adsr, "gate"));
+        CHECK(!into(vca, "in") && into(adsr, "gate") && into(adsr, "gate")->from == P(osc, "out"));
+        CHECK(e().cable_colour.at({ adsr, P(adsr, "gate").port }) == colour);
+        CHECK(peak() == 0); // the VCA lost its input
+        // ... and drop it on empty rack: removed
+        drag(J(adsr, "gate"), { o().x + 900, o().y + 700 });
+        CHECK(!into(adsr, "gate") && patch.cables().size() == n_cables - 1);
+
+        // ---- from an empty input to an output works too
+        drag(J(vca, "in"), a);
+        CHECK(into(vca, "in") && into(vca, "in")->from == P(osc, "out"));
+
+        // ---- select by clicking the cable; Delete removes it, but not while the search box has
+        // the keys
+        click(cable_middle(P(vca, "in")));
+        CHECK(e().selected && *e().selected == P(vca, "in") && hint_has("Selected the cable"));
+        click({ style::kBrowserPad + 40,
+            style::kToolbarH + style::kBrowserPad + style::kSearchH / 2 });
+        gp_simulate_keystrokes(app, "backspace");
+        wait(0.1);
+        CHECK(into(vca, "in") != nullptr); // the key went to the search box
+        click(cable_middle(P(vca, "in")));
+        gp_simulate_keystrokes(app, "delete");
+        wait(0.1);
+        CHECK(!into(vca, "in") && !e().selected);
+
+        // ---- or from its menu
+        CHECK(e().connect(cx(), P(osc, "out"), P(vca, "in")) == Err::Ok);
+        wait();
+        const gp_point m = cable_middle(P(vca, "in"));
+        click(m, GP_MOUSE_RIGHT);
+        click({ m.x + 4 + 90, m.y + 4 + 4 + 13 });
+        CHECK(!into(vca, "in"));
+
+        // ---- a cable follows its panel
+        CHECK(e().connect(cx(), P(osc, "out"), P(vca, "in")) == Err::Ok);
+        wait();
+        const gp_point before = cable_middle(P(vca, "in"));
+        // (by the left end of its title: the VCA OUT -> Audio Output cable crosses the middle, and
+        // a cable over a panel takes the press, as designed)
+        const gp_point title = control_center(cx(), ed, vca, -1);
+        const gp_point grab { title.x - 2 * kHp + 4, title.y };
+        drag(grab, { grab.x + 3 * kHp, grab.y });
+        CHECK(node(vca)->x == 11);
+        const gp_point after = cable_middle(P(vca, "in"));
+        CHECK(after.x > before.x + 10);
+        click(after); // the cable is drawn where the model says
+        CHECK(e().selected && *e().selected == P(vca, "in"));
+        click({ o().x + 900, o().y + 700 }); // and a click on empty rack lets go of it
+        CHECK(!e().selected);
+        CHECK(e().engine.apply_failures() == 0 && e().engine.nonfinite_samples() == 0);
+    }
+    gp_point o() { return rack_origin(); }
 
     void run()
     {
@@ -233,8 +371,10 @@ struct Driver
         drag(title, { title.x, title.y + kPanelHeightHp * kHp });
         CHECK(node(vca)->x == 8 && node(vca)->y == kPanelHeightHp);
 
-        // ---- panning: drag empty space
         const gp_point o = rack_origin();
+        cables(osc, vca, adsr);
+
+        // ---- panning: drag empty space
         drag({ o.x + 900, o.y + 300 }, { o.x + 700, o.y + 250 });
         RackViewport vp = rack_viewport(cx(), ed);
         CHECK(near(vp.x, 200, 1) && near(vp.y, 50, 1));
@@ -251,14 +391,17 @@ struct Driver
             o.y + n->y * kHp + kTitleHeight + 2 + 4 + 13 };
         click(item);
         CHECK(node(osc) == nullptr && e().engine.state(osc) == nullptr);
-        CHECK(patch.nodes().size() == 2);
+        CHECK(patch.nodes().size() == 3);     // the VCA, the ADSR and the audio output
+        for (const Cable &c : patch.cables()) // its cables went with it
+            CHECK(c.from.node != osc && c.to.node != osc);
+        CHECK(e().cable_views.size() == patch.cables().size());
         CHECK(e().engine.apply_failures() == 0);
 
         // ---- the rest of the catalogue: every module can be added and shows a panel
         for (const ModuleDesc *d : all_modules())
             CHECK(e().add_module(cx(), *d) != 0);
         wait(0.2);
-        CHECK(patch.nodes().size() == 2 + all_modules().size());
+        CHECK(patch.nodes().size() == 3 + all_modules().size());
         CHECK(e().panels.size() == patch.nodes().size());
         for (const Node &a : patch.nodes())
             CHECK(!collides(patch, *a.desc, (int)a.x, (int)a.y, a.id));
@@ -270,6 +413,35 @@ int main(int argc, char **argv)
 {
     if (argc == 3 && !std::strcmp(argv[1], "--check-ppm"))
         return check_ppm(argv[2]);
+    if (argc == 7 && !std::strcmp(argv[1], "--pose"))
+    {
+        static Options  opt;
+        static PortRef  jack;
+        static gp_point to;
+        opt.patch_path = argv[2];
+        jack = PortRef { (uint32_t)std::atoi(argv[3]), (uint16_t)std::atoi(argv[4]) };
+        to = { (float)std::atof(argv[5]), (float)std::atof(argv[6]) };
+        setenv("GPUIC_IGNORE_REAL_MOUSE", "1", 1);
+        return gpuic::run(
+            [](App app)
+            {
+                std::string error;
+                auto        ed = open_rack(app, opt, &error);
+                app.ctx(ed).spawn(
+                    [app, ed](Co &co)
+                    {
+                        co.sleep(0.2);
+                        Driver         d { co, app, ed };
+                        const gp_point a = port_center(d.cx(), ed, jack.node, jack.port);
+                        d.press(a);
+                        for (int i = 1; i <= 8; i++)
+                        {
+                            d.move({ a.x + (to.x - a.x) * i / 8, a.y + (to.y - a.y) * i / 8 });
+                            d.wait(0.02);
+                        }
+                    });
+            });
+    }
     if (!std::getenv("DISPLAY") && !std::getenv("WAYLAND_DISPLAY"))
     {
         std::printf("no display: skipped\n");

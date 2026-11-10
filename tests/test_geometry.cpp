@@ -203,3 +203,49 @@ TEST(geometry_example_patches_need_no_moving)
         CHECK(resolve_overlaps(p) == 0);
     }
 }
+
+TEST(geometry_jacks_are_found_where_they_are_drawn)
+{
+    Patch             p;
+    const ModuleDesc *osc = find_module("osc"), *vca = find_module("vca");
+    const uint32_t    a = p.add_node(*osc, 3, 2), b = p.add_node(*vca, 20, 2);
+    for (const Node &n : p.nodes())
+        for (size_t k = 0; k < n.desc->ports.size(); k++)
+        {
+            const Pt    c = jack_center(n, k);
+            const Rect &j = panel_layout(*n.desc).jacks[k];
+            CHECK(c.x == n.x * kHp + kPanelBorder + j.x + j.w / 2);
+            auto hit = jack_at(p, c.x, c.y);
+            CHECK(hit && hit->node == n.id && hit->port == k);
+            hit = jack_at(p, c.x + kJackSize / 2 + 3, c.y); // within the slack
+            CHECK(hit && hit->node == n.id && hit->port == k);
+            CHECK(node_rect(*n.desc, n.x, n.y).contains(c.x, c.y));
+        }
+    const Node *na = p.find(a);
+    const Pt    c0 = jack_center(*na, 0);
+    CHECK(!jack_at(p, c0.x, c0.y - 40));                    // a control, not a jack
+    CHECK(!jack_at(p, 1000, 1000) && !jack_at(p, -50, 40)); // empty rack
+    (void)b;
+}
+
+TEST(geometry_cables_sag_and_orient)
+{
+    const auto c = cable_curve({ 100, 300 }, { 500, 280 });
+    CHECK(c[0].x == 100 && c[0].y == 300 && c[3].x == 500 && c[3].y == 280);
+    CHECK(c[1].y > 300 && c[2].y > 280); // the control points hang below both ends
+    const auto shorter = cable_curve({ 100, 300 }, { 160, 300 });
+    CHECK(shorter[1].y - 300 < c[1].y - 300);              // a short cable sags less
+    CHECK(cable_curve({ 0, 0 }, { 5000, 0 })[1].y <= 240); // and a long one has a limit
+
+    Patch             p;
+    const ModuleDesc *osc = find_module("osc"), *vca = find_module("vca");
+    const uint32_t    a = p.add_node(*osc, 0, 0), b = p.add_node(*vca, 8, 0);
+    const PortRef     out { a, (uint16_t)find_port(*osc, "out") },
+        in { b, (uint16_t)find_port(*vca, "in") };
+    auto [f1, t1] = as_cable(p, out, in);
+    auto [f2, t2] = as_cable(p, in, out); // a drag that started at the input
+    CHECK(f1 == out && t1 == in && f2 == out && t2 == in);
+    const PortRef out2 { b, (uint16_t)find_port(*vca, "out") };
+    auto [f3, t3] = as_cable(p, out, out2); // two outputs: as given, for can_connect to refuse
+    CHECK(f3 == out && t3 == out2 && p.can_connect(f3, t3) == Err::NotAnInput);
+}

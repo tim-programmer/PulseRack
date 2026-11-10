@@ -1,14 +1,18 @@
-// The application's window (milestone 2): a toolbar, the module browser, the rack of panels and the
-// hint line, written with gpuic's C++ layer. The GUI is a view of the engine (docs/gui.md): every
-// edit goes through the Editor below, which changes the patch and the running modules together.
+// The application's window: a toolbar, the module browser, the rack of panels with the cables
+// between them, and the hint line, written with gpuic's C++ layer. The GUI is a view of the engine
+// (docs/gui.md): every edit goes through the Editor below, which changes the patch and the running
+// modules together.
 #pragma once
 
 #include "engine/engine.h"
+#include "ui/geometry.h"
 
 #include <gpuic/gpuic.hpp>
 
 #include <map>
+#include <optional>
 #include <string>
+#include <vector>
 
 namespace rack::ui
 {
@@ -18,6 +22,8 @@ struct PanelView;
 struct Browser;
 struct Toolbar;
 struct HintLine;
+struct CableView;
+struct DragView;
 
 // The model of the window: the engine, the patch's name, the hint line's text, and the handles of
 // the views that show them. An entity, so handlers anywhere reach it through a handle.
@@ -30,7 +36,8 @@ struct Editor
     // What the pointer is over: a node's control (item >= 0), its title bar (kHoverTitle) or a jack
     // (kHoverPort - port); hover_text describes it, and the hint line shows it while it is not
     // empty.
-    static constexpr int kHoverTitle = -1, kHoverPort = -2;
+    // A cable is hovered as (its input's node, kHoverCable - its input's port).
+    static constexpr int kHoverTitle = -1, kHoverPort = -2, kHoverCable = -1000;
     uint32_t             hover_node = 0;
     int                  hover_item = 0;
     std::string          hover_text;
@@ -41,6 +48,24 @@ struct Editor
     gpuic::Entity<Toolbar>                       toolbar;
     gpuic::Entity<HintLine>                      hint_line;
     std::map<uint32_t, gpuic::Entity<PanelView>> panels; // one cached view per node, by node id
+
+    // ---- cables. A cable is known by its input (an input takes one cable).
+    using CableKey = std::pair<uint32_t, uint16_t>;
+    std::map<CableKey, gpuic::Entity<CableView>> cable_views;  // one cached view per cable
+    std::map<CableKey, int>                      cable_colour; // its palette entry, given in turn
+    int                                          next_colour = 0;
+    std::optional<PortRef>                       selected; // the selected cable's input
+    gpuic::Entity<DragView>                      drag_view;
+    struct CableDrag
+    {
+        bool                   active = false;
+        PortRef                fixed;             // the jack the cable hangs from
+        Pt                     loose;             // the other end, at the pointer (rack pixels)
+        std::optional<PortRef> over;              // the jack under the pointer
+        Err                    verdict = Err::Ok; // what connecting there would say
+        std::vector<PortRef>   targets; // every jack it could connect to (lit while dragging)
+        std::optional<Cable>   picked;  // the cable lifted off an input, if it began that way
+    } drag;
 
     // ---- edits (each updates the patch, the engine and the views that show it)
     // Adds a module at the first free place near the visible part of the rack; 0 if the library
@@ -53,18 +78,33 @@ struct Editor
     void     set_param(gpuic::Ctx cx, uint32_t node, size_t param, float value);
     void     say(gpuic::Ctx cx, std::string text); // the status the hint line falls back to
     // The pointer entered (inside) or left a node's control, title or jack (items as above).
-    void        hover(gpuic::Ctx cx, uint32_t node, int item, bool inside);
-    std::string hint() const
-    {
-        return hover_text.empty() ? status : hover_text;
-    } // what the hint line shows
+    void hover(gpuic::Ctx cx, uint32_t node, int item, bool inside);
+    // What the hint line shows: while a cable is dragged, what releasing it would do; otherwise
+    // what is under the pointer, or the last action.
+    std::string hint() const { return drag.active || hover_text.empty() ? status : hover_text; }
     std::string describe_item(uint32_t node, int item) const;
+
+    // Cables: either end may be given first (a drag can start at an input). Each compiles the
+    // engine.
+    Err  connect(gpuic::Ctx cx, PortRef a, PortRef b);
+    void disconnect(gpuic::Ctx cx, PortRef to);
+    void select_cable(gpuic::Ctx cx, std::optional<PortRef> to);
+    void delete_selected(gpuic::Ctx cx);
+    // A press on a jack starts a cable: from an output or an empty input a new one, from a
+    // connected input its cable is lifted off. Positions are window pixels.
+    void        jack_press(gpuic::Ctx cx, PortRef jack, gp_point window);
+    void        jack_drag(gpuic::Ctx cx, gp_point window);
+    void        jack_release(gpuic::Ctx cx, gp_point window);
+    Pt          to_rack(gpuic::Ctx cx, gp_point window); // window pixels -> rack pixels
+    std::string port_name(PortRef r) const;              // "Oscillator OUT"
 
     // Replaces the patch with a file's; false and `error` set if it does not load.
     bool load_file(gpuic::Ctx cx, const std::string &path, std::string *error);
 
     // ---- for the views
     void sync_panels(gpuic::Ctx cx); // a view for every node, none for nodes that are gone
+    void sync_cables(gpuic::Ctx cx); // the same for cables
+    void refresh_cables_of(gpuic::Ctx cx, uint32_t node); // after a panel moved
     void refresh_rack(gpuic::Ctx cx);
 };
 

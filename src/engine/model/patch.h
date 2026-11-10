@@ -69,6 +69,7 @@ public:
         float y = 0);                  // false if the id is taken (file loading)
     Err      remove_node(uint32_t id); // and its cables
     Err      connect(PortRef from, PortRef to);
+    Err      can_connect(PortRef from, PortRef to) const; // what connect would say, changing nothing
     Err      disconnect(PortRef to); // an input has at most one cable
     Err      set_param(uint32_t node, size_t param, float value, float *stored = nullptr);
     Err      set_step(uint32_t node, size_t index, const StepData &step);

@@ -45,6 +45,15 @@ inline const Color kKnobPointer = rgb(0xf2f2f7);
 inline const Color kWell = rgb(0x111216); // a slider's track, a selector's box, a jack's hole
 inline const Color kDanger = rgb(0xf38ba8);
 
+// Cables take these in turn, so that crossing cables can be told apart (colour is an aid only:
+// jacks show the kind by their shape).
+inline Color cable_colour(int i)
+{
+    static const uint32_t pal[8]
+        = { 0xf38ba8, 0xfab387, 0xf9e2af, 0xa6e3a1, 0x94e2d5, 0x89b4fa, 0xcba6f7, 0xf5c2e7 };
+    return rgb(pal[((i % 8) + 8) % 8]);
+}
+
 struct CategoryColors
 {
     Color top, bottom, title, chip;

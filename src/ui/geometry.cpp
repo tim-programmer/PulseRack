@@ -281,4 +281,45 @@ int resolve_overlaps(Patch &p)
     return moved;
 }
 
+Pt jack_center(const Node &n, size_t port)
+{
+    const Rect &j = panel_layout(*n.desc).jacks[port];
+    return { n.x * kHp + kPanelBorder + j.x + j.w / 2, n.y * kHp + kPanelBorder + j.y + j.h / 2 };
+}
+
+std::optional<PortRef> jack_at(const Patch &p, float x, float y, float slack)
+{
+    for (const Node &n : p.nodes())
+    {
+        const Rect r = node_rect(*n.desc, n.x, n.y);
+        if (!Rect { r.x - slack, r.y - slack, r.w + 2 * slack, r.h + 2 * slack }.contains(x, y))
+            continue;
+        for (size_t k = 0; k < n.desc->ports.size(); k++)
+        {
+            const Pt    c = jack_center(n, k);
+            const float half = kJackSize / 2 + slack;
+            if (std::fabs(x - c.x) <= half && std::fabs(y - c.y) <= half)
+                return PortRef { n.id, (uint16_t)k };
+        }
+    }
+    return std::nullopt;
+}
+
+std::array<Pt, 4> cable_curve(Pt a, Pt b)
+{
+    const float dist = std::hypot(b.x - a.x, b.y - a.y);
+    const float sag = std::min(30.f + 0.35f * dist, 240.f);
+    return { a, Pt { a.x + (b.x - a.x) * 0.1f, a.y + sag },
+        Pt { b.x - (b.x - a.x) * 0.1f, b.y + sag }, b };
+}
+
+std::pair<PortRef, PortRef> as_cable(const Patch &p, PortRef a, PortRef b)
+{
+    const Node *na = p.find(a.node), *nb = p.find(b.node);
+    if (na && nb && a.port < na->desc->ports.size() && b.port < nb->desc->ports.size()
+        && !na->desc->ports[a.port].is_output && nb->desc->ports[b.port].is_output)
+        return { b, a };
+    return { a, b };
+}
+
 } // namespace rack::ui

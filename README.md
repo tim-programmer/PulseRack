@@ -8,8 +8,8 @@ The reference for the look and the workflow is Voltage Modular: a module browser
 (search, filter, an *Add* button per module), a rack of panels on the right, cables between
 jacks, and a toolbar for new/save/open and the audio device.
 
-**Status: the gpuic spike (milestone 0), the headless engine (milestone 1) and the window without cables (milestone 2) are
-built. No cables and no sound yet** (milestones 3 and 4). The name is a placeholder.
+**Status: the gpuic spike (milestone 0), the headless engine (milestone 1), the window (milestone 2) and cables (milestone 3)
+are built. No sound yet** (milestone 4): the engine runs, but nothing plays it. The name is a placeholder.
 
 ## Documents
 
@@ -25,7 +25,7 @@ built. No cables and no sound yet** (milestones 3 and 4). The name is a placehol
 
 ```sh
 cmake -S . -B build && cmake --build build && ctest --test-dir build        # float; add -DPULSERACK_SAMPLE_TYPE=Q15 or Q31
-build/src/pulserack examples/sequence.rack                                  # the window: browse, add, move, turn knobs
+build/src/pulserack examples/sequence.rack                                  # the window: add modules, turn knobs, patch cables
 build/src/rack-render examples/sequence.rack bass.wav 8                     # render a patch to a WAV file
 ```
 

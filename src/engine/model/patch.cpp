@@ -133,6 +133,14 @@ bool Patch::reaches(uint32_t from_node, uint32_t to_node) const
 
 Err Patch::connect(PortRef from, PortRef to)
 {
+    const Err e = can_connect(from, to);
+    if (e == Err::Ok)
+        cables_.push_back(Cable { from, to });
+    return e;
+}
+
+Err Patch::can_connect(PortRef from, PortRef to) const
+{
     const Node *a = find(from.node);
     const Node *b = find(to.node);
     if (!a || !b)
@@ -151,7 +159,6 @@ Err Patch::connect(PortRef from, PortRef to)
         return Err::InputInUse;
     if (reaches(to.node, from.node))
         return Err::WouldLoop; // includes a cable from a module to itself
-    cables_.push_back(Cable { from, to });
     return Err::Ok;
 }
 
