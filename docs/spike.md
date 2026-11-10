@@ -143,6 +143,107 @@ guaranteed shutdown order). Checked independently, not taken from its README:
 **Result: the prompt's requirements are met** (stroke-only hit test, no collateral invalidation, target ≤ 0.5 ms for 100 curves at 0.16-0.20 ms,
 C++ builders, tests). The SVG stand-in and its two rules (batch the releases, no handlers on cable SVGs) are no longer needed.
 
+## Follow-up: gpuic `b5e2679`, the spike re-run, checked 2026-11-11
+
+gpuic moved 10 commits past `bc442de` (curve dashes, gradients, arrowheads and text on a path; offscreen layers, so group opacity
+and translucent strokes; filters, blend modes, masks; fill rules, markers, backdrop filters; 3D transforms and element keys; text
+input work). The public C header changed only by additions. The original `spike/` was not kept, so a **new scratch spike** (one
+`spike.cpp`, C++20, outside this repository) repeated the questions above against it.
+
+* **Versions:** gpuic `b5e2679`, PulseCoreLib `fd4f2ec` (was `fd9b8aa`), both fetched from GitHub `main` by `FetchContent`, with
+  `-DGPUIC_DEPENDENCIES=SYSTEM`. Same machine, same method (`GPUIC_SCREENSHOT` + `GPUIC_WAIT_MS=3000` + `GPUIC_STATS=1`, one run per row,
+  CPU time per draw); input injected with `gp_simulate_mouse` / `gp_simulate_wheel`.
+* **gpuic's own tests, fresh build, system dependencies: 58 of 58 pass.**
+
+| # | Check | Before | `b5e2679` |
+|---|-------|--------|-----------|
+| 1 | 100 cached `gp_curve` cables, one moving (40 panels) | 0.20 ms (`bc442de`) | **0.23 ms** (build 0.010, layout 0.021, paint 0.054, GL submit 0.142); 40 cables 0.13 ms; ~2.2 view renders per draw |
+| 1 | Click on a curve's stroke / inside its box but off the stroke | cable / box | **cable 1 / box 1**: still stroke-only |
+| 1 | Knob drag under a cable **with a handler** whose bounding box covers the knob | (SVG: the cable took it) | **knob down/drag/up = 1/2/1, cable 0** |
+| 2 | Knob drag, 40 cached panels | 0.12 ms, ~2 view renders | **0.09 ms**, 2.05 view renders, 26,793 layouts skipped |
+| 3 | `on_wheel` on a plain box, 3 notches down then 2 up | (2 notches: dy 80) | **5 events, dy +40 net** (+40 per notch down) |
+| 4 | `every(1/30)` meter, real window, 10 s | 29.6 Hz | **296 draws (29.6 Hz)**, 0.064 ms GL submit; process CPU 0.35 s vs 0.33 s idle |
+| 4 | Idle window, 10 s | 3 wakeups, 1 draw | **3 wakeups, 1 draw** |
+| 5 | 64-step grid: one view / 64 cached views | 0.71 / 0.13 ms | **0.19 / 0.06 ms**, but see the note below |
+| 6 | One CMake tree, float / Q15 / Q31, `-Wall -Wextra -Wpedantic -Werror`, gpuic headers as **ordinary** includes | needed SYSTEM | **builds clean in all three**; the audio mode runs in each |
+| 7 | SDL3 audio next to the window, owned by an entity | PipeWire, 48 kHz; 1024 / 256 / 128 frames | **the same**: 21.3 / 5.3 / 2.7 ms, ≈ 48,000 frames per s, device closed in the destructor, exit 0 |
+
+**New findings:**
+
+* **Translucent cables work** (a stroke colour with alpha 0.6): in a screenshot of 100 of them over the panels, the panels show through,
+  widths are even, no seams where cables cross. **They cost more:** GL submit **1.27 ms** per draw against 0.14 ms opaque (total 1.36 vs
+  0.23 ms), about 200 more instances per draw, presumably an offscreen layer per curve. Usable at 60 Hz; not free. If the design wants
+  see-through cables, translucency for the dragged or hovered cable only is the cheap version until gpuic makes it cheaper.
+* **`gp_svg_release` still ends with `gp_app_notify`** (invalidates every cached view; read in `svg.c`, not re-measured). Irrelevant to
+  cables now, but anything that releases SVGs during interaction (e.g. module icons swapped on hover) would hit it.
+* **C++ pitfall:** `e = std::move(e).on_mouse_down(...)` (re-assigning an element to a builder call on itself) **empties the element
+  silently**: `detail::Vec`'s move assignment (`gpuic.hpp`) has no self-assignment check. The spike's first knob vanished this way.
+  Use the in-place `&` overloads instead: `e.on_mouse_down(...)`, `row.child(...)`.
+* **`on_drag` and `on_mouse_up` still cannot capture** (the C library has no data pointer for them; a `static_assert` says so), unlike
+  `on_mouse_down` / `on_wheel` / `on_click`. A knob that needs its index keeps doing what the first spike did: capture it in
+  `on_mouse_down` and keep it in the view's state.
+* **Per-draw statistics are not public:** `GPUIC_STATS=1` prints run averages at exit; `cables_bench` reads `app->stat_*` through
+  `src/internal.h`. A consumer cannot measure per phase (here: one process per row).
+* gpuic's bundled nanosvg prints six `-Wmaybe-uninitialized` warnings (`nanosvg.h:1693`) when gpuic is built as a subproject.
+  gpuic's own targets, not PulseRack's: harmless, but noisy.
+
+**Notes on comparability:** the 64-step grid of the first spike was lost with its code; this one is 64 columns of 4 cells, so its
+absolute times are not comparable (the cached/uncached ratio, about 3×, is). In knob mode the knob row is placed absolutely (to know where
+to press); otherwise the scene is the one above.
+
+**Result: nothing regressed.** Every answer in the summary still holds; the curve costs about what it did, the knob drag is a little
+cheaper. The design changes below stand. **New:** translucent cables are possible at about 6× the opaque cost.
+
+## Follow-up: gpuic `771626e`, the six requests, checked 2026-11-11
+
+The findings above went to gpuic as six requests; commit `771626e` ("Fix issues found in a real application") answers all of them.
+The scratch spike was re-run in full against it (PulseCoreLib unchanged at `fd4f2ec`, a fresh `FetchContent` of both), with a check
+added for each fix. **gpuic's own tests, fresh build: 59 of 59 pass** (new: `svgrelease_test`; `layer_test`, `cpp_test` extended).
+
+| Request | Check | Result |
+|---------|-------|--------|
+| Cheaper translucent strokes | 100 cables at alpha 0.6, one moving (same method as above) | **GL submit 0.39 ms** (was 1.27; opaque 0.14); total 0.51 vs 0.25 ms opaque, so **about 2×** instead of 6× |
+| … without double-covering | a translucent loop that crosses itself, screenshot | the crossing and a single branch have the **same pixel** (146, 95, 118): a self-overlapping stroke still gets its layer |
+| Self-move of an `Element` | the knob written as `k = std::move(k).on_mouse_down(...)...` | **the knob is kept** (it vanished before); drag 1/2/1 |
+| `on_drag` / `on_mouse_up` that capture | the knob's handlers capture an index (7) | **7 seen in both** |
+| Public statistics | the phases below, in one process, with `gp_app_stats` (no `internal.h`) | **works**; `gp_app_request_paint` gives a "nothing changed" baseline |
+| `gp_svg_release` invalidates only its views | release an SVG no view shows, every frame, 40 panels + 100 cables | **0 view renders per draw** (every cached view rendered again before) |
+| … and the view that shows it | replace a cached icon's SVG and release the old one, every frame | **2 view renders per draw** (the icon and its parent). Submit 1.04 ms: a new drawing rasterised and uploaded each frame, as expected |
+| nanosvg warnings | consumer build of gpuic as a subproject (float, Q15, Q31) | **0 warnings** (gpuic's own top-level build still prints 6, all in its tests' `box_of`, already there before) |
+
+**In-process phases** (`gp_app_stats`, 200 vsync-paced draws each, real window; 100 cables, 40 panels, one SVG icon, all cached views):
+
+| Phase | build | layout | paint | submit | **total** | view renders / draw |
+|-------|------:|-------:|------:|-------:|----------:|--------------------:|
+| nothing changes (`gp_app_request_paint`) | 0.000 | 0.000 | 0.045 | 0.070 | **0.115 ms** | 0 |
+| one knob turns | 0.011 | 0.026 | 0.049 | 0.068 | **0.154 ms** | 2 |
+| one cable moves, opaque | 0.008 | 0.017 | 0.048 | 0.099 | **0.171 ms** | 2 |
+| one cable moves, all translucent | 0.008 | 0.018 | 0.056 | 0.304 | **0.386 ms** | 2 |
+| a self-crossing loop moves, translucent | 0.008 | 0.018 | 0.058 | 0.312 | **0.396 ms** | 2 |
+| a self-crossing loop moves, opaque | 0.008 | 0.018 | 0.049 | 0.080 | **0.155 ms** | 2 |
+
+**Everything else unchanged** (same method as the previous follow-up): knob drag 0.11 ms; 40 / 100 cables 0.16 / 0.25 ms; stroke-only hit
+test (cable 1 / box 1); knob drag under a handler-carrying cable 1/2/1, cable 0; `on_wheel` 5 events, +40 net; 30 Hz meter 296 draws in 10 s
+and process CPU 0.35 s; idle 3 wakeups and 1 draw in 10 s; grid 0.21 / 0.08 ms; clean `-Wpedantic -Werror` build in float, Q15 and Q31;
+audio on PipeWire at 48 kHz with 1024 / 256 / 128 frames, closed by the entity's destructor, exit 0 in all three sample types. (One 10 s
+meter run counted 477 wakeups for its 296 draws; three repeats gave about 1.02 wakeups per draw, as before: a one-off.)
+
+**New finding: a drag follows the element's place in the tree, not the element.** To keep captured data valid, a drag in progress now
+takes its `on_drag` / `on_mouse_up` again from the rebuilt tree after every rebuild, finding the element by its **path**, which is its
+index among its siblings unless it has a `gp_key`. Test: three absolutely placed panels; pressing one raises it (moves it to the end of
+its siblings, as a rack does with the panel being dragged); two moves and a release.
+
+* **No keys:** the drag and release went to **the panel that took its place** (on_drag by panel 0/1/2 = 0/2/0, on_mouse_up = 0/1/0).
+  Nothing signals it; the wrong panel would move.
+* **With `gp_key_id`:** they went to the pressed panel (2/0/0, 1/0/0).
+* Before `771626e` the drag kept the pressed element's own handlers, so this is new behaviour. **Rule for PulseRack:** every element whose
+  siblings can be reordered or inserted/removed while it is dragged — panels, cables, browser items, step cells — gets a `gp_key`
+  (the module or cable id). Also reported to gpuic (it could end the drag, or keep the old frame's handlers, when the element at the path
+  is not the one pressed).
+
+**Result:** all six requests are met and checked; nothing else changed. Translucent cables are now about 2× the opaque cost, and the
+panel-raise rule above is new.
+
 ## What changes in the design
 
 * **Cables stand-in:** batch the SVG releases; no click-to-select until the native primitive exists (remove a cable from its
@@ -152,7 +253,9 @@ C++ builders, tests). The SVG stand-in and its two rules (batch the releases, no
   the C++ pedantic warning is an optional request; the performance target uses the baseline above.
 * **Meters and LEDs:** `cx.every(1/30)`, as designed. **Step grid:** 64 cached child views.
 * **Audio:** the hint `SDL_AUDIO_DEVICE_SAMPLE_FRAMES=256`, and the audio owner is a gpuic entity (rule above).
-* **Build:** `-DGPUIC_DEPENDENCIES=SYSTEM`; gpuic's include directory as SYSTEM; the commit printed at configure.
+* **Build:** `-DGPUIC_DEPENDENCIES=SYSTEM`; gpuic's include directory as SYSTEM; the commit printed at configure. (Since gpuic
+  `bc442de` the SYSTEM workaround is no longer needed.)
+* **Dragging (from the `771626e` follow-up):** anything that can be reordered among its siblings during a drag has a `gp_key`.
 
 ## Not done / not measured
 
