@@ -155,8 +155,23 @@ struct Driver
         drag(k, { k.x, k.y - 100 });
         CHECK(near(to_travel(freq, param(osc, "frequency")), t0 + 0.5f, 1e-3f));
         const float t1 = to_travel(freq, param(osc, "frequency"));
-        drag(k, { k.x, k.y + 100 }, 10, GP_MOD_SHIFT); // Shift held from the press
+        // Shift pressed during the drag: fine from that move on; released: full speed again
+        press(k);
+        for (int i = 1; i <= 10; i++) // 100 px down with Shift: a tenth of half the travel
+        {
+            move({ k.x, k.y + 10.f * i }, GP_MOD_SHIFT);
+            wait(0.02);
+        }
+        wait();
         CHECK(near(to_travel(freq, param(osc, "frequency")), t1 - 0.05f, 1e-3f));
+        for (int i = 1; i <= 4; i++) // then 40 px further down without it: a fifth of the travel
+        {
+            move({ k.x, k.y + 100 + 10.f * i });
+            wait(0.02);
+        }
+        wait();
+        release({ k.x, k.y + 140 });
+        CHECK(near(to_travel(freq, param(osc, "frequency")), t1 - 0.05f - 0.2f, 1e-3f));
         // the engine's model is what the knob changed
         CHECK(
             e().engine.patch().find(osc)->params[(size_t)find_param(*node(osc)->desc, "frequency")]
@@ -169,6 +184,28 @@ struct Driver
         gp_simulate_wheel(app, k.x, k.y, 0, 1, 0);
         wait();
         CHECK(param(osc, "frequency") == step_value(freq, freq.def, 1, false));
+
+        // ---- the hint line follows the pointer: a knob, a jack, a title, then empty rack
+        move(control(osc, "pitch_depth"));
+        wait(0.1);
+        CHECK(e().hint().find("Pitch depth") != std::string::npos);
+        move(port_center(cx(), ed, osc, (size_t)find_port(*node(osc)->desc, "pwm")));
+        wait(0.1);
+        CHECK(e().hint().find("PWM: signal input") != std::string::npos);
+        move(control_center(cx(), ed, osc, -1));
+        wait(0.1);
+        CHECK(e().hint().find(std::string(node(osc)->desc->description)) != std::string::npos);
+        move({ rack_origin().x + 900, rack_origin().y + 600 });
+        wait(0.1);
+        CHECK(e().hover_text.empty() && e().hint() == e().status);
+        // the wheel over a knob under the pointer: the hint shows the new value
+        k = control(osc, "frequency");
+        move(k);
+        wait(0.1);
+        gp_simulate_wheel(app, k.x, k.y, 0, -1, 0);
+        wait();
+        CHECK(e().hint().find(format_value(freq, param(osc, "frequency"))) != std::string::npos);
+        click(k, GP_MOUSE_LEFT, 2); // back to the default for what follows
 
         // ---- a selector: the right half is the next choice, the left half the previous
         gp_point sel = control(osc, "waveform");

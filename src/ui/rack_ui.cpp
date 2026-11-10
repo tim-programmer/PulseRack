@@ -80,7 +80,7 @@ struct HintLine
             .bg(st::kSurface)
             .border_top(1)
             .border_color(st::kBorder)
-            .child(label(e ? e->hint : std::string(), 12, st::kSubtext));
+            .child(label(e ? e->hint() : std::string(), 12, st::kSubtext));
     }
 };
 
@@ -250,8 +250,6 @@ struct PanelView
 
     int   active = -1; // the control being dragged
     float travel = 0, last_y = 0;
-    bool  fine = false; // Shift was held at the press: the whole drag is fine. (gpuic 771626e gives
-                        // drag events no modifiers, so Shift pressed during a drag is not seen.)
 
     bool     moving = false; // the title bar is being dragged
     gp_point grab { };
@@ -278,7 +276,6 @@ struct PanelView
             return;
         }
         active = (int)i;
-        fine = (ev.mods & GP_MOD_SHIFT) != 0;
         travel = to_travel(p, n->params[i]);
         last_y = ev.position.y;
         e->say(cx, describe(*n->desc, p, n->params[i]));
@@ -290,8 +287,8 @@ struct PanelView
         if (!n || active != (int)i)
             return;
         const ParamDesc &p = n->desc->params[i];
-        const float      v = drag_value(
-            p, travel, last_y - ev.position.y, fine || (ev.mods & GP_MOD_SHIFT) != 0, &travel);
+        const float      v
+            = drag_value(p, travel, last_y - ev.position.y, (ev.mods & GP_MOD_SHIFT) != 0, &travel);
         last_y = ev.position.y;
         if (v != n->params[i])
             ed.get(cx)->set_param(cx, node, i, v);
@@ -490,6 +487,8 @@ struct PanelView
             break;
         }
         }
+        cell.on_hover([i](PanelView &self, Ctx cx, bool inside)
+            { self.ed.get(cx)->hover(cx, self.node, (int)i, inside); });
         return cell;
     }
 
@@ -522,19 +521,8 @@ struct PanelView
                     .flex_row()
                     .justify_center()
                     .child(label(std::string(p.name), 8, st::kText).whitespace_pre()))
-            .on_mouse_down(
-                [i](PanelView &self, Ctx cx)
-                {
-                    const Node *n = self.find(cx);
-                    if (!n)
-                        return;
-                    const PortDesc &pd = n->desc->ports[i];
-                    self.ed.get(cx)->say(cx,
-                        std::string(n->desc->name) + "  ·  " + std::string(pd.name) + ": "
-                            + (pd.kind == Kind::Event ? "event " : "signal ")
-                            + (pd.is_output ? "output" : "input")
-                            + "      cables arrive in milestone 3");
-                });
+            .on_hover([i](PanelView &self, Ctx cx, bool inside)
+                { self.ed.get(cx)->hover(cx, self.node, Editor::kHoverPort - (int)i, inside); });
         return cell;
     }
 
@@ -598,7 +586,9 @@ struct PanelView
                         const int dy = (int)std::lround((ev.position.y - self.grab.y) / kHp);
                         self.ed.get(cx)->move_module(cx, self.node, self.x0 + dx, self.y0 + dy);
                     })
-                .on_mouse_up([](PanelView &self) { self.moving = false; }));
+                .on_mouse_up([](PanelView &self) { self.moving = false; })
+                .on_hover([](PanelView &self, Ctx cx, bool inside)
+                    { self.ed.get(cx)->hover(cx, self.node, Editor::kHoverTitle, inside); }));
 
         for (size_t i = 0; i < d.params.size(); i++)
             p.child(control(d, i, n->params[i], L.params[i], cc.chip));
@@ -797,7 +787,48 @@ namespace
 
 void Editor::say(Ctx cx, std::string text)
 {
-    hint = std::move(text);
+    status = std::move(text);
+    hint_line.update(cx, [](HintLine &, Ctx c) { c.notify(); });
+}
+
+std::string Editor::describe_item(uint32_t node, int item) const
+{
+    const Node *n = engine.patch().find(node);
+    if (!n)
+        return { };
+    const ModuleDesc &d = *n->desc;
+    if (item >= 0 && (size_t)item < d.params.size())
+        return describe(d, d.params[(size_t)item], n->params[(size_t)item]);
+    if (item == kHoverTitle)
+        return std::string(d.name) + "  ·  " + std::string(d.description)
+            + "      drag the title to move it; right-click it to delete";
+    const int port = kHoverPort - item;
+    if (port >= 0 && (size_t)port < d.ports.size())
+    {
+        const PortDesc &p = d.ports[(size_t)port];
+        return std::string(d.name) + "  ·  " + std::string(p.name) + ": "
+            + (p.kind == Kind::Event ? "event " : "signal ") + (p.is_output ? "output" : "input")
+            + "      cables arrive in milestone 3";
+    }
+    return { };
+}
+
+void Editor::hover(Ctx cx, uint32_t node, int item, bool inside)
+{
+    if (inside)
+    {
+        hover_node = node;
+        hover_item = item;
+        hover_text = describe_item(node, item);
+    }
+    else if (hover_node == node
+        && hover_item == item) // a late leave of something else changes nothing
+    {
+        hover_node = 0;
+        hover_text.clear();
+    }
+    else
+        return;
     hint_line.update(cx, [](HintLine &, Ctx c) { c.notify(); });
 }
 
@@ -876,6 +907,11 @@ void Editor::remove_module(Ctx cx, uint32_t node)
         return;
     const std::string name(n->desc->name);
     engine.patch().remove_node(node);
+    if (hover_node == node)
+    {
+        hover_node = 0;
+        hover_text.clear();
+    }
     engine.compile();
     sync_panels(cx);
     refresh_rack(cx);
@@ -907,6 +943,9 @@ void Editor::set_param(Ctx cx, uint32_t node, size_t param, float value)
     if (it != panels.end())
         it->second.update(cx, [](PanelView &, Ctx c) { c.notify(); });
     say(cx, describe(*n->desc, n->desc->params[param], n->params[param]));
+    if (hover_node == node
+        && hover_item == (int)param) // the control under the pointer: its new value
+        hover_text = describe_item(node, hover_item);
 }
 
 bool Editor::load_file(Ctx cx, const std::string &path, std::string *error)
@@ -953,7 +992,7 @@ Entity<Editor> open_rack(App app, const Options &opt, std::string *error)
     auto    ed = app.new_entity<Editor>();
     Editor *e = app.get(ed);
     e->self = ed;
-    e->hint = "Add modules from the list on the left.";
+    e->status = "Add modules from the list on the left.";
 
     e->hint_line = app.new_view<HintLine>();
     app.get(e->hint_line)->ed = ed;

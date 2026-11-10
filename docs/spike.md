@@ -244,6 +244,21 @@ its siblings, as a rack does with the panel being dragged); two moves and a rele
 **Result:** all six requests are met and checked; nothing else changed. Translucent cables are now about 2× the opaque cost, and the
 panel-raise rule above is new.
 
+## Follow-up: gpuic `da89032`, the requests from milestone 2, checked 2026-11-11
+
+Building the window (milestone 2) found two more gaps and confirmed the drag regression above; with two warning cleanups they went to
+gpuic as `gpuic-prompt-2.md`. Commit `da89032` answers all five. Checked from a consumer (the scratch spike, extended), and in gpuic:
+
+| Request | Check | Result |
+|---------|-------|--------|
+| Modifiers on drag events | press without Shift; moves with none, Shift, Shift+Ctrl, none; release with Shift | `down 0; drag 0, 4, 5, 0; up 4`: **the modifiers held at each event** |
+| A drag keeps its element | the three-panel test above: pressing a panel moves it to the end of its siblings | **without keys 2/0/0 and 1/0/0** (was 0/2/0, 0/1/0); with keys the same |
+| A hover callback (`gp_on_hover`) | a child inside a parent, and a box that appears and goes under a still pointer | `+parent`, `+child` (the parent is not left), `-child`, `-parent`; `+extra` / `-extra` with the pointer still; leaving the window: `-child -parent` |
+| clang pragma; warnings in gpuic's tests | gpuic built with GCC (Release) and clang | **0 warnings** in both |
+
+gpuic's own tests: **60 of 60 pass** (new: `pointer_test`). PulseRack built against it unchanged and passed; it now **reads Shift on every
+drag move** (the press-only workaround is gone) and its **hint line follows the pointer** (`gui.md`, *As built*).
+
 ## What changes in the design
 
 * **Cables stand-in:** batch the SVG releases; no click-to-select until the native primitive exists (remove a cable from its
@@ -255,7 +270,8 @@ panel-raise rule above is new.
 * **Audio:** the hint `SDL_AUDIO_DEVICE_SAMPLE_FRAMES=256`, and the audio owner is a gpuic entity (rule above).
 * **Build:** `-DGPUIC_DEPENDENCIES=SYSTEM`; gpuic's include directory as SYSTEM; the commit printed at configure. (Since gpuic
   `bc442de` the SYSTEM workaround is no longer needed.)
-* **Dragging (from the `771626e` follow-up):** anything that can be reordered among its siblings during a drag has a `gp_key`.
+* **Dragging (from the `771626e` follow-up):** anything that can be reordered among its siblings during a drag had to have a
+  `gp_key`. **No longer needed since gpuic `da89032`** (below); the rack's panels keep their key anyway.
 
 ## Not done / not measured
 

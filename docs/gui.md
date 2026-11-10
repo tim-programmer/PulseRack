@@ -156,21 +156,23 @@ beside the browser, to compare with the reference before any more modules are dr
 **Code:** `src/ui/geometry.{h,cpp}` (panel layout, knob mapping, value text, placement: no window, so it is tested headless),
 `src/ui/rack_ui.{h,cpp}` (the views and the `Editor` that every edit goes through), `src/ui/style.h` (colours and chrome sizes),
 `src/main.cpp`. **Run:** `build/src/pulserack [patch.rack]`. gpuic is fetched like PulseCoreLib (`FetchContent`, branch `main`,
-the commit printed at configure; `gpuic 771626e` when this was built), with `GPUIC_DEPENDENCIES=SYSTEM` by default.
+the commit printed at configure; built against `771626e`, then `da89032`, which answered the requests below), with `GPUIC_DEPENDENCIES=SYSTEM` by default.
 
 **What works.** The toolbar (patch name, module count, *no audio yet*); the browser (search over name, category and description,
 category chips, a card per module with its description and *Add*); the rack (a scrolling surface: wheel, Shift+wheel, or drag empty
 space to pan); a panel per module, each a cached view with a `gp_key` (the node id); **knobs and sliders** (drag 200 px for the whole
-travel, Shift at the press for a tenth, double-click for the default, the wheel 1 % per notch and Shift+wheel 0.1 %, one step for
+travel, Shift held during the drag for a tenth, double-click for the default, the wheel 1 % per notch and Shift+wheel 0.1 %, one step for
 whole-number controls, the value in a bubble while dragging); **selectors** (click either half, or the wheel); **switches and the
 Run button** (click, with an LED); jacks drawn (round for signals, square for events, outputs on a dark plate) and inert; moving a
-panel by its title (snapped to the grid, refused where it would overlap); right-click on the title for *Delete*; the hint line.
+panel by its title (snapped to the grid, refused where it would overlap); right-click on the title for *Delete*; the hint line, which describes the control, jack or title under the pointer (with the
+value, kept current while it turns) and otherwise what the last action did.
 Every change goes through `Editor`, which changes the patch and the running module together (`Engine::set_param`, `compile`).
 
 **Tests.** `rack_tests` gains 9 geometry cases (every panel of the catalogue fits with nothing overlapping, rows in reading order,
 travel round trips and exact ends, the log mapping, drag and wheel steps, value text, collisions, free places, moving overlapping
 panels apart, the example patches) and an engine case (below). `ui_smoke` drives the real window with gpuic's synthetic input
-(65 checks: *Add* from the browser and after a search, knob drag, Shift-drag, double-click, wheel, selector halves, switch,
+(71 checks: *Add* from the browser and after a search, knob drag, Shift pressed and released during a drag, double-click,
+wheel, the hint line over a knob, a jack, a title and empty rack, selector halves, switch,
 slider, a refused and an accepted panel move, panning, the menu's *Delete*, then every module added once); `ui_screenshot` opens
 `examples/sequence.rack` and checks the picture is not blank. Both need a display and report *skipped* (77) without one. Float,
 Q15 and Q31.
@@ -185,8 +187,10 @@ Q15 and Q31.
 3. **The example patches overlapped** (they were written before panels had a size): they are moved apart (only `x=`, `y=`; the
    audio is the same). A file whose panels overlap is opened with them moved right on their row, and the hint line says so.
 4. **`ModuleDesc` gains `description`**, the browser card's line (17 written).
-5. **Shift for fine adjustment is taken at the press** and holds for the drag: gpuic gives drag events no modifiers (below).
-6. **The hint line describes the last control pressed or turned**, not the one under the pointer: gpuic has no hover callback.
+5. **Shift for fine adjustment is read on every move**, so it can be pressed or let go during a drag (gpuic `da89032`; until then
+   it had to be held at the press, see below).
+6. **The hint line follows the pointer** (`on_hover` on every control, jack and title bar) and falls back to the status of the last
+   action. Before gpuic `da89032` it could only describe the last control pressed or turned.
 7. Selectors stop at their ends (no wrap). The Clock's *Run* (a `Button`) latches. **No dead buttons**: New/Open/Save and Undo/Redo
    are absent until milestones 5 and 6.
 8. The browser is a plain scrolling column, not `gp_list`: 17 cards do not need virtualising.
@@ -196,12 +200,13 @@ wholesale (a file loaded over another) could hand a clock the oscillator's state
 test aborts with `malloc(): unaligned tcache chunk detected` without the fix). It now also compares the type. Editing could not
 trigger it (`Patch::add_node` never reuses an id); loading a file over a patch (milestone 5) would have.
 
-**gpuic findings (requests for gpuic):**
-* **Drag events carry no modifiers.** `app.c` fires the captured `on_drag` with `mods = 0` (and the platform layer only smuggles
-  modifiers into button events), so Shift pressed *during* a drag is not seen, with real or synthetic input. Wanted: the current
-  modifiers on every drag event.
-* **No hover callback.** Hover *styles* exist; a callback when the pointer enters or leaves an element (or moves over it) does not,
-  so a hint line or a tooltip cannot follow the pointer.
+**gpuic findings** (sent as `gpuic-prompt-2.md`; **all answered in gpuic `da89032`** and checked, `spike.md`, last follow-up):
+* **Drag events carried no modifiers** (`app.c` fired the captured `on_drag` with `mods = 0`), so Shift pressed *during* a drag was
+  not seen. Fixed: every drag and release event has the modifiers held at that moment. PulseRack now uses them.
+* **No hover callback.** Fixed: `gp_on_hover` / C++ `.on_hover`, with mouseenter/mouseleave semantics. PulseRack's hint line uses it.
+* **A drag could be handed to another element** when the pressed one moved among its siblings (new in `771626e`). Fixed: a drag
+  keeps the pressed element's handlers until the release. The panels keep their `gp_key` anyway.
+* Two warning cleanups (a GCC-only pragma under clang; `-Wmaybe-uninitialized` in gpuic's own tests). Fixed: both builds are quiet.
 
 **Not done** (milestone 2 stops here): cables and the jacks' behaviour (milestone 3); sound, meters, LEDs from telemetry and the
 computer keyboard as a piano (4); the sequencer's **step grid** (its 64 steps are kept in the patch but not editable in the window

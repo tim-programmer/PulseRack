@@ -18,7 +18,8 @@ built. No cables and no sound yet** (milestones 3 and 4). The name is a placehol
 | [docs/architecture.md](docs/architecture.md) | repository layout, how the two libraries are pulled in, audio, threads, sample types, testing |
 | [docs/patch-engine.md](docs/patch-engine.md) | the headless part: module descriptors, ports, cables, processing order, the patch file |
 | [docs/gui.md](docs/gui.md) | the window: browser, panels, knobs, cable drawing, what gpuic gives us and what is unverified |
-| [docs/gpuic-prompt.md](docs/gpuic-prompt.md) | a self-contained prompt for a gpuic session: a stroked-curve element for cables |
+| [docs/gpuic-prompt.md](docs/gpuic-prompt.md) | a self-contained prompt for a gpuic session: a stroked-curve element for cables (done) |
+| [docs/gpuic-prompt-2.md](docs/gpuic-prompt-2.md) | the second one: drag modifiers, drags that keep their element, a hover callback (done) |
 
 ## Try it
 
@@ -45,7 +46,7 @@ The window tests need a display and are skipped without one.
   both are Apache-2.0. A local checkout is used through CMake's `FETCHCONTENT_SOURCE_DIR_*`.
 * **GUI** (answered in `gui.md`): a restrained look; free panel placement; no zoom and no drag-from-browser in the first
   version; cables are drawn by a **new primitive added to gpuic** (`gp_curve`, commit `bc442de`, requested in
-  `docs/gpuic-prompt.md`; landed and checked, and the spike re-checked against gpuic `771626e`, see `docs/spike.md`).
+  `docs/gpuic-prompt.md`; landed and checked, and the spike re-checked against gpuic `da89032`, see `docs/spike.md`).
 
 ## Open questions
 

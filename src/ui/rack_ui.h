@@ -25,7 +25,15 @@ struct Editor
 {
     Engine      engine { 48000 }; // no audio device yet (milestone 4): the nominal rate
     std::string patch_name = "untitled";
-    std::string hint;
+    std::string
+        status; // what the last action did; the hint line shows it when the pointer is over nothing
+    // What the pointer is over: a node's control (item >= 0), its title bar (kHoverTitle) or a jack
+    // (kHoverPort - port); hover_text describes it, and the hint line shows it while it is not
+    // empty.
+    static constexpr int kHoverTitle = -1, kHoverPort = -2;
+    uint32_t             hover_node = 0;
+    int                  hover_item = 0;
+    std::string          hover_text;
 
     gpuic::Entity<Editor>                        self;
     gpuic::Entity<RackView>                      rack;
@@ -43,7 +51,14 @@ struct Editor
     void     remove_module(gpuic::Ctx cx, uint32_t node);
     bool     move_module(gpuic::Ctx cx, uint32_t node, int x, int y); // false: would overlap
     void     set_param(gpuic::Ctx cx, uint32_t node, size_t param, float value);
-    void     say(gpuic::Ctx cx, std::string text); // the hint line
+    void     say(gpuic::Ctx cx, std::string text); // the status the hint line falls back to
+    // The pointer entered (inside) or left a node's control, title or jack (items as above).
+    void        hover(gpuic::Ctx cx, uint32_t node, int item, bool inside);
+    std::string hint() const
+    {
+        return hover_text.empty() ? status : hover_text;
+    } // what the hint line shows
+    std::string describe_item(uint32_t node, int item) const;
 
     // Replaces the patch with a file's; false and `error` set if it does not load.
     bool load_file(gpuic::Ctx cx, const std::string &path, std::string *error);

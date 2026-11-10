@@ -151,7 +151,7 @@ Two threads matter: the **UI thread** (gpuic's main loop) and the **audio thread
 | # | Item | Done when |
 |---|------|-----------|
 | 0 | **gpuic spike** (throw-away) | **done**, see [spike.md](spike.md): cable stand-in cost, cached-panel knob drag, wheel, 30 Hz redraw, 64-step grid, one CMake tree in three sample types, SDL audio next to the window |
-| – | **gpuic curve primitive** (in the gpuic repository, from `gpuic-prompt.md`) | **done and checked** (gpuic `bc442de`, `spike.md` *Follow-up*; re-checked at `b5e2679` and `771626e`, no regressions; dragged elements need a `gp_key`); milestone 3 uses `gp_curve` directly |
+| – | **gpuic curve primitive** (in the gpuic repository, from `gpuic-prompt.md`) | **done and checked** (gpuic `bc442de`, `spike.md` *Follow-up*; re-checked at `b5e2679`, `771626e` and `da89032`, no regressions); milestone 3 uses `gp_curve` directly |
 | 1 | Engine + `rack-render` | **built**: the headless engine passes its tests in float, Q15 and Q31; all 11 library modules and 6 glue modules are wrapped; see `patch-engine.md`, *As built* |
 | 2 | Window without cables | **built**: browser, rack with draggable panels, knobs, sliders, selectors, switches working on the engine; see `gui.md`, *As built* |
 | 3 | Cables | jacks, dragging cables, deleting them, the engine updated live |
