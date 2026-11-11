@@ -273,8 +273,8 @@ namespace
         SCOPE_TIME,
         SCOPE_SCALE_A,
         SCOPE_SCALE_B,
+        SCOPE_LEVEL,   // (the four knobs first: one row, so the screen gets the room)
         SCOPE_TRIGGER,
-        SCOPE_LEVEL,
         SCOPE_COUNT
     };
     constexpr std::string_view kTriggerLabels[] = { "free", "rise", "fall" };
@@ -405,6 +405,12 @@ namespace
                 as<ScopeNode>(s)->scale[1] = v;
                 return true;
             }),
+        param("level", "Level", "", -1, 1, 0, Scale::Linear, Control::Knob,
+            [](void *s, float v)
+            {
+                as<ScopeNode>(s)->level = v;
+                return true;
+            }),
         param(
             "trigger", "Trigger", "", 0, 2, 1, Scale::Enum, Control::Selector,
             [](void *s, float v)
@@ -413,12 +419,6 @@ namespace
                 return true;
             },
             kTriggerLabels),
-        param("level", "Level", "", -1, 1, 0, Scale::Linear, Control::Knob,
-            [](void *s, float v)
-            {
-                as<ScopeNode>(s)->level = v;
-                return true;
-            }),
     };
     static_assert(std::size(kScopeParams) == SCOPE_COUNT);
 

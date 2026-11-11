@@ -57,6 +57,7 @@ struct Editor
     std::array<int, 2>      meter { 0, 0 }; // the output level, 0 .. 40 (the Audio Output panels)
     int                     load_pct = -1;  // the toolbar's CPU figure
     std::map<uint32_t, int> playhead;       // a sequencer's step being played, as its grid shows it
+    std::map<uint32_t, ScopeFrame> scopes;  // each oscilloscope's newest frame (taken at 30 Hz)
 
     // The computer keyboard as a piano: the key's note, held until its key comes up.
     int                            octave = 0; // Z and X: down and up, -4 .. +4 around C4

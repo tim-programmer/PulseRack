@@ -468,6 +468,85 @@ struct PanelView
                     : led_.level ? with_alpha(st::kLedOn, kAlpha[led_.level])
                                  : st::kLedOff);
     }
+    // ---- the oscilloscope's screen
+    Element scope_element(
+        const Node &n, const PanelLayout &L, const ScopeFrame *f, bool running) const
+    {
+        const Rect  r = scope_display(L);
+        const Color green = rgb(0x8ee59a), amber = rgb(0xf9c86b), faint = rgb(0x8ee59a);
+        Element     w = div().absolute().left(0).top(0);
+        w.child(div()
+                .absolute()
+                .left(r.x)
+                .top(r.y)
+                .w(r.w)
+                .h(r.h)
+                .rounded(3)
+                .bg(rgb(0x0b110d))
+                .border(1)
+                .border_color(st::kKnobEdge));
+        const float cy = r.y + r.h / 2, half = r.h / 2 - 3;
+        auto        y_of = [&](float v) { return cy - std::clamp(v, -1.04f, 1.04f) * half; };
+        // the graticule: a centre line, half-scale lines, ten divisions across
+        w.child(
+            div().absolute().left(r.x + 1).top(cy).w(r.w - 2).h(1).bg(with_alpha(faint, 0.22f)));
+        for (float v : { -0.5f, 0.5f })
+            w.child(div().absolute().left(r.x + 1).top(y_of(v)).w(r.w - 2).h(1).bg(
+                with_alpha(faint, 0.08f)));
+        for (int k = 1; k < 10; k++)
+            w.child(div()
+                    .absolute()
+                    .left(r.x + r.w * (float)k / 10)
+                    .top(r.y + 1)
+                    .w(1)
+                    .h(r.h - 2)
+                    .bg(with_alpha(faint, 0.08f)));
+        const ModuleDesc &d = *n.desc;
+        auto param_of = [&](const char *id) { return n.params[(size_t)find_param(d, id)]; };
+        if ((int)std::lround(param_of("trigger")) != 0) // the trigger level, on A's scale
+            w.child(div()
+                    .absolute()
+                    .left(r.x + 1)
+                    .top(y_of(param_of("level") * param_of("scale_a")) - 1)
+                    .w(8)
+                    .h(2)
+                    .bg(amber));
+        std::string corner;
+        if (f && f->seq)
+        {
+            for (int ch = 1; ch >= 0; ch--) // A over B
+            {
+                if (!f->has[ch])
+                    continue;
+                std::vector<gp_point> pts; // through each column's lowest and highest value
+                pts.reserve(2 * kScopeColumns);
+                for (int c = 0; c < kScopeColumns; c++)
+                {
+                    const float x = r.x + 2 + (r.w - 4) * ((float)c + 0.5f) / kScopeColumns;
+                    const float a = y_of(f->lo[ch][c]), b = y_of(f->hi[ch][c]);
+                    pts.push_back({ x, c % 2 ? a : b });
+                    pts.push_back({ x, c % 2 ? b : a });
+                }
+                w.child(polyline(pts).stroke_width(1.5f).stroke_color(ch ? amber : green));
+            }
+            char buf[48];
+            std::snprintf(buf, sizeof buf, f->window_ms >= 100 ? "%.0f ms%s" : "%.1f ms%s",
+                (double)f->window_ms, f->triggered ? "" : "  auto");
+            corner = buf;
+        }
+        else
+            corner = running ? "waiting" : "audio off";
+        w.child(div()
+                .absolute()
+                .left(r.x)
+                .top(r.bottom() - 15)
+                .w(r.w - 6)
+                .flex_row()
+                .justify_end()
+                .child(label(corner, 9, with_alpha(faint, 0.7f))));
+        return w;
+    }
+
     // ---- the Keyboard panel's piano
     int strip_note_at(const gp_mouse_event &ev, const PanelLayout &L) const
     { // ev.local is relative to the strip's area
@@ -1041,6 +1120,13 @@ struct PanelView
             p.child(step_grid_element(*n, L, cc.chip));
         if (d.id == "keyboard")
             p.child(strip_element(L, cc.chip));
+        if (d.id == "scope")
+        {
+            Editor *e = ed.get(cx);
+            auto    it = e->scopes.find(node);
+            p.child(scope_element(
+                *n, L, it == e->scopes.end() ? nullptr : &it->second, e->audio_running()));
+        }
         if (d.id == "out") // the output level, between its controls and its jacks
             p.child(meters(L));
 
@@ -1862,6 +1948,17 @@ void Editor::tick(Ctx cx)
             if (it == playhead.end() || it->second != pos)
             {
                 playhead[n.id] = pos;
+                if (auto v = panels.find(n.id); v != panels.end())
+                    v->second.update(cx, [](PanelView &, Ctx c) { c.notify(); });
+            }
+        }
+    for (const Node &n : engine.patch().nodes()) // the oscilloscopes' newest frames
+        if (n.desc->id == "scope")
+        {
+            ScopeFrame f;
+            if (engine.scope_frame(n.id, f))
+            {
+                scopes[n.id] = f;
                 if (auto v = panels.find(n.id); v != panels.end())
                     v->second.update(cx, [](PanelView &, Ctx c) { c.notify(); });
             }

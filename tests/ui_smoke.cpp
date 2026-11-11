@@ -876,6 +876,25 @@ struct Driver
         for (int pos : seen)
             CHECK(pos >= -1 && pos < 8); // within the default length
 
+        // an oscilloscope: its frames reach the window while audio runs (A connected, triggered,
+        // the wave's full swing), B only once something is plugged into it
+        const uint32_t scope = e().add_module(cx(), *find_module("scope"));
+        CHECK(e().connect(cx(), P(osc, "out"), P(scope, "in_a")) == Err::Ok);
+        wait(0.5);
+        CHECK(e().scopes.count(scope) && e().scopes.at(scope).seq > 0);
+        if (e().scopes.count(scope))
+        {
+            const ScopeFrame &f = e().scopes.at(scope);
+            float             hi = -9, lo = 9;
+            for (int c = 0; c < kScopeColumns; c++)
+                hi = std::max(hi, f.hi[0][c]), lo = std::min(lo, f.lo[0][c]);
+            CHECK(f.has[0] && !f.has[1] && f.triggered && hi > 0.5f && lo < -0.5f);
+            CHECK(std::fabs(f.window_ms - 20) < 1);
+        }
+        CHECK(e().connect(cx(), P(gate, "gate"), P(scope, "in_b")) == Err::Ok);
+        wait(0.4);
+        CHECK(e().scopes.count(scope) && e().scopes.at(scope).has[1]);
+
         // the output device: the audio status opens the menu; the system's default, then a listed
         // one
         const gp_point status { style::kWindowW - 12 - style::kAudioW - style::kToolGap - 15,
@@ -1082,13 +1101,15 @@ struct Driver
         wait(0.15);
         const ModuleDesc  &oscd = *find_module("osc");
         const RackViewport v = rack_viewport(cx(), ed);
-        const Slot         spot = free_slot(patch, oscd, (int)std::ceil(v.x / kHp),
-            (int)std::lround(v.y / kHp), (int)(v.w / kHp), std::max(1, (int)(v.h / kPanelHeight)));
-        const gp_point     to { rack_origin().x + spot.x * kHp + oscd.width_hp * kHp / 2 - v.x,
+        // the third row is empty and, after that scroll, in the middle of the view: away from the
+        // edges, where holding a drag would scroll the rack (part 4)
+        const Slot spot { (int)std::ceil(v.x / kHp) + 2, 2 * kPanelHeightHp };
+        CHECK(!collides(patch, oscd, spot.x, spot.y));
+        const gp_point to { rack_origin().x + spot.x * kHp + oscd.width_hp * kHp / 2 - v.x,
             rack_origin().y + spot.y * kHp + kTitleHeight / 2 - v.y };
-        const gp_point     card { style::kBrowserPad + 40,
+        const gp_point card { style::kBrowserPad + 40,
             add_button(0).y + 32 }; // the card's text, not its button
-        size_t             count = patch.nodes().size();
+        size_t         count = patch.nodes().size();
         click(card); // a click on a card adds nothing (its Add button does)
         CHECK(patch.nodes().size() == count && !e().mdrag.active);
         press(card);

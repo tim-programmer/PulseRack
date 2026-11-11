@@ -126,6 +126,7 @@ The library has no mixer, no utility for physical input and no output; those are
 | **Mixer** | in: 4 signals + level knobs; out: 1 | saturating sum written with the `pcl_types.h` helpers, so it works in all three builds |
 | **Attenuverter** | in, out; scale (−1..1) and offset | the usual CV helper; makes a modulation depth visible and patchable |
 | **Note → Gate** | in: NOTE events; out: GATE signal | for modules that take a gate signal and not events (the ADSR takes both) |
+| **Oscilloscope** | in: A, B signals; no outputs | *(added later)* draws its inputs on its panel: a window of 5 ms to 1 s in 240 columns of lowest and highest value, triggered on A rising or falling through a level (or free), auto-triggered when no edge comes; frames reach the window through a lock-free triple buffer (`engine/model/scope.h`) |
 
 The Mixer and the Attenuverter are small enough to be added to PulseCoreLib later if you want them
 there; they are here because they have no design note yet.

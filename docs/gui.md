@@ -477,3 +477,36 @@ the toolbar shows what the meter counted.
 **Milestone 6 is done** apart from the modules that wait for PulseCoreLib (delay, sampler, reverb: none has appeared). The smaller
 items left open by earlier milestones are in parts 1 to 5 above.
 
+## As built: the oscilloscope (asked for after milestone 6)
+
+A module (`scope`, Utility, 16 HP) with two signal inputs, **IN A** and **IN B**, and no outputs: a signal is looked at by plugging a
+second cable from where it comes from (an output feeds any number). Its panel is a **screen**: a dark graticule (centre line,
+half-scale lines, ten divisions), channel A in green and B in amber, each a polyline through the lowest and highest value of each of
+240 columns (so a fast wave in a long window still shows its full swing), the trigger level marked at the left, and the window's
+length in the corner (*auto* when no edge came; *audio off* or *waiting* when there is nothing yet). Controls: **Time** (the window,
+5 ms to 1 s; 5 ms is 240 samples, one a column), **Scale A**, **Scale B** (x0.1 to x10), **Level**, and **Trigger** (*free*, *rise*,
+*fall*, on A). It works like a bench scope's auto mode: it waits for A to cross the level, captures one window, and if no edge comes
+within three windows (or 0.1 s) it captures anyway.
+
+**How the picture gets out.** The module runs on the audio thread and owns its capture; each finished window goes to the window
+through a **triple buffer** (one writer, one reader, neither waits, the reader always gets the newest whole frame) in the module's
+state; the reader's side is used only by the UI thread, through `Engine::scope_frame`. The editor takes the newest frame at 30 Hz
+(with the meters) and re-renders that panel only. The controls are ordinary parameters (command ring, undo, the patch file).
+
+**Tests.** `test_scope.cpp` (5 cases, all three sample types): a sine starts at its rising (or falling) zero crossing and shows its
+full swing; the scale; the window's real length, the shortest included; the auto trigger on a signal that never reaches the level;
+free running; the reader getting the newest frame once; and a reader thread taking frames while an audio thread renders (whole frames;
+clean under ThreadSanitizer). Geometry: the screen fits under the controls. `ui_sound`: frames reach the window while audio runs, with
+A's swing, and B once it is connected. (Adding the 18th module moved where the browser-drag test dropped its module next to the
+rack's edge, where holding a drag now scrolls the rack; the test drops into the empty third row instead.)
+
+**An unexplained abort, recorded so it is not lost.** In the build matrix for this change, `ui_smoke` in the **Q15** build aborted
+once ("Subprocess aborted", after 6.6 s of a 14 s run), with no message kept. It did not come back in 20 runs since (6 directly, 12
+under gdb to catch a backtrace, 2 full `ctest` runs), and the clang ASan/UBSan build of every test, the window tests included, is
+clean. Not explained, not fixed. If it shows again, the next step is to run `ui_smoke` in a loop with `ulimit -c unlimited` and
+read the core.
+
+The trigger test first failed in **Q31**: there the sine's sample at the zero crossing is a hair below 0, so the trigger fires on
+the next sample (0.131) rather than on 0.000 as in float. Both are right (the first sample at or above the level); the test now
+checks exactly that rather than a tolerance that float happened to meet.
+

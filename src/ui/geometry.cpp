@@ -372,7 +372,8 @@ int KeyStrip::key_at(float x, float y) const
 
 Rect scope_display(const PanelLayout &L)
 {
-    return { kPad, L.controls_bottom + 6, L.width - 2 * kPad, L.jacks_top - 8 - (L.controls_bottom + 6) };
+    return { kPad, L.controls_bottom + 6, L.width - 2 * kPad,
+        L.jacks_top - 8 - (L.controls_bottom + 6) };
 }
 
 Pt jack_center(const Node &n, size_t port)
