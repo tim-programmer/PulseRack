@@ -331,6 +331,108 @@ struct Driver
     }
     uint32_t vca_ = 0;
 
+    // ---- the smaller pieces of milestone 6: selection and Delete, the arrow keys, a cable by its
+    // output end, the rack scrolling under a drag held at its edge
+    void gaps()
+    {
+        const Patch &patch = e().engine.patch();
+        wait(0.3);
+        const uint32_t osc = e().add_module(cx(), *find_module("osc"));
+        const uint32_t vca = e().add_module(cx(), *find_module("vca"));
+        const uint32_t out = e().add_module(cx(), *find_module("out"));
+        const uint32_t lfo = e().add_module(cx(), *find_module("lfo"));
+        wait();
+
+        // a click on a panel selects it; Delete removes it; undo brings it back
+        click(face(vca));
+        CHECK(e().selected_node == vca && hint_has("Selected VCA"));
+        gp_simulate_keystrokes(app, "delete");
+        wait(0.1);
+        CHECK(!node(vca) && e().selected_node == 0);
+        click(undo_btn());
+        CHECK(node(vca) != nullptr);
+        // a cable selected unselects the module, and the other way round
+        CHECK(e().connect(cx(), P(osc, "out"), P(vca, "in")) == Err::Ok);
+        click(face(osc));
+        CHECK(e().selected_node == osc);
+        e().select_cable(cx(), P(vca, "in"));
+        CHECK(e().selected_node == 0 && e().selected);
+        click(face(osc));
+        CHECK(e().selected_node == osc && !e().selected);
+        click({ o().x + 900, o().y + 700 }); // empty rack: nothing selected
+        CHECK(e().selected_node == 0);
+
+        // the arrow keys turn the control under the pointer
+        const size_t     fi = (size_t)find_param(*node(osc)->desc, "frequency");
+        const ParamDesc &fd = node(osc)->desc->params[fi];
+        const float      f0 = param(osc, "frequency");
+        move(control(osc, "frequency"));
+        wait(0.1);
+        gp_simulate_keystrokes(app, "up");
+        wait(0.1);
+        CHECK(param(osc, "frequency") == step_value(fd, f0, 1, false));
+        const float f1 = param(osc, "frequency");
+        gp_simulate_keystrokes(app, "shift-up"); // fine
+        wait(0.1);
+        CHECK(param(osc, "frequency") == step_value(fd, f1, 1, true));
+        move(control(osc, "waveform"));
+        wait(0.1);
+        gp_simulate_keystrokes(app, "left"); // a selector: the previous choice
+        wait(0.1);
+        CHECK(param(osc, "waveform") == 1);
+        // away from every control: the last one touched
+        move({ o().x + 900, o().y + 700 });
+        wait(0.1);
+        gp_simulate_keystrokes(app, "right");
+        wait(0.1);
+        CHECK(param(osc, "waveform") == 2);
+
+        // Shift+drag on a plugged output moves its newest cable by the output end
+        CHECK(e().connect(cx(), P(osc, "out"), P(out, "l")) == Err::Ok); // the newest from osc.out
+        const int colour = e().cable_colour.at({ out, P(out, "l").port });
+        drag(J(osc, "out"), J(lfo, "out"), 12, GP_MOD_SHIFT);
+        CHECK(into(out, "l") && into(out, "l")->from == P(lfo, "out"));   // moved
+        CHECK(into(vca, "in") && into(vca, "in")->from == P(osc, "out")); // the other one stayed
+        CHECK(e().cable_colour.at({ out, P(out, "l").port }) == colour);
+        CHECK(patch.cables().size() == 2);
+        // and to empty rack: removed
+        drag(J(lfo, "out"), { o().x + 900, o().y + 700 }, 12, GP_MOD_SHIFT);
+        CHECK(!into(out, "l") && patch.cables().size() == 1);
+        // without Shift an output still makes a new cable
+        drag(J(osc, "out"), J(out, "r"));
+        CHECK(into(out, "r") && into(vca, "in") && patch.cables().size() == 2);
+
+        // a panel held at the rack's right edge: the rack scrolls, and the panel goes with it
+        RackViewport v = rack_viewport(cx(), ed);
+        CHECK(v.x == 0);
+        const gp_point f = face(lfo);
+        const float    lx0 = node(lfo)->x;
+        const gp_point edge { o().x + v.w - 10, f.y };
+        press(f);
+        for (int i = 1; i <= 10; i++)
+        {
+            move({ f.x + (edge.x - f.x) * i / 10, f.y });
+            wait(0.02);
+        }
+        wait(0.8); // held there
+        v = rack_viewport(cx(), ed);
+        CHECK(v.x > 100);
+        CHECK(e().pdrag.moved && node(lfo)->x * kHp > (lx0 * kHp) + (edge.x - f.x) + 100);
+        release(edge);
+        CHECK(node(lfo)->x
+            > lx0 + (edge.x - f.x) / kHp + 5); // put down further right than the pointer went
+        // a cable held at the bottom edge scrolls the rack down
+        const float    vy0 = rack_viewport(cx(), ed).y;
+        const gp_point j = J(lfo, "rate"); // (in view: the oscillator has scrolled out of it)
+        press(j);
+        move({ j.x, o().y + v.h - 8 });
+        wait(0.6);
+        CHECK(rack_viewport(cx(), ed).y > vy0 + 50 && e().drag.active);
+        release({ j.x, o().y + v.h - 8 });
+        CHECK(!e().drag.active && !into(lfo, "rate"));
+        CHECK(e().engine.apply_failures() == 0);
+    }
+
     // ---- the sequencer's step grid
     gp_point in_panel(
         uint32_t n, const Rect &r) // the window position of a rectangle's centre in a panel
@@ -1099,11 +1201,12 @@ int main(int argc, char **argv)
                     });
             });
     }
-    static bool sound = false, files = false, undo = false, steps = false;
+    static bool sound = false, files = false, undo = false, steps = false, gaps = false;
     sound = argc == 2 && !std::strcmp(argv[1], "--sound");
     files = argc == 2 && !std::strcmp(argv[1], "--files");
     undo = argc == 2 && !std::strcmp(argv[1], "--undo");
     steps = argc == 2 && !std::strcmp(argv[1], "--steps");
+    gaps = argc == 2 && !std::strcmp(argv[1], "--gaps");
     static std::string dir;
     if (files)
     {
@@ -1139,6 +1242,8 @@ int main(int argc, char **argv)
                         Driver { co, app, ed }.undo_redo();
                     else if (steps)
                         Driver { co, app, ed }.steps();
+                    else if (gaps)
+                        Driver { co, app, ed }.gaps();
                     else if (sound)
                         Driver { co, app, ed }.sound();
                     else

@@ -343,12 +343,13 @@ struct PanelView
     int                step_active = -1; // the step whose note bar is being dragged
     int                step_note0 = 0;
     float              step_y0 = 0;
-    int                playhead_ = -1;  // copied from the editor at render
-    int                strip_note = -1; // the piano key held down with the mouse (a note), or -1
-    int                strip_base = 60; // copied at render: the note of the piano's lowest key
-    std::vector<int>   strip_held_;     // copied at render: the notes the computer keys hold
-    Editor::Led        led_;            // copied from the editor at render: what the LED shows
-    std::array<int, 2> meter_ { };      // and the output level (Audio Output panels)
+    int                playhead_ = -1;    // copied from the editor at render
+    bool               selected_ = false; // copied at render: the selected module
+    int                strip_note = -1;   // the piano key held down with the mouse (a note), or -1
+    int                strip_base = 60;   // copied at render: the note of the piano's lowest key
+    std::vector<int>   strip_held_;       // copied at render: the notes the computer keys hold
+    Editor::Led        led_;              // copied from the editor at render: what the LED shows
+    std::array<int, 2> meter_ { };        // and the output level (Audio Output panels)
 
     // a press on the title or the face: the menu (right button) or a move
     void press_face(Ctx cx, const gp_mouse_event &ev)
@@ -944,7 +945,7 @@ struct PanelView
                 {
                     if (ev.button == GP_MOUSE_LEFT)
                         self.ed.get(cx)->jack_press(
-                            cx, PortRef { self.node, (uint16_t)i }, ev.position);
+                            cx, PortRef { self.node, (uint16_t)i }, ev.position, ev.mods);
                 })
             .on_drag([](PanelView &self, Ctx cx, const gp_mouse_event &ev)
                 { self.ed.get(cx)->jack_drag(cx, ev.position); })
@@ -966,6 +967,7 @@ struct PanelView
             auto    it = e->leds.find(node);
             led_ = it == e->leds.end() ? Editor::Led { } : it->second;
             meter_ = e->meter;
+            selected_ = e->selected_node == node;
             auto ph = e->playhead.find(node);
             playhead_ = ph == e->playhead.end() || !e->audio_running() ? -1 : ph->second;
             strip_base = 60 + 12 * e->octave;
@@ -980,7 +982,7 @@ struct PanelView
                         .rounded(4)
                         .bg_gradient(180, { stop(cc.top, 0), stop(cc.bottom, 1) })
                         .border(kPanelBorder)
-                        .border_color(st::kKnobEdge)
+                        .border_color(selected_ ? st::kAccent : st::kKnobEdge)
                         .shadow(0, 3, 8, with_alpha(rgb(0x000000), 0.4f))
                         // the face moves the panel (a press on it does not pan the rack); controls,
                         // jacks and cables take their own presses first
@@ -1130,7 +1132,7 @@ struct CableView
                             if (ev.button == GP_MOUSE_RIGHT)
                                 open_cable_menu(cx, *e, self.to, q);
                             else if (auto j = jack_at(e->engine.patch(), q.x, q.y, 0))
-                                e->jack_press(cx, *j, ev.position);
+                                e->jack_press(cx, *j, ev.position, ev.mods);
                             else if (ev.button == GP_MOUSE_LEFT)
                                 e->select_cable(cx, self.to);
                         })
@@ -1294,6 +1296,8 @@ struct RackView
                                      // rack's)
                           if (Editor *e = self.ed.get(cx); e && e->selected)
                               e->select_cable(cx, std::nullopt);
+                          if (Editor *e = self.ed.get(cx); e && e->selected_node)
+                              e->select_node(cx, 0);
                           self.panning = ev.button == GP_MOUSE_LEFT;
                           self.pan_p0 = ev.position;
                           self.pan_off0 = self.scroll.offset(cx);
@@ -1604,8 +1608,17 @@ struct Root
             .on_key_down(
                 [](Root &self, Ctx cx, const gp_key_event &ev)
                 {
-                    if (!self.ed.get(cx)->piano(cx, ev, true))
-                        cx.propagate();
+                    Editor *e = self.ed.get(cx);
+                    if (e->piano(cx, ev, true))
+                        return;
+                    const std::string k = ev.key ? ev.key : "";
+                    const int         dir = k == "up" || k == "right" ? 1
+                        : k == "down" || k == "left"                  ? -1
+                                                                      : 0;
+                    if (dir && !e->search_focused(cx) && !(ev.mods & (GP_MOD_CTRL | GP_MOD_ALT))
+                        && e->nudge(cx, dir, (ev.mods & GP_MOD_SHIFT) != 0))
+                        return;
+                    cx.propagate();
                 })
             .on_key_up(
                 [](Root &self, Ctx cx, const gp_key_event &ev)
@@ -1659,7 +1672,8 @@ std::string Editor::describe_item(uint32_t node, int item) const
         const PortDesc &p = d.ports[(size_t)port];
         return std::string(d.name) + "  ·  " + std::string(p.name) + ": "
             + (p.kind == Kind::Event ? "event " : "signal ") + (p.is_output ? "output" : "input")
-            + (p.is_output ? "      drag from it to an input to connect"
+            + (p.is_output ? "      drag from it to an input to connect; Shift+drag moves a cable "
+                             "plugged here"
                            : "      drag from it to an output to connect");
     }
     if (item == kHoverStrip)
@@ -1868,6 +1882,47 @@ bool Editor::piano(Ctx cx, const gp_key_event &ev, bool down)
     return true;
 }
 
+// ---- the rack scrolls under a drag held near its edge
+
+void Editor::edge_scroll_start(Ctx cx, gp_point window)
+{
+    last_pointer = window;
+    if (!edge_task.active())
+        edge_task = cx.app().ctx(self).every(1.0 / 60, [](Editor &e, Ctx c) { e.edge_tick(c); });
+}
+
+void Editor::edge_tick(Ctx cx)
+{
+    const bool dragging
+        = drag.active || (pdrag.active && pdrag.moved) || (mdrag.active && mdrag.moved);
+    if (!drag.active && !pdrag.active && !mdrag.active)
+    {
+        edge_task.cancel();
+        return;
+    }
+    RackView *rv = rack.get(cx);
+    if (!dragging || !rv)
+        return;
+    const RackViewport vp = viewport_of(cx, *this);
+    const gp_point     o = rack_origin(), p = last_pointer;
+    if (p.x < o.x || p.y < o.y || p.x > o.x + vp.w || p.y > o.y + vp.h)
+        return; // only inside the rack (a module still over the browser does not scroll it)
+    constexpr float band = 32;
+    auto speed = [&](float depth) { return depth <= 0 ? 0.f : 1 + std::min(12.f, depth * 0.4f); };
+    const float sx = speed(p.x - (o.x + vp.w - band)) - speed(o.x + band - p.x);
+    const float sy = speed(p.y - (o.y + vp.h - band)) - speed(o.y + band - p.y);
+    if (sx == 0 && sy == 0)
+        return;
+    rv->scroll.by(cx, sx, sy);
+    // what is dragged follows: the same pointer is now over another part of the rack
+    if (drag.active)
+        jack_drag(cx, p);
+    else if (pdrag.active)
+        panel_drag_move(cx, p);
+    else if (mdrag.active)
+        module_drag_move(cx, p);
+}
+
 // ---- panels moved on the rack
 
 void Editor::panel_drag_begin(Ctx cx, uint32_t node, gp_point window)
@@ -1883,6 +1938,7 @@ void Editor::panel_drag_begin(Ctx cx, uint32_t node, gp_point window)
     pdrag.y0 = n->y;
     const Pt q = to_rack(cx, window);
     pdrag.grab = { q.x - n->x * kHp, q.y - n->y * kHp };
+    edge_scroll_start(cx, window);
 }
 
 void Editor::panel_drag_move(Ctx cx, gp_point window)
@@ -1895,6 +1951,7 @@ void Editor::panel_drag_move(Ctx cx, gp_point window)
         pdrag = PanelDrag { };
         return;
     }
+    last_pointer = window;
     if (!pdrag.moved && std::hypot(window.x - pdrag.start.x, window.y - pdrag.start.y) < 4)
         return; // a click, so far
     pdrag.moved = true;
@@ -1925,8 +1982,13 @@ void Editor::panel_drag_end(Ctx cx, gp_point window)
     pdrag = PanelDrag { };
     drag_view.update(cx, [](DragView &, Ctx c) { c.notify(); });
     Node *n = engine.patch().find(d.node);
-    if (!d.moved || !n)
-        return; // a click
+    if (!n)
+        return;
+    if (!d.moved)
+    { // a click on the panel: it is selected
+        select_node(cx, d.node);
+        return;
+    }
     const std::string name(n->desc->name);
     if (d.fits)
     {
@@ -1961,12 +2023,13 @@ Slot Editor::drop_slot(Ctx cx, const ModuleDesc &d, gp_point window)
         (int)std::lround((q.y - kTitleHeight / 2) / kHp) };
 }
 
-void Editor::module_drag_begin(Ctx, const ModuleDesc &d, gp_point window)
+void Editor::module_drag_begin(Ctx cx, const ModuleDesc &d, gp_point window)
 {
     mdrag = ModuleDrag { };
     mdrag.active = true;
     mdrag.desc = &d;
     mdrag.start = mdrag.at = window;
+    edge_scroll_start(cx, window);
 }
 
 void Editor::module_drag_move(Ctx cx, gp_point window)
@@ -1974,6 +2037,7 @@ void Editor::module_drag_move(Ctx cx, gp_point window)
     if (!mdrag.active)
         return;
     mdrag.at = window;
+    last_pointer = window;
     if (!mdrag.moved && std::hypot(window.x - mdrag.start.x, window.y - mdrag.start.y) < 4)
         return; // a click, so far
     mdrag.moved = true;
@@ -2098,9 +2162,53 @@ void Editor::disconnect(Ctx cx, PortRef to)
     say(cx, "Removed the cable " + what + ".");
 }
 
+void Editor::select_node(Ctx cx, uint32_t node)
+{
+    const uint32_t old = selected_node;
+    selected_node = engine.patch().find(node) ? node : 0;
+    if (selected_node && selected)
+        select_cable(cx, std::nullopt); // one or the other
+    for (uint32_t k : { old, selected_node })
+        if (auto it = panels.find(k); k && it != panels.end())
+            it->second.update(cx, [](PanelView &, Ctx c) { c.notify(); });
+    if (selected_node)
+        say(cx,
+            "Selected " + std::string(engine.patch().find(selected_node)->desc->name)
+                + ".      Delete or Backspace removes it.");
+}
+
+bool Editor::nudge(Ctx cx, int steps, bool fine)
+{
+    uint32_t n = 0;
+    int      i = -1;
+    if (hover_item >= 0 && engine.patch().find(hover_node)) // the control under the pointer
+    {
+        n = hover_node;
+        i = hover_item;
+    }
+    else if (engine.patch().find(last_ctrl_node))
+    {
+        n = last_ctrl_node;
+        i = last_ctrl_param;
+    }
+    const Node *nd = engine.patch().find(n);
+    if (!nd || i < 0 || (size_t)i >= nd->params.size())
+        return false;
+    set_param(cx, n, (size_t)i,
+        step_value(nd->desc->params[(size_t)i], nd->params[(size_t)i], steps, fine));
+    return true;
+}
+
 void Editor::select_cable(Ctx cx, std::optional<PortRef> to)
 {
     const std::optional<PortRef> old = selected;
+    if (to && selected_node)
+    { // one or the other
+        const uint32_t was = selected_node;
+        selected_node = 0;
+        if (auto it = panels.find(was); it != panels.end())
+            it->second.update(cx, [](PanelView &, Ctx c) { c.notify(); });
+    }
     selected = to && engine.patch().cable_into(*to) ? to : std::nullopt;
     for (const auto &k : { old, selected })
         if (k)
@@ -2119,6 +2227,8 @@ void Editor::delete_selected(Ctx cx)
 {
     if (selected)
         disconnect(cx, *selected);
+    else if (selected_node)
+        remove_module(cx, selected_node);
 }
 
 namespace
@@ -2133,7 +2243,7 @@ namespace
     }
 } // namespace
 
-void Editor::jack_press(Ctx cx, PortRef jack, gp_point window)
+void Editor::jack_press(Ctx cx, PortRef jack, gp_point window, uint32_t mods)
 {
     const Patch &p = engine.patch();
     const Node  *n = p.find(jack.node);
@@ -2143,10 +2253,20 @@ void Editor::jack_press(Ctx cx, PortRef jack, gp_point window)
     drag = CableDrag { };
     drag.active = true;
     if (!output)
+    {
         if (const Cable *c = p.cable_into(jack))
             drag.picked = *c; // lift the cable off this input; it hangs from its output
-    drag.fixed = drag.picked ? drag.picked->from : jack;
+    }
+    else if (mods & GP_MOD_SHIFT)
+        for (const Cable &c : p.cables()) // the newest cable from this output, by its output end
+            if (c.from == jack)
+            {
+                drag.picked = c;
+                drag.lift_output = true;
+            }
+    drag.fixed = drag.picked ? (drag.lift_output ? drag.picked->to : drag.picked->from) : jack;
     drag.loose = to_rack(cx, window);
+    edge_scroll_start(cx, window);
     const Patch probe = without(p, drag.picked);
     for (const Node &m : probe.nodes())
         for (uint16_t k = 0; k < m.desc->ports.size(); k++)
@@ -2163,7 +2283,8 @@ void Editor::jack_press(Ctx cx, PortRef jack, gp_point window)
             it != cable_views.end())
             it->second.update(cx, [](CableView &, Ctx v) { v.notify(); });
     status = drag.picked
-        ? "Move the plug to another input, or drop it on empty rack to remove the cable."
+        ? std::string("Move the plug to another ") + (drag.lift_output ? "output" : "input")
+            + ", or drop it on empty rack to remove the cable."
         : std::string("Drag to ") + (output ? "an input" : "an output")
             + " to connect; the jacks it fits are lit (" + std::to_string(drag.targets.size())
             + ").";
@@ -2175,6 +2296,7 @@ void Editor::jack_drag(Ctx cx, gp_point window)
 {
     if (!drag.active)
         return;
+    last_pointer = window;
     drag.loose = to_rack(cx, window);
     const Patch &p = engine.patch();
     drag.over = jack_at(p, drag.loose.x, drag.loose.y);
@@ -2212,7 +2334,7 @@ void Editor::jack_release(Ctx cx, gp_point window)
     if (d.over && d.verdict == Err::Ok)
     {
         const auto [f, t] = as_cable(engine.patch(), d.fixed, *d.over);
-        if (d.picked && d.picked->to == t)
+        if (d.picked && d.picked->to == t && d.picked->from == f)
         {
             say(cx, "The cable is where it was.");
             return;
@@ -2340,6 +2462,10 @@ void Editor::remove_module(Ctx cx, uint32_t node)
         return;
     const std::string name(n->desc->name);
     checkpoint(cx, "Delete " + name);
+    if (selected_node == node)
+        selected_node = 0;
+    if (last_ctrl_node == node)
+        last_ctrl_node = 0;
     engine.patch().remove_node(node);
     if (hover_node == node)
     {
@@ -2377,6 +2503,8 @@ void Editor::set_param(Ctx cx, uint32_t node, size_t param, float value)
     const Node *n = engine.patch().find(node);
     if (!n || param >= n->params.size())
         return;
+    last_ctrl_node = node;
+    last_ctrl_param = (int)param;
     checkpoint(cx, std::string(n->desc->name) + " " + std::string(n->desc->params[param].name),
         (uint64_t)1 << 63 | (uint64_t)node << 16
             | param); // a drag or a run of wheel notches: one step
@@ -2472,6 +2600,7 @@ void Editor::forget_view_state(Ctx cx)
     hover_text.clear();
     file_menu_open = false;
     ask = Ask { };
+    selected_node = 0;
     if (RackView *rv = rack.get(cx))
     {
         rv->menu_node = 0;

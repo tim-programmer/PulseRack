@@ -31,6 +31,8 @@ if(PULSERACK_BUILD_GUI)
     set_tests_properties(ui_undo PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 60)
     add_test(NAME ui_steps COMMAND ui_smoke --steps)
     set_tests_properties(ui_steps PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 60)
+    add_test(NAME ui_gaps COMMAND ui_smoke --gaps)
+    set_tests_properties(ui_gaps PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 60)
 
     add_test(NAME ui_screenshot COMMAND pulserack ${CMAKE_SOURCE_DIR}/examples/sequence.rack)
     set_tests_properties(ui_screenshot PROPERTIES FIXTURES_SETUP shot TIMEOUT 30

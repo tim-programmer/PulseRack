@@ -436,3 +436,24 @@ key found at its middle, higher notes higher up, the corners). `ui_steps` adds: 
 silence after the release; a glide from C4 to E4 ending on E4 and leaving nothing held; the computer keyboard playing the same
 module.
 
+## As built (milestone 6, part 4: selection, arrow keys, cable output ends, edge scrolling)
+
+* **A module can be selected and deleted with the keyboard.** A click on a panel's face or title (no drag) selects it (an accent
+  border); a cable or a module is selected, not both; a click on empty rack clears it. Delete or Backspace removes whichever is
+  selected (undoable).
+* **The arrow keys turn a control**: the one under the pointer, else the last one touched (gpuic sends keys to a focused element,
+  and controls do not take focus, so the pointer stands in for it). Up and Right raise it by 1 % of its travel (Shift: 0.1 %),
+  Down and Left lower it; a whole-number control or a selector moves by one. It joins the control's undo step like the wheel.
+* **A cable can be moved by its output end**: **Shift+drag** on a plugged output lifts its newest cable by that end (a plain drag
+  from an output still makes a new cable, since an output feeds any number). Drop it on another output to move it (it keeps its
+  colour), on empty rack to remove it. The hint over an output says so.
+* **The rack scrolls under a drag held at its edge** (a cable, a panel, or a module from the browser): within 32 px of the rack's
+  inner edge it scrolls, faster the deeper the pointer is (up to 13 px a tick at 60 Hz), and what is dragged follows; only while the
+  pointer is inside the rack.
+
+**Tests.** `ui_gaps` (27 checks): select, Delete, undo; a cable and a module never both selected; empty rack clears; Up, Shift+Up,
+Left on a selector, and the last control touched when the pointer is elsewhere; Shift+drag moving the newest of two cables to
+another output (the other stays, the colour is kept) and removing one on empty rack, while a plain drag still makes a new cable; a
+panel held at the right edge scrolling the rack and landing further right than the pointer went; a cable held at the bottom edge
+scrolling it down.
+

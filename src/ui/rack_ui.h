@@ -97,7 +97,8 @@ struct Editor
         std::optional<PortRef> over;              // the jack under the pointer
         Err                    verdict = Err::Ok; // what connecting there would say
         std::vector<PortRef>   targets; // every jack it could connect to (lit while dragging)
-        std::optional<Cable>   picked;  // the cable lifted off an input, if it began that way
+        std::optional<Cable>   picked;  // the cable lifted off a jack, if it began that way
+        bool                   lift_output = false; // ... off its output (it hangs from its input)
     } drag;
 
     // ---- a module dragged from the browser onto the rack
@@ -184,10 +185,26 @@ struct Editor
     Err  connect(gpuic::Ctx cx, PortRef a, PortRef b);
     void disconnect(gpuic::Ctx cx, PortRef to);
     void select_cable(gpuic::Ctx cx, std::optional<PortRef> to);
-    void delete_selected(gpuic::Ctx cx);
+    // A module selected by a click on its panel (a cable or a module is selected, not both); Delete
+    // removes whichever is.
+    // While a cable, a panel or a module from the browser is dragged, the pointer near the rack's
+    // edge scrolls it (and the drag follows): a 60 Hz task while any drag is on.
+    gp_point    last_pointer { };
+    gpuic::Task edge_task;
+    void        edge_scroll_start(gpuic::Ctx cx, gp_point window);
+    void        edge_tick(gpuic::Ctx cx);
+    uint32_t    selected_node = 0;
+    void        select_node(gpuic::Ctx cx, uint32_t node); // 0: none
+    // The arrow keys turn the control under the pointer, else the last one touched.
+    uint32_t last_ctrl_node = 0;
+    int      last_ctrl_param = -1;
+    bool     nudge(gpuic::Ctx cx, int steps, bool fine); // false: no control to turn
+    void     delete_selected(gpuic::Ctx cx);
     // A press on a jack starts a cable: from an output or an empty input a new one, from a
     // connected input its cable is lifted off. Positions are window pixels.
-    void jack_press(gpuic::Ctx cx, PortRef jack, gp_point window);
+    // Shift on a plugged output lifts its newest cable by the output end (a plain drag from an
+    // output always makes a new cable).
+    void jack_press(gpuic::Ctx cx, PortRef jack, gp_point window, uint32_t mods = 0);
     void jack_drag(gpuic::Ctx cx, gp_point window);
     void jack_release(gpuic::Ctx cx, gp_point window);
     // A press on a browser card, then moves: past a few pixels it becomes a drag; released on a
