@@ -8,9 +8,9 @@ The reference for the look and the workflow is Voltage Modular: a module browser
 (search, filter, an *Add* button per module), a rack of panels on the right, cables between
 jacks, and a toolbar for new/save/open and the audio device.
 
-**Status: milestones 0 to 5 are built**: the gpuic spike, the headless engine, the window, cables, sound (SDL3 output on its
-own thread, the computer keyboard as a piano, LEDs and meters), and saving and loading patches. Next: polish and the later modules
-(milestone 6). The name is a placeholder.
+**Status: milestones 0 to 6 are built**: the gpuic spike, the headless engine, the window, cables, sound (SDL3 output on its
+own thread, the computer keyboard as a piano, LEDs and meters), saving and loading, and the polish of milestone 6 (undo, the
+sequencer's step grid, the on-screen keyboard, the output device, dropouts). Waiting on PulseCoreLib: delay, sampler, reverb. The name is a placeholder.
 
 ## Documents
 

@@ -159,10 +159,25 @@ struct Toolbar
                 dirty ? st::kText : st::kSubtext))
             .child(label(std::to_string(n) + (n == 1 ? " module" : " modules"), 12, st::kDim))
             .child(div().flex_1())
-            .child(label(e ? e->audio_status() : std::string(), 12, st::kDim))
+            .child(e && e->shown_dropouts
+                    ? label(std::to_string(e->shown_dropouts)
+                              + (e->shown_dropouts == 1 ? " dropout" : " dropouts"),
+                          12, st::kDanger)
+                    : div())
             .child(div()
+                    .flex_row()
+                    .items_center()
+                    .h(st::kToolBtnH)
+                    .px(6)
+                    .rounded(4)
+                    .cursor_pointer()
+                    .hover_bg(st::kSurfaceHi)
+                    .child(label((e ? e->audio_status() : std::string()) + "  v", 12, st::kDim))
+                    .on_click([](Toolbar &self, Ctx cx) { self.ed.get(cx)->open_device_menu(cx); }))
+            .child(div()
+                    .w(st::kAudioW)
+                    .justify_center()
                     .h(24)
-                    .px(10)
                     .gap(6)
                     .rounded(4)
                     .flex_row()
@@ -1508,7 +1523,7 @@ struct Overlay
     Element render(Ctx cx)
     {
         Editor *e = ed.get(cx);
-        if (!e || (!e->file_menu_open && !e->ask.shown))
+        if (!e || (!e->file_menu_open && !e->ask.shown && !e->device_menu_open))
             return div();
         Element layer = div().absolute().left(0).top(0).w(8000).h(8000);
         if (e->ask.shown)
@@ -1544,8 +1559,39 @@ struct Overlay
                                 [](Overlay &self, Ctx c) { self.ed.get(c)->answer(c, 0); }))));
             return layer;
         }
-        // the Open menu, under its button
         layer.on_mouse_down([](Overlay &self, Ctx c) { self.ed.get(c)->close_overlays(c); });
+        if (e->device_menu_open)
+        { // the output devices, under the audio status
+            Element menu = div()
+                               .absolute()
+                               .left(st::kWindowW - 12 - st::kAudioW - st::kDeviceMenuW)
+                               .top(st::kToolbarH - 2)
+                               .w(st::kDeviceMenuW)
+                               .p(4)
+                               .flex_col()
+                               .rounded(5)
+                               .bg(st::kSurfaceHi)
+                               .border(1)
+                               .border_color(st::kBorder)
+                               .shadow(0, 8, 20, with_alpha(rgb(0x000000), 0.5f));
+            menu.on_mouse_down([](Overlay &) { });
+            auto mark = [&](const std::string &name)
+            { return std::string(e->audio_device == name ? "*  " : "   "); };
+            menu.child(item(mark("") + "System default", "",
+                [](Overlay &self, Ctx c) { self.ed.get(c)->choose_device(c, ""); }));
+            for (size_t k = 0; k < e->devices.size(); k++)
+                menu.child(item(mark(e->devices[k].name) + e->devices[k].name, "",
+                    [k](Overlay &self, Ctx c)
+                    {
+                        Editor *ed2 = self.ed.get(c);
+                        if (k < ed2->devices
+                                .size()) // (a copy: the list is read again on the next opening)
+                            ed2->choose_device(c, std::string(ed2->devices[k].name));
+                    }));
+            layer.child(std::move(menu));
+            return layer;
+        }
+        // the Open menu, under its button
         Element menu = div()
                            .absolute()
                            .left(st::kOpenX)
@@ -1723,7 +1769,7 @@ bool Editor::start_audio(Ctx cx)
     if (!audio)
         audio = std::make_unique<audio::AudioOut>(engine);
     std::string err;
-    const bool  ok = audio->start(&err);
+    const bool  ok = audio->start(&err, audio_device);
     audio_error = ok ? std::string() : err;
     if (ok)
     {
@@ -1735,6 +1781,27 @@ bool Editor::start_audio(Ctx cx)
         say(cx, audio_error + ".");
     toolbar.update(cx, [](Toolbar &, Ctx c) { c.notify(); });
     return ok;
+}
+
+void Editor::open_device_menu(Ctx cx)
+{
+    std::string err;
+    devices = audio::AudioOut::outputs(&err);
+    device_menu_open = true;
+    file_menu_open = false;
+    overlay.update(cx, [](Overlay &, Ctx c) { c.notify(); });
+    if (!err.empty())
+        say(cx, err + ".");
+}
+
+void Editor::choose_device(Ctx cx, const std::string &device)
+{
+    device_menu_open = false;
+    overlay.update(cx, [](Overlay &, Ctx c) { c.notify(); });
+    audio_device = device;
+    if (audio_running())
+        stop_audio(cx);
+    start_audio(cx);
 }
 
 void Editor::stop_audio(Ctx cx)
@@ -1761,8 +1828,8 @@ std::string Editor::audio_status() const
         return audio_error.empty() ? "audio off" : audio_error;
     const audio::DeviceInfo &d = audio->info();
     char                     buf[128];
-    std::snprintf(buf, sizeof buf, "%s  ·  %.1f kHz  ·  %.1f ms  ·  CPU %d %%", d.driver.c_str(),
-        d.rate / 1000.0, d.latency_ms(), std::max(0, load_pct));
+    std::snprintf(buf, sizeof buf, "%s (%s)  ·  %.1f kHz  ·  %.1f ms  ·  CPU %d %%", d.name.c_str(),
+        d.driver.c_str(), d.rate / 1000.0, d.latency_ms(), std::max(0, load_pct));
     return buf;
 }
 
@@ -1817,6 +1884,12 @@ void Editor::tick(Ctx cx)
             if (n.desc->id == "out")
                 if (auto it = panels.find(n.id); it != panels.end())
                     it->second.update(cx, [](PanelView &, Ctx c) { c.notify(); });
+    const uint32_t drops = audio_running() ? audio->dropouts() : shown_dropouts;
+    if (drops != shown_dropouts)
+    {
+        shown_dropouts = drops;
+        toolbar.update(cx, [](Toolbar &, Ctx c) { c.notify(); });
+    }
     const int load
         = audio_running() ? (int)std::lround(100 * t.load.load(std::memory_order_relaxed)) : -1;
     if (load != load_pct)
@@ -2680,9 +2753,10 @@ bool Editor::search_focused(Ctx cx)
 
 void Editor::close_overlays(Ctx cx)
 {
-    if (!file_menu_open && !ask.shown)
+    if (!file_menu_open && !ask.shown && !device_menu_open)
         return;
     file_menu_open = false;
+    device_menu_open = false;
     ask = Ask { };
     overlay.update(cx, [](Overlay &, Ctx c) { c.notify(); });
 }

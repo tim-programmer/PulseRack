@@ -8,7 +8,27 @@
 namespace rack::audio
 {
 
-bool AudioOut::start(std::string *error)
+std::vector<OutputDevice> AudioOut::outputs(std::string *error)
+{
+    std::vector<OutputDevice> out;
+    if (!SDL_InitSubSystem(SDL_INIT_AUDIO))
+    {
+        *error = std::string("audio could not start: ") + SDL_GetError();
+        return out;
+    }
+    int                n = 0;
+    SDL_AudioDeviceID *ids = SDL_GetAudioPlaybackDevices(&n);
+    for (int i = 0; ids && i < n; i++)
+    {
+        const char *name = SDL_GetAudioDeviceName(ids[i]);
+        out.push_back(OutputDevice { ids[i], name ? name : "?" });
+    }
+    SDL_free(ids);
+    SDL_QuitSubSystem(SDL_INIT_AUDIO);
+    return out;
+}
+
+bool AudioOut::start(std::string *error, const std::string &device)
 {
     if (stream_)
         return true;
@@ -22,18 +42,35 @@ bool AudioOut::start(std::string *error)
     SDL_SetHint(SDL_HINT_AUDIO_DEVICE_SAMPLE_FRAMES, std::to_string(kDeviceFrames).c_str());
 
     // the engine runs at the device's own rate, so nothing resamples
-    SDL_AudioSpec dev { };
-    int           frames = 0;
-    uint32_t      rate = 48000;
-    if (SDL_GetAudioDeviceFormat(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &dev, &frames) && dev.freq > 0)
+    SDL_AudioSpec     dev { };
+    int               frames = 0;
+    uint32_t          rate = 48000;
+    SDL_AudioDeviceID which = SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK;
+    if (!device.empty())
+    { // the output of that name, in this session of SDL's audio
+        int                n = 0;
+        SDL_AudioDeviceID *ids = SDL_GetAudioPlaybackDevices(&n);
+        which = 0;
+        for (int i = 0; ids && i < n && !which; i++)
+            if (const char *name = SDL_GetAudioDeviceName(ids[i]); name && device == name)
+                which = ids[i];
+        SDL_free(ids);
+        if (!which)
+        {
+            *error = "no output called \"" + device + "\" now";
+            SDL_QuitSubSystem(SDL_INIT_AUDIO);
+            subsystem_ = false;
+            return false;
+        }
+    }
+    if (SDL_GetAudioDeviceFormat(which, &dev, &frames) && dev.freq > 0)
         rate = (uint32_t)dev.freq;
     if (engine_.sample_rate() != rate)
         engine_.set_sample_rate(rate);
 
     engine_.attach_audio(true); // from here on only the callback renders
     const SDL_AudioSpec spec { SDL_AUDIO_F32, 2, (int)rate };
-    stream_ = SDL_OpenAudioDeviceStream(
-        SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, &AudioOut::callback, this);
+    stream_ = SDL_OpenAudioDeviceStream(which, &spec, &AudioOut::callback, this);
     if (!stream_)
     {
         *error = std::string("no audio output: ") + SDL_GetError();
@@ -48,6 +85,10 @@ bool AudioOut::start(std::string *error)
     info_.rate = rate;
     if (SDL_GetAudioDeviceFormat(SDL_GetAudioStreamDevice(stream_), &dev, &frames))
         info_.frames = frames;
+    const char *name = SDL_GetAudioDeviceName(SDL_GetAudioStreamDevice(stream_));
+    info_.name = name ? name : (device.empty() ? "default output" : device);
+    meter_.reset(info_.frames > 0 ? (double)info_.frames / rate : 256.0 / rate);
+    dropouts_.store(0);
     SDL_ResumeAudioStreamDevice(stream_);
     return true;
 }
@@ -56,9 +97,9 @@ void AudioOut::stop()
 {
     if (stream_)
     {
-        // Setting the callback takes the stream's lock, which SDL holds while the callback runs: any
-        // callback still running has finished when this returns, and none starts after (SDL_audio.h,
-        // SDL_SetAudioStreamGetCallback). Only then is the engine detached.
+        // Setting the callback takes the stream's lock, which SDL holds while the callback runs:
+        // any callback still running has finished when this returns, and none starts after
+        // (SDL_audio.h, SDL_SetAudioStreamGetCallback). Only then is the engine detached.
         SDL_SetAudioStreamGetCallback(stream_, nullptr, nullptr);
         SDL_DestroyAudioStream(stream_); // and the device it opened
         stream_ = nullptr;
@@ -93,10 +134,12 @@ void AudioOut::callback(void *self, SDL_AudioStream *stream, int additional, int
     }
     if (total > 0)
     { // the share of the time these frames cover that rendering them took, smoothed
-        const double spent
-            = (double)(SDL_GetPerformanceCounter() - t0) / (double)SDL_GetPerformanceFrequency();
+        const double freq = (double)SDL_GetPerformanceFrequency();
+        const double spent = (double)(SDL_GetPerformanceCounter() - t0) / freq;
         const double span = (double)total / (double)a->engine_.sample_rate();
-        auto        &load = a->engine_.telemetry().load;
+        a->meter_.on_callback((double)t0 / freq, span, spent); // dropouts, from the timing
+        a->dropouts_.store(a->meter_.count, std::memory_order_relaxed);
+        auto &load = a->engine_.telemetry().load;
         load.store((float)(0.9 * load.load(std::memory_order_relaxed) + 0.1 * spent / span),
             std::memory_order_relaxed);
     }

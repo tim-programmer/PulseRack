@@ -41,7 +41,11 @@ struct Editor
     // is an entity, so both go before gpuic's SDL_Quit). Null until audio is first started.
     std::unique_ptr<audio::AudioOut> audio;
     std::string                      audio_error; // why audio is not running, if it failed
-    gpuic::Task                      meter_task;  // 30 Hz while audio runs: LEDs and meters
+    std::string audio_device; // the output chosen, by name (empty: the system's default)
+    std::vector<audio::OutputDevice> devices; // as listed when the device menu opened
+    bool                             device_menu_open = false;
+    uint32_t                         shown_dropouts = 0; // what the toolbar shows
+    gpuic::Task                      meter_task;         // 30 Hz while audio runs: LEDs and meters
 
     // What the panels show from telemetry, so that only a change re-renders a panel.
     struct Led
@@ -270,6 +274,8 @@ struct Editor
     // ---- sound (milestone 4)
     bool        start_audio(gpuic::Ctx cx); // false: no device (audio_error says why)
     void        stop_audio(gpuic::Ctx cx);
+    void        open_device_menu(gpuic::Ctx cx);
+    void        choose_device(gpuic::Ctx cx, const std::string &device); // and restart audio on it
     bool        audio_running() const { return audio && audio->running(); }
     std::string audio_status() const; // for the toolbar
     void        tick(gpuic::Ctx cx);  // takes the telemetry and updates what changed

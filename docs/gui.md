@@ -457,3 +457,23 @@ another output (the other stays, the colour is kept) and removing one on empty r
 panel held at the right edge scrolling the rack and landing further right than the pointer went; a cable held at the bottom edge
 scrolling it down.
 
+## As built (milestone 6, part 5: the output device and dropouts)
+
+* **The output device can be chosen.** The audio status in the toolbar (now `device (driver) · rate · latency · CPU`) opens a menu:
+  *System default* and every output SDL lists (here: the headset, HDMI, S/PDIF), the current one marked. Choosing one restarts
+  audio on it. The choice is kept **by name**, not by SDL's id: an id lasts only as long as SDL's audio subsystem, which stopping
+  audio ends (found when choosing a device after a stop failed). Not saved between runs.
+* **Dropouts are counted and shown** (red, left of the status, only when there are some). With no word from the driver, the
+  callback's own timing tells: the audio delivered must keep pace with the clock, so a callback that comes more than one device
+  buffer behind, or that takes longer than the audio it renders, is a dropout (`src/audio/dropout_meter.h`). The first 0.25 s of
+  audio is not counted: the device settles then, and one start in four here showed a "dropout" with an empty rack; six starts after
+  the change showed none.
+
+**Tests.** `test_dropouts.cpp` (6 cases, made-up timings): steady callbacks and jitter within a buffer are none, larger requests that
+keep pace are none, a stall of three buffers is one, a slow render is one, nothing counts during the warm-up and the same stall after
+it does. `ui_sound` (36 checks) opens the device menu, chooses *System default* and the device the dummy driver lists, and checks that
+the toolbar shows what the meter counted.
+
+**Milestone 6 is done** apart from the modules that wait for PulseCoreLib (delay, sampler, reverb: none has appeared). The smaller
+items left open by earlier milestones are in parts 1 to 5 above.
+

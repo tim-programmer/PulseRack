@@ -28,6 +28,8 @@ inline constexpr float kSaveAsX = kSaveX + kSaveW + kToolGap;
 inline constexpr float kUndoW = 50, kRedoW = 50;
 inline constexpr float kUndoX = kSaveAsX + kSaveAsW + kToolGap + 8; // a little apart from the files
 inline constexpr float kRedoX = kUndoX + kUndoW + kToolGap;
+inline constexpr float kAudioW = 70;       // the toolbar's Audio button, at the right
+inline constexpr float kDeviceMenuW = 380; // the output device menu, under the audio status
 inline constexpr float kFileMenuW = 520, kFileItemH = 30, kFileExampleH = 58, kFileHeaderH = 24;
 // the unsaved-changes question: a box in the middle of the window, its buttons along the bottom
 // right

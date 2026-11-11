@@ -1,6 +1,6 @@
 # Architecture
 
-Status: **reviewed; milestones 0 to 5 are built** (the table at the end). Where something has not been checked against
+Status: **reviewed; milestones 0 to 6 are built** (6 without the modules that wait for PulseCoreLib) (the table at the end). Where something has not been checked against
 the real code or library it says so.
 
 ## Repository layout
@@ -194,7 +194,7 @@ real device was opened (PipeWire) but no sound was listened to in these tests.
 | 3 | Cables | **built**: jacks, dragging cables (lit targets, reasons for refusals), moving and deleting them, the engine updated live; see `gui.md`, *As built (milestone 3)* |
 | 4 | Sound | **built**: SDL3 output on its own thread, the computer keyboard as a piano, activity LEDs and level meters; see *As built (milestone 4)* above and `gui.md` |
 | 5 | Save and load | **built**: New, Open, Save, Save as, the factory patches, unsaved changes asked about and kept at close; see `gui.md`, *As built (milestone 5)* |
-| 6 | Polish and the later modules | search/filter, undo, delay/sampler/reverb as PulseCoreLib gains them |
+| 6 | Polish and the later modules | **built**: undo and redo, the step grid, the on-screen keyboard, selection and Delete, arrow keys, cable output ends, edge scrolling, the output device, dropouts (`gui.md`, *As built (milestone 6)*, parts 1 to 5). **Waiting:** delay, sampler and reverb, until PulseCoreLib has them |
 
 Milestones 1 and 0 are independent. If a spike result is bad (cables, mostly), it changes milestone 3
 and nothing earlier.

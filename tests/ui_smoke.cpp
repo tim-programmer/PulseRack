@@ -876,6 +876,37 @@ struct Driver
         for (int pos : seen)
             CHECK(pos >= -1 && pos < 8); // within the default length
 
+        // the output device: the audio status opens the menu; the system's default, then a listed
+        // one
+        const gp_point status { style::kWindowW - 12 - style::kAudioW - style::kToolGap - 15,
+            style::kToolbarH / 2 };
+        auto           row = [](int r)
+        {
+            return gp_point { style::kWindowW - 12 - style::kAudioW - style::kDeviceMenuW / 2,
+                style::kToolbarH - 2 + 1 + 4 + style::kFileItemH * (r + 0.5f) };
+        };
+        click(status);
+        CHECK(e().device_menu_open);
+        click(row(0)); // System default
+        wait(0.3);
+        CHECK(!e().device_menu_open && e().audio_running() && e().audio_device.empty());
+        click(status);
+        const auto listed = e().devices;
+        if (!listed.empty())
+        {
+            click(row(1));
+            wait(0.3);
+            CHECK(e().audio_running() && e().audio_device == listed[0].name);
+            CHECK(e().audio_status().find(listed[0].name) != std::string::npos);
+        }
+        else
+            gp_simulate_keystrokes(app, "escape");
+        std::printf("  (%zu output device(s) listed by the %s driver)\n", listed.size(),
+            e().audio->info().driver.c_str());
+        wait(0.2);
+        CHECK(e().shown_dropouts
+            == e().audio->dropouts()); // the toolbar shows what the meter counted
+
         // the toolbar's Audio button: off (the engine is detached, edits apply at once) and on
         // again
         const gp_point button { style::kWindowW - 12 - 33, style::kToolbarH / 2 };
