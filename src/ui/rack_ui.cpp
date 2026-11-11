@@ -104,12 +104,33 @@ struct Toolbar
             .child(label(e ? e->patch_name : std::string(), 13, st::kSubtext))
             .child(label(std::to_string(n) + (n == 1 ? " module" : " modules"), 12, st::kDim))
             .child(div().flex_1())
+            .child(label(e ? e->audio_status() : std::string(), 12, st::kDim))
             .child(div()
+                    .h(24)
+                    .px(10)
+                    .gap(6)
+                    .rounded(4)
                     .flex_row()
                     .items_center()
-                    .gap(6)
-                    .child(div().w(8).h(8).rounded_full().bg(st::kLedOff))
-                    .child(label("no audio yet", 12, st::kDim)));
+                    .cursor_pointer()
+                    .bg(st::kSurfaceHi)
+                    .hover_bg(st::kBorder)
+                    .border(1)
+                    .border_color(st::kBorder)
+                    .child(div().w(8).h(8).rounded_full().bg(
+                        e && e->audio_running() ? st::kLedOn : st::kLedOff))
+                    .child(label("Audio", 12, st::kText))
+                    .on_click(
+                        [](Toolbar &self, Ctx cx)
+                        {
+                            if (Editor *ed = self.ed.get(cx))
+                            {
+                                if (ed->audio_running())
+                                    ed->stop_audio(cx);
+                                else
+                                    ed->start_audio(cx);
+                            }
+                        }));
     }
 };
 
@@ -263,6 +284,9 @@ struct PanelView
     int   active = -1; // the control being dragged
     float travel = 0, last_y = 0;
 
+    Editor::Led        led_;       // copied from the editor at render: what the LED shows
+    std::array<int, 2> meter_ { }; // and the output level (Audio Output panels)
+
     bool     moving = false; // the title bar is being dragged
     gp_point grab { };
     int      x0 = 0, y0 = 0;
@@ -339,6 +363,53 @@ struct PanelView
     }
 
     // ---- elements
+    // Lit by what the module's connected outputs carry (telemetry, while audio runs); red if it had
+    // to drop events.
+    Element activity_led() const
+    {
+        static const float kAlpha[4] = { 0, 0.35f, 0.7f, 1.f };
+        return div()
+            .absolute()
+            .left(2)
+            .top(kTitleHeight + 2)
+            .w(6)
+            .h(6)
+            .rounded_full()
+            .border(1)
+            .border_color(st::kKnobEdge)
+            .bg(led_.dropped     ? st::kDanger
+                    : led_.level ? with_alpha(st::kLedOn, kAlpha[led_.level])
+                                 : st::kLedOff);
+    }
+    Element meters(const PanelLayout &L) const
+    {
+        const float top = L.controls_bottom + 12, h = std::max(20.f, L.jacks_top - top - 12);
+        const float bw = 8, x0 = L.width / 2 - bw - 2;
+        Element     m = div().absolute().left(x0).top(top).w(2 * bw + 4).h(h);
+        for (int ch = 0; ch < 2; ch++)
+        {
+            const float frac = (float)meter_[(size_t)ch] / 40.f;
+            const Color c = frac >= 1.f ? st::kDanger : frac > 0.9f ? rgb(0xf9e2af) : st::kLedOn;
+            m.child(div()
+                    .absolute()
+                    .left((float)ch * (bw + 4))
+                    .top(0)
+                    .w(bw)
+                    .h(h)
+                    .rounded(2)
+                    .bg(st::kWell)
+                    .child(div()
+                            .absolute()
+                            .left(0)
+                            .top(h * (1 - frac))
+                            .w(bw)
+                            .h(h * frac)
+                            .rounded(2)
+                            .bg(c)));
+        }
+        return m;
+    }
+
     Element knob(float t) const
     {
         return div()
@@ -558,6 +629,12 @@ struct PanelView
         const ModuleDesc  &d = *n->desc;
         const PanelLayout &L = panel_layout(d);
         const auto         cc = st::category(d.category);
+        {
+            Editor *e = ed.get(cx);
+            auto    it = e->leds.find(node);
+            led_ = it == e->leds.end() ? Editor::Led { } : it->second;
+            meter_ = e->meter;
+        }
 
         Element p
             = div()
@@ -584,6 +661,7 @@ struct PanelView
                 .justify_center()
                 .overflow_hidden()
                 .child(label(std::string(d.name), L.width < 100 ? 9 : 11, st::kText).font_bold())
+
                 .on_mouse_down(
                     [](PanelView &self, Ctx cx, const gp_mouse_event &ev)
                     {
@@ -618,6 +696,9 @@ struct PanelView
             p.child(control(d, i, n->params[i], L.params[i], cc.chip));
         for (size_t i = 0; i < d.ports.size(); i++)
             p.child(jack(d, i, L.ports[i], L.jacks[i]));
+        p.child(activity_led());
+        if (d.id == "out") // the output level, between its controls and its jacks
+            p.child(meters(L));
 
         if (active >= 0 && (size_t)active < d.params.size())
         { // the value while dragging
@@ -1038,7 +1119,20 @@ struct Root
                     .child(e->browser.cached())
                     .child(div().flex_1().h_full().min_w(0).child(e->rack.cached())))
             .child(e->hint_line.cached())
-            .child(div().absolute().left(0).top(0).child(e->chip.cached()));
+            .child(div().absolute().left(0).top(0).child(e->chip.cached()))
+            // the computer keyboard as a piano: keys reach the root when nothing focused takes them
+            .on_key_down(
+                [](Root &self, Ctx cx, const gp_key_event &ev)
+                {
+                    if (!self.ed.get(cx)->piano(cx, ev, true))
+                        cx.propagate();
+                })
+            .on_key_up(
+                [](Root &self, Ctx cx, const gp_key_event &ev)
+                {
+                    if (!self.ed.get(cx)->piano(cx, ev, false))
+                        cx.propagate();
+                });
     }
 };
 
@@ -1110,6 +1204,166 @@ Pt Editor::to_rack(Ctx cx, gp_point w)
     const RackViewport vp = viewport_of(cx, *this);
     const gp_point     o = rack_origin();
     return { w.x - o.x + vp.x, w.y - o.y + vp.y };
+}
+
+// ---- sound
+
+bool Editor::start_audio(Ctx cx)
+{
+    if (!audio)
+        audio = std::make_unique<audio::AudioOut>(engine);
+    std::string err;
+    const bool  ok = audio->start(&err);
+    audio_error = ok ? std::string() : err;
+    if (ok)
+    {
+        meter_task.cancel();
+        meter_task = cx.app().ctx(self).every(1.0 / 30, [](Editor &e, Ctx c) { e.tick(c); });
+        say(cx, "Audio on: " + audio_status() + ".");
+    }
+    else
+        say(cx, audio_error + ".");
+    toolbar.update(cx, [](Toolbar &, Ctx c) { c.notify(); });
+    return ok;
+}
+
+void Editor::stop_audio(Ctx cx)
+{
+    meter_task.cancel();
+    if (audio)
+        audio->stop();
+    load_pct = -1;
+    tick(cx); // the LEDs and meters go dark
+    for (auto &[id, l] : leds)
+        if (l.level || l.dropped)
+        {
+            l = Led { };
+            if (auto it = panels.find(id); it != panels.end())
+                it->second.update(cx, [](PanelView &, Ctx c) { c.notify(); });
+        }
+    say(cx, "Audio off.");
+    toolbar.update(cx, [](Toolbar &, Ctx c) { c.notify(); });
+}
+
+std::string Editor::audio_status() const
+{
+    if (!audio_running())
+        return audio_error.empty() ? "audio off" : audio_error;
+    const audio::DeviceInfo &d = audio->info();
+    char                     buf[128];
+    std::snprintf(buf, sizeof buf, "%s  ·  %.1f kHz  ·  %.1f ms  ·  CPU %d %%", d.driver.c_str(),
+        d.rate / 1000.0, d.latency_ms(), std::max(0, load_pct));
+    return buf;
+}
+
+void Editor::tick(Ctx cx)
+{
+    Telemetry &t = engine.telemetry();
+    for (auto &[id, view] : panels)
+    {
+        const int   slot = engine.telemetry_slot(id);
+        const float a = t.take_activity(slot);
+        const Led   now { a < 0.005f ? 0
+                : a < 0.1f           ? 1
+                : a < 0.4f           ? 2
+                                     : 3,
+            slot >= 0 && t.dropped[(size_t)slot].load(std::memory_order_relaxed) > 0 };
+        Led &shown = leds[id];
+        if (now.level != shown.level || now.dropped != shown.dropped)
+        {
+            shown = now;
+            view.update(cx, [](PanelView &, Ctx c) { c.notify(); });
+        }
+    }
+    bool meters_changed = false;
+    for (int ch = 0; ch < 2; ch++)
+    { // -60 .. 0 dB on 40 steps
+        const float p = t.take_peak(ch);
+        const float db = p > 1e-6f ? 20.f * std::log10(p) : -120.f;
+        const int   m
+            = p >= 0.999f ? 40 : std::clamp((int)std::lround((db + 60.f) / 60.f * 39.f), 0, 39);
+        if (m != meter[(size_t)ch])
+        {
+            meter[(size_t)ch] = m;
+            meters_changed = true;
+        }
+    }
+    if (meters_changed)
+        for (const Node &n : engine.patch().nodes())
+            if (n.desc->id == "out")
+                if (auto it = panels.find(n.id); it != panels.end())
+                    it->second.update(cx, [](PanelView &, Ctx c) { c.notify(); });
+    const int load
+        = audio_running() ? (int)std::lround(100 * t.load.load(std::memory_order_relaxed)) : -1;
+    if (load != load_pct)
+    {
+        load_pct = load;
+        toolbar.update(cx, [](Toolbar &, Ctx c) { c.notify(); });
+    }
+}
+
+namespace
+{
+    std::string note_name(int n)
+    {
+        static const char *names[12]
+            = { "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B" };
+        return std::string(names[n % 12]) + std::to_string(n / 12 - 1);
+    }
+} // namespace
+
+bool Editor::piano(Ctx cx, const gp_key_event &ev, bool down)
+{
+    if (ev.mods & (GP_MOD_CTRL | GP_MOD_ALT | GP_MOD_SUPER))
+        return false;
+    if (Browser *b = browser.get(cx);
+        b && b->search && cx.is_focused(Focus(b->search.focus(cx.app()))))
+        return false; // typing in the search box
+    // A W S E D F T G Y H U J K O L P ; : the white keys on the home row, the black ones above
+    static const std::pair<const char *, int> keys[] = { { "a", 0 }, { "w", 1 }, { "s", 2 },
+        { "e", 3 }, { "d", 4 }, { "f", 5 }, { "t", 6 }, { "g", 7 }, { "y", 8 }, { "h", 9 },
+        { "u", 10 }, { "j", 11 }, { "k", 12 }, { "o", 13 }, { "l", 14 }, { "p", 15 }, { ";", 16 } };
+    const std::string                         k = ev.key ? ev.key : "";
+    if (k == "z" || k == "x")
+    {
+        if (down && !ev.repeat)
+        {
+            octave = std::clamp(octave + (k == "x" ? 1 : -1), -4, 4);
+            say(cx, "Computer keyboard: the A key plays " + note_name(60 + 12 * octave) + ".");
+        }
+        return true;
+    }
+    int semi = -1;
+    for (const auto &[name, s] : keys)
+        if (k == name)
+            semi = s;
+    if (semi < 0)
+        return false;
+    uint8_t note;
+    if (down)
+    {
+        if (ev.repeat || held.count(k))
+            return true; // auto-repeat: the note is already on
+        note = (uint8_t)std::clamp(60 + 12 * octave + semi, 0, 127);
+        held[k] = note;
+    }
+    else
+    {
+        auto it = held.find(k);
+        if (it == held.end())
+            return true;
+        note = it->second;
+        held.erase(it);
+    }
+    int sent = 0;
+    for (const Node &n : engine.patch().nodes())
+        if (n.desc->id == "keyboard" && engine.key(n.id, down, note, 100) == Err::Ok)
+            sent++;
+    if (down)
+        say(cx,
+            sent ? "Note " + note_name(note) + (audio_running() ? "" : "  (audio is off)")
+                 : "No Keyboard module: add one to play notes from the computer keyboard.");
+    return true;
 }
 
 // ---- modules dragged from the browser
@@ -1622,6 +1876,8 @@ Entity<Editor> open_rack(App app, const Options &opt, std::string *error)
     w.width = (int)st::kWindowW;
     w.height = (int)st::kWindowH;
     app.open_window(w, root);
+    if (opt.audio) // a failure is shown in the toolbar and the hint line; the window works without
+        e->start_audio(app.ctx(ed));
     return ed;
 }
 

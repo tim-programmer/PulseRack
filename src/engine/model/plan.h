@@ -24,8 +24,9 @@ public:
     static bool build(const Patch &patch, const StateLookup &state_of, Plan &out);
 
     // Renders one block (1 .. PCL_MAX_BLOCK frames). `left` and `right` are float buffers the Audio
-    // Output modules add into.
-    void run(uint64_t time, size_t frames, float *left, float *right);
+    // Output modules add into. `activity`, if given, gets one value per step (in order()): the
+    // largest |sample| of its connected signal outputs, or 1 if it sent an event.
+    void run(uint64_t time, size_t frames, float *left, float *right, float *activity = nullptr);
 
     size_t                step_count() const { return steps_.size(); }
     std::vector<uint32_t> order() const; // node ids, in processing order

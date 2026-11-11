@@ -290,7 +290,7 @@ recommended answer for each and chose the rest. Each is cheap to change.
 12. The engine **clamps the output to ±1 and silences and counts any NaN or infinity** (`nonfinite_samples()`, which the tests keep at 0).
 13. Event output capacities: clock 64 (53 is the worst case at the fastest tempo and lowest sample rate); arpeggiator 32 per input event
     (a chord's releases and starts), capped at 4096; sequencer 2 per input event plus 2; merge the sum of its inputs.
-14. **Single-threaded.** The command ring, the atomic plan swap and the telemetry of `architecture.md` arrive with the audio device
+14. **Single-threaded** *(milestone 4 replaced this: see `architecture.md`, As built (milestone 4))*. The command ring, the atomic plan swap and the telemetry of `architecture.md` arrive with the audio device
     (milestone 4). *(Milestone 2 removed `PanelPos`: the panel layout is computed from the descriptor; see `gui.md`,
     *As built*.)*
 

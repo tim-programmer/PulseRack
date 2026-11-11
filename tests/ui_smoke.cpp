@@ -260,6 +260,75 @@ struct Driver
     }
     gp_point o() { return rack_origin(); }
 
+    // With the sound card on (SDL's dummy driver in the tests): the engine runs on the audio
+    // thread.
+    int  led(uint32_t n) { return e().leds.count(n) ? e().leds.at(n).level : 0; }
+    void key(const char *k, bool down)
+    {
+        gp_simulate_key(app, k, down);
+        wait(0.25); // a few blocks and a few meter ticks
+    }
+    void sound()
+    {
+        wait(0.5);
+        CHECK(e().audio_running() && e().engine.audio_attached());
+        CHECK(e().audio_status().find("dummy") != std::string::npos);
+        CHECK(e().engine.sample_rate() == e().audio->info().rate && e().audio->info().frames > 0);
+        const uint64_t t0 = e().engine.time();
+        wait(0.4);
+        CHECK(e().engine.time() > t0 + e().engine.sample_rate() / 10); // the callback is rendering
+
+        // an oscillator into the output: its LED and the meters light (telemetry at 30 Hz)
+        const uint32_t osc = e().add_module(cx(), *find_module("osc"));
+        const uint32_t out = e().add_module(cx(), *find_module("out"));
+        CHECK(e().connect(cx(), P(osc, "out"), P(out, "l")) == Err::Ok);
+        wait(0.4);
+        CHECK(led(osc) > 0 && e().meter[0] > 20 && e().meter[1] > 20);
+        CHECK(led(out) == 0); // no outputs of its own
+        // a knob turned while the audio thread runs: the output's level to 0, and the meters fall
+        e().set_param(cx(), out, (size_t)find_param(*node(out)->desc, "level"), 0);
+        wait(0.4);
+        CHECK(e().meter[0] == 0 && e().meter[1] == 0);
+
+        // the computer keyboard as a piano: a Keyboard module -> Note to Gate, whose LED is the
+        // gate
+        const uint32_t kb = e().add_module(cx(), *find_module("keyboard"));
+        const uint32_t gate = e().add_module(cx(), *find_module("note_to_gate"));
+        const uint32_t vca = e().add_module(cx(), *find_module("vca"));
+        CHECK(e().connect(cx(), P(kb, "notes"), P(gate, "notes")) == Err::Ok);
+        CHECK(e().connect(cx(), P(gate, "gate"), P(vca, "gain")) == Err::Ok); // connected: measured
+        wait(0.3);
+        CHECK(led(gate) == 0);
+        key("a", true);
+        CHECK(led(gate) > 0 && e().held.count("a") && e().held.at("a") == 60);
+        CHECK(hint_has("Note C4"));
+        key("a", false);
+        CHECK(led(gate) == 0 && e().held.empty());
+        key("x", true); // an octave up
+        key("x", false);
+        key("k", true); // the C above the A key's
+        CHECK(e().held.count("k") && e().held.at("k") == 84 && led(gate) > 0);
+        key("k", false);
+        // not while the search box has the keyboard
+        click({ style::kBrowserPad + 40,
+            style::kToolbarH + style::kBrowserPad + style::kSearchH / 2 });
+        key("a", true);
+        CHECK(e().held.empty() && led(gate) == 0);
+        key("a", false);
+        click({ o().x + 900, o().y + 700 }); // the rack takes the keyboard back
+
+        // the toolbar's Audio button: off (the engine is detached, edits apply at once) and on
+        // again
+        const gp_point button { style::kWindowW - 12 - 33, style::kToolbarH / 2 };
+        click(button);
+        CHECK(!e().audio_running() && !e().engine.audio_attached() && hint_has("Audio off"));
+        CHECK(led(osc) == 0 && e().meter[0] == 0);
+        click(button);
+        CHECK(e().audio_running() && e().engine.audio_attached());
+        CHECK(e().engine.apply_failures() == 0 && e().engine.nonfinite_samples() == 0);
+        CHECK(e().engine.telemetry().commands_lost.load() == 0);
+    }
+
     void run()
     {
         wait(0.4); // the first layout
@@ -466,6 +535,7 @@ int main(int argc, char **argv)
         static int      card;
         static gp_point to;
         opt.patch_path = argv[2];
+        opt.audio = false;
         card = std::atoi(argv[3]);
         to = { (float)std::atof(argv[4]), (float)std::atof(argv[5]) };
         setenv("GPUIC_IGNORE_REAL_MOUSE", "1", 1);
@@ -495,6 +565,7 @@ int main(int argc, char **argv)
         static PortRef  jack;
         static gp_point to;
         opt.patch_path = argv[2];
+        opt.audio = false;
         jack = PortRef { (uint32_t)std::atoi(argv[3]), (uint16_t)std::atoi(argv[4]) };
         to = { (float)std::atof(argv[5]), (float)std::atof(argv[6]) };
         setenv("GPUIC_IGNORE_REAL_MOUSE", "1", 1);
@@ -518,6 +589,10 @@ int main(int argc, char **argv)
                     });
             });
     }
+    static bool sound = false;
+    sound = argc == 2 && !std::strcmp(argv[1], "--sound");
+    if (sound)
+        setenv("SDL_AUDIO_DRIVER", "dummy", 1); // never the real sound card in a test
     if (!std::getenv("DISPLAY") && !std::getenv("WAYLAND_DISPLAY"))
     {
         std::printf("no display: skipped\n");
@@ -528,12 +603,17 @@ int main(int argc, char **argv)
         [](App app)
         {
             std::string error;
-            auto        ed = open_rack(app, Options { }, &error);
+            Options     opt;
+            opt.audio = sound; // otherwise the test renders the engine itself
+            auto ed = open_rack(app, opt, &error);
             CHECK((bool)ed);
             app.ctx(ed).spawn(
                 [app, ed](Co &co)
                 {
-                    Driver { co, app, ed }.run();
+                    if (sound)
+                        Driver { co, app, ed }.sound();
+                    else
+                        Driver { co, app, ed }.run();
                     app.quit();
                 });
         });

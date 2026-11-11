@@ -1,6 +1,9 @@
 #include "engine/model/plan.h"
 
+#include "engine/rt/sample_ops.h"
+
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <map>
 #include <set>
@@ -208,10 +211,11 @@ std::vector<uint32_t> Plan::order() const
     return o;
 }
 
-void Plan::run(uint64_t time, size_t frames, float *left, float *right)
+void Plan::run(uint64_t time, size_t frames, float *left, float *right, float *activity)
 {
-    for (Step &s : steps_)
+    for (size_t k = 0; k < steps_.size(); k++)
     {
+        Step &s = steps_[k];
         for (EventBuf *e : s.io.evt_out)
             e->count = 0;
         s.io.master[0] = left;
@@ -219,6 +223,18 @@ void Plan::run(uint64_t time, size_t frames, float *left, float *right)
         s.io.time = time;
         s.io.frames = frames;
         s.desc->process(s.state, s.io);
+        if (!activity)
+            continue;
+        // measured now: a buffer is reused once its last reader has run
+        float a = 0;
+        for (const EventBuf *e : s.io.evt_out)
+            if (e->count)
+                a = 1;
+        for (const pcl_sample_t *p : s.io.sig_out)
+            if (p)
+                for (size_t i = 0; i < frames; i++)
+                    a = std::max(a, std::fabs(sample_to_float(p[i])));
+        activity[k] = a;
     }
 }
 

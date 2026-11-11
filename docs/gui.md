@@ -291,3 +291,24 @@ under the wheel with such an overlay. The pill's view therefore lays out its lar
 request for gpuic:* let the wheel pass through elements with no handlers, as clicks do. `port_center` now checks its port index (a harness run against a half-built rack
 indexed a jack with -1).
 
+## As built (milestone 4: sound)
+
+**What works.** The toolbar's **Audio** button switches the sound card on and off (on at start; `pulserack --no-audio` starts
+without), and next to it the driver, the rate, the latency and the CPU load (`pipewire · 48.0 kHz · 5.3 ms · CPU 1 %`), or why
+there is no sound. Each panel has an **activity LED** in its top-left corner, under the title: green, brighter with the level of
+what its connected outputs carry (a gate, a clock, audio), red if the module has dropped events. The **Audio Output** panels show
+the output level on two bars (-60 to 0 dB; amber near the top, red at full scale). The **computer keyboard is a piano** for every
+Keyboard module in the patch: A W S E D F T G Y H U J K O L P ; play C to E an octave up from C4 (white keys on the home row, black
+ones above), Z and X move the octave (-4 to +4), auto-repeat is ignored, and a note is released by its own key even after an octave
+change. While the search box has the keyboard, keys are its own. Everything the window changes reaches the running modules through
+the engine's command ring (`architecture.md`, *As built (milestone 4)*).
+
+**Decisions (mine, for your review).**
+1. **Audio starts on** when the window opens; a missing device is shown, not an error, and the window works without sound.
+2. **The LED shows connected outputs only** (a module whose outputs go nowhere stays dark): it says "signal leaves here".
+3. **The piano plays every Keyboard module**, at velocity 100; with none, the hint line says to add one.
+4. The meters show the **master output** on every Audio Output panel (the engine sums all of them into one output).
+
+**Not done** (milestone 4 stops here): the on-screen keyboard strip on the Keyboard panel; the sequencer's step grid and its
+playhead; a choice of device; underruns are not measured or shown.
+

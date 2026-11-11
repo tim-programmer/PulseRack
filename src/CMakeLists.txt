@@ -17,10 +17,14 @@ target_link_libraries(rack-render PRIVATE rack_engine rack_warnings)
 add_library(rack_geometry STATIC ui/geometry.cpp)
 target_link_libraries(rack_geometry PUBLIC rack_engine PRIVATE rack_warnings)
 
-# The application (milestone 2: the window, without cables or sound).
+# The application: the window, cables and sound.
 if(PULSERACK_BUILD_GUI)
+    # the sound card (milestone 4): SDL3 audio, which gpuic already brings
+    add_library(rack_audio STATIC audio/audio_out.cpp)
+    target_include_directories(rack_audio PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(rack_audio PUBLIC rack_engine SDL3::SDL3 PRIVATE rack_warnings)
     add_library(rack_ui STATIC ui/rack_ui.cpp)
-    target_link_libraries(rack_ui PUBLIC rack_geometry gpuic::gpuic gpuic::cpp PRIVATE rack_warnings)
+    target_link_libraries(rack_ui PUBLIC rack_geometry rack_audio gpuic::gpuic gpuic::cpp PRIVATE rack_warnings)
     add_executable(pulserack main.cpp)
     target_link_libraries(pulserack PRIVATE rack_ui rack_warnings)
 endif()

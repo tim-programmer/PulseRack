@@ -4,12 +4,15 @@
 // modules together.
 #pragma once
 
+#include "audio/audio_out.h"
 #include "engine/engine.h"
 #include "ui/geometry.h"
 
 #include <gpuic/gpuic.hpp>
 
+#include <array>
 #include <map>
+#include <memory>
 #include <optional>
 #include <string>
 #include <vector>
@@ -30,7 +33,27 @@ struct PointerChip;
 // the views that show them. An entity, so handlers anywhere reach it through a handle.
 struct Editor
 {
-    Engine      engine { 48000 }; // no audio device yet (milestone 4): the nominal rate
+    Engine engine { 48000 }; // made again at the audio device's rate when it starts
+    // The sound card, declared after the engine so it stops before the engine goes (and the Editor
+    // is an entity, so both go before gpuic's SDL_Quit). Null until audio is first started.
+    std::unique_ptr<audio::AudioOut> audio;
+    std::string                      audio_error; // why audio is not running, if it failed
+    gpuic::Task                      meter_task;  // 30 Hz while audio runs: LEDs and meters
+
+    // What the panels show from telemetry, so that only a change re-renders a panel.
+    struct Led
+    {
+        int  level = 0; // 0 dark .. 3 bright
+        bool dropped = false;
+    };
+    std::map<uint32_t, Led> leds;
+    std::array<int, 2>      meter { 0, 0 }; // the output level, 0 .. 40 (the Audio Output panels)
+    int                     load_pct = -1;  // the toolbar's CPU figure
+
+    // The computer keyboard as a piano: the key's note, held until its key comes up.
+    int                            octave = 0; // Z and X: down and up, -4 .. +4 around C4
+    std::map<std::string, uint8_t> held;
+
     std::string patch_name = "untitled";
     std::string
         status; // what the last action did; the hint line shows it when the pointer is over nothing
@@ -126,6 +149,15 @@ struct Editor
     // Replaces the patch with a file's; false and `error` set if it does not load.
     bool load_file(gpuic::Ctx cx, const std::string &path, std::string *error);
 
+    // ---- sound (milestone 4)
+    bool        start_audio(gpuic::Ctx cx); // false: no device (audio_error says why)
+    void        stop_audio(gpuic::Ctx cx);
+    bool        audio_running() const { return audio && audio->running(); }
+    std::string audio_status() const; // for the toolbar
+    void        tick(gpuic::Ctx cx);  // takes the telemetry and updates what changed
+    // A key of the computer keyboard (down or up); false if it is not the piano's (it goes on).
+    bool piano(gpuic::Ctx cx, const gp_key_event &ev, bool down);
+
     // ---- for the views
     void sync_panels(gpuic::Ctx cx); // a view for every node, none for nodes that are gone
     void sync_cables(gpuic::Ctx cx); // the same for cables
@@ -136,6 +168,7 @@ struct Editor
 struct Options
 {
     std::string patch_path; // empty: an empty rack
+    bool audio = true;      // open the sound card at start (the tests drive the engine themselves)
 };
 
 // Builds the views and opens the window. Returns the editor (tests drive it), or a null handle and

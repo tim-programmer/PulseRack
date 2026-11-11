@@ -1,6 +1,6 @@
 # Architecture
 
-Status: **reviewed; milestones 0 to 3 are built** (the table at the end). Where something has not been checked against
+Status: **reviewed; milestones 0 to 4 are built** (the table at the end). Where something has not been checked against
 the real code or library it says so.
 
 ## Repository layout
@@ -146,6 +146,43 @@ Two threads matter: the **UI thread** (gpuic's main loop) and the **audio thread
   changed. These need a display, like gpuic's own window tests, and are skipped without one.
 * No generated audio is committed except small golden files, as in PulseCoreLib.
 
+## As built (milestone 4: sound)
+
+**Code:** `src/engine/engine.{h,cpp}` (the protocol), `src/engine/rt/spsc.h` (the ring), `Plan::run`'s activity output,
+`src/audio/audio_out.{h,cpp}` (the SDL3 device), and the window's side in `src/ui/rack_ui.cpp`.
+
+**As designed above**, with these choices:
+1. **One engine, two modes.** With no audio thread attached (`rack-render`, the engine tests, the window with audio off) the UI
+   thread is also the audio side: each edit drains the ring and adopts the new plan at once. So every existing test, the bit-exact
+   reference tests included, runs the same code as live audio, and a test checks that an attached engine whose `render()` runs
+   between the same edits gives the **same samples, bit for bit**.
+2. **No library `init` on the audio thread.** A compile, a reset or a new sample rate makes new module states on the UI thread
+   (on memory nobody else can see yet) and publishes them with the plan. A reset is therefore a plan swap that also sets time to 0,
+   not a command.
+3. **The order at the start of a block** is: take the pending plan, apply every command in the ring, adopt the plan, acknowledge
+   its generation. A removed module's state is freed by the UI thread only after that acknowledgement; no command still to come
+   can name it, because the UI sends none for a node that is gone. Two plans published before the audio thread takes one: the first
+   is freed unseen. If the ring of plans handed back (256) is full, adopting waits a block.
+4. **A full command ring loses the command**, counts it (`Telemetry::commands_lost`) and never blocks; the model keeps the value,
+   so the next change of that control sends it again. The ring holds 4096.
+5. **The engine runs at the device's own rate** (`set_sample_rate` makes every module again, time 0), so SDL never resamples.
+   Measured here: PipeWire, 48 kHz, 256 frames (5.3 ms), as in the spike.
+6. **Telemetry:** the output's peak, each module's activity (the largest sample of its *connected* signal outputs, or 1 if it sent
+   an event), each event module's dropped-event count, and the callback's load (time spent over the time the frames cover,
+   smoothed). The window takes them at 30 Hz and re-renders only the panels whose LED or meter changed.
+7. **The device is closed through the lock SDL documents**: `SDL_SetAudioStreamGetCallback(stream, NULL, NULL)` returns only
+   after a running callback has finished; then the stream is destroyed and the engine detached. The `Editor` (an entity) owns the
+   device after the engine, so it closes first, and both go before gpuic's `SDL_Quit`.
+
+**Tests:** `test_realtime.cpp` (6 cases): attached equals detached bit for bit (keys, parameters, a module added and one removed
+mid-render, a reset); edits wait for the audio thread and states outlive the plan that used them; a full ring; telemetry; a new
+sample rate equals a fresh engine at that rate; and a **stress test** in which a real audio thread renders while the UI thread makes
+about 30,000 random edits (modules, cables, parameters, keys, resets). Clean under **ThreadSanitizer** and under **AddressSanitizer
++ UBSan** (leaks on). `ui_sound` (22 checks) runs the window with audio on through SDL's dummy driver: the callback renders at the
+device's rate, LEDs and meters light and fall, the piano's notes reach a Keyboard module (and not while the search box has the
+keyboard), the toolbar switches audio off and on. **Not measured:** underruns, latency end to end, other devices or platforms; the
+real device was opened (PipeWire) but no sound was listened to in these tests.
+
 ## Milestones (proposed; one at a time, you say which is next)
 
 | # | Item | Done when |
@@ -155,7 +192,7 @@ Two threads matter: the **UI thread** (gpuic's main loop) and the **audio thread
 | 1 | Engine + `rack-render` | **built**: the headless engine passes its tests in float, Q15 and Q31; all 11 library modules and 6 glue modules are wrapped; see `patch-engine.md`, *As built* |
 | 2 | Window without cables | **built**: browser, rack with draggable panels, knobs, sliders, selectors, switches working on the engine; see `gui.md`, *As built* |
 | 3 | Cables | **built**: jacks, dragging cables (lit targets, reasons for refusals), moving and deleting them, the engine updated live; see `gui.md`, *As built (milestone 3)* |
-| 4 | Sound | SDL3 output, keyboard as a piano, meters |
+| 4 | Sound | **built**: SDL3 output on its own thread, the computer keyboard as a piano, activity LEDs and level meters; see *As built (milestone 4)* above and `gui.md` |
 | 5 | Save and load | the patch file, a few factory patches |
 | 6 | Polish and the later modules | search/filter, undo, delay/sampler/reverb as PulseCoreLib gains them |
 

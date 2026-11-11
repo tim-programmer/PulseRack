@@ -1,18 +1,50 @@
-// The engine: a patch plus the live module states and the compiled plan. Single-threaded for now:
-// the command ring and the atomic plan swap of docs/architecture.md arrive with the audio device
-// (milestone 4). Everything here is what the audio thread will later call (render) or what the UI
-// thread will call (the rest).
+// The engine: a patch, the live module states and the compiled plan, run by one audio thread and
+// edited by one UI thread (docs/architecture.md, *Threads*).
+//
+// * The audio thread owns every module: all calls into a module (process and the library's setters)
+//   happen in render(). The UI thread changes the patch model and sends parameter, step and key
+//   changes through a fixed-size command ring; render() drains it at the start of every block.
+// * A change to the graph (compile, reset) builds new module states and a new plan on the UI thread
+//   and publishes them with one atomic exchange; render() adopts them at a block boundary and hands
+//   the old plan back. A removed module's state is freed only after the audio thread has adopted a
+//   plan without it.
+// * Telemetry (levels, activity, dropped events) goes the other way, through atomics.
+//
+// Until an audio thread is attached (rack-render, the tests, the window with audio off) the UI
+// thread is also the audio side: every edit takes effect at once, exactly as the audio thread would
+// apply it at the next block. So the same code runs in both cases, and the tests cover it.
 #pragma once
 
 #include "engine/model/patch.h"
 #include "engine/model/plan.h"
+#include "engine/rt/spsc.h"
 
+#include <array>
+#include <atomic>
 #include <map>
 #include <memory>
-#include <string>
+#include <vector>
 
 namespace rack
 {
+
+inline constexpr size_t kTelemetrySlots = 1024; // as many as a patch may have modules
+
+// What the audio thread reports. Levels are the largest |sample| since the UI last took them.
+struct Telemetry
+{
+    std::array<std::atomic<float>, 2>               peak { };     // the output, left and right
+    std::atomic<float>                              load { 0 };   // set by the audio device's owner
+    std::array<std::atomic<float>, kTelemetrySlots> activity { }; // per module: its outputs
+    std::array<std::atomic<uint32_t>, kTelemetrySlots> dropped { }; // per module: events it dropped
+    std::atomic<uint64_t>                              commands_lost { 0 }; // the ring was full
+
+    float take_peak(int ch) { return peak[(size_t)ch].exchange(0.f, std::memory_order_relaxed); }
+    float take_activity(int slot)
+    {
+        return slot < 0 ? 0.f : activity[(size_t)slot].exchange(0.f, std::memory_order_relaxed);
+    }
+};
 
 class Engine
 {
@@ -22,41 +54,46 @@ public:
     Engine(const Engine &) = delete;
     Engine &operator=(const Engine &) = delete;
 
+    // ---- the UI thread
     Patch       &patch() { return patch_; }
     const Patch &patch() const { return patch_; }
 
     // Brings the live modules in line with the patch (new nodes are created from their parameters,
-    // removed ones destroyed, existing ones keep their state) and builds a new plan. Call after
+    // removed ones retired, existing ones keep their state) and publishes a new plan. Call after
     // editing the patch's nodes or cables.
     Err compile();
-
-    // A parameter change: the model and the running module.
+    // A parameter change: the model now, the running module at the next block.
     Err set_param(uint32_t node, size_t param, float value);
     Err set_step(uint32_t node, size_t index, const StepData &step);
     // A live key press for a Keyboard node, heard at the start of the next block (or at `at`, an
     // absolute sample).
-    Err key(uint32_t node, bool on, uint8_t note, uint8_t velocity = 100, int64_t at = -1);
-
+    Err  key(uint32_t node, bool on, uint8_t note, uint8_t velocity = 100, int64_t at = -1);
     void reset(); // every module back to its start, time 0, the key script from the top
-    void render(size_t frames, float *left,
-        float *right); // any number of frames; the buffers are overwritten
+    // Every module made again at a new rate (the audio device's), time 0.
+    void set_sample_rate(uint32_t rate);
 
-    uint64_t time() const { return time_; }
-    uint32_t sample_rate() const { return sample_rate_; }
-    uint32_t failed_node() const
-    {
-        return failed_node_;
-    } // the module whose settings the library refused at compile(), or 0
-    uint32_t apply_failures() const
-    {
-        return apply_failures_;
-    } // setters the library refused (should stay 0)
-    uint32_t nonfinite_samples() const
-    {
-        return nonfinite_;
-    } // NaN or infinity that reached the output (should stay 0)
-    const void *state(uint32_t node) const; // tests and telemetry
-    const Plan &plan() const { return plan_; }
+    // While an audio thread is attached, edits wait for render() on that thread. Attach before the
+    // device starts calling render(), detach after it has stopped for good.
+    void attach_audio(bool on);
+    bool audio_attached() const { return attached_; }
+    // Frees plans and module states the audio thread has let go of (every UI call does it too).
+    void collect();
+    int  telemetry_slot(uint32_t node) const; // -1 if the node has no module
+
+    // ---- the audio thread (or the UI thread while none is attached)
+    void render(size_t frames, float *left, float *right); // any number of frames; overwritten
+
+    // ---- either thread
+    Telemetry &telemetry() { return telemetry_; }
+    uint64_t   time() const { return time_.load(std::memory_order_relaxed); }
+    uint32_t   sample_rate() const { return sample_rate_; }
+    uint32_t failed_node() const { return failed_node_; } // refused its settings at compile(), or 0
+    uint32_t apply_failures() const { return apply_failures_.load(); } // setters refused (stays 0)
+    uint32_t nonfinite_samples() const { return nonfinite_.load(); }   // NaN/inf at the output (0)
+
+    // ---- tests (detached only)
+    const void *state(uint32_t node) const;
+    const Plan &plan() const;
 
 private:
     struct StateDeleter
@@ -64,32 +101,89 @@ private:
         size_t align;
         void   operator()(void *p) const { ::operator delete(p, std::align_val_t(align)); }
     };
+    using StateMem = std::unique_ptr<void, StateDeleter>;
     struct Live
     {
-        const ModuleDesc                   *desc;
-        std::unique_ptr<void, StateDeleter> mem;
+        const ModuleDesc *desc;
+        StateMem          mem;
+        int               slot;
     };
     struct ScriptEvent
     {
         uint64_t at;
-        uint32_t node;
+        void    *state;
         uint8_t  type, note, velocity;
     };
-    void feed_script(uint64_t upto);
-    bool init_state(
-        const Node &n, void *mem); // zero, init from the node's parameters, load its steps
+    struct Probe // one plan step, for telemetry
+    {
+        int               slot;
+        const ModuleDesc *desc;
+        void             *state;
+    };
+    // What the audio thread runs: built on the UI thread, immutable once published.
+    struct Snapshot
+    {
+        uint64_t                 gen = 0;
+        bool                     ok = false;      // false: the plan could not be built; silence
+        bool                     restart = false; // time back to 0 when adopted
+        Plan                     plan;
+        std::vector<ScriptEvent> script;
+        std::vector<Probe>       probes;   // in plan order
+        std::vector<float>       activity; // per step, written by Plan::run
+    };
+    struct Cmd
+    {
+        enum Type : uint8_t
+        {
+            Param,
+            Step,
+            Key
+        } type;
+        void *state;
+        bool (*apply)(void *, float);
+        bool (*apply_step)(void *, size_t, const StepData &);
+        size_t   index;
+        float    value;
+        StepData step;
+        uint8_t  key_type, note, velocity;
+        int64_t  at;
+    };
 
-    uint32_t                 sample_rate_;
-    Patch                    patch_;
-    std::map<uint32_t, Live> live_;
-    Plan                     plan_;
-    bool                     have_plan_ = false;
-    uint64_t                 time_ = 0;
-    std::vector<ScriptEvent> script_;
-    size_t                   script_pos_ = 0;
-    uint32_t                 apply_failures_ = 0;
-    uint32_t                 nonfinite_ = 0;
-    uint32_t                 failed_node_ = 0;
+    bool      init_state(const Node &n, void *mem); // zero, init from the node's parameters, steps
+    StateMem  make_state(const Node &n, bool *ok);
+    void      retire(StateMem mem, uint64_t gen);
+    Snapshot *build_snapshot(bool restart);
+    void      publish(Snapshot *s);
+    void      send(const Cmd &c);
+    void      pump(); // detached: be the audio side now
+    // the audio side
+    void begin_block();
+    void apply(const Cmd &c);
+    void feed_script(uint64_t upto);
+
+    // UI-owned
+    uint32_t                                   sample_rate_;
+    Patch                                      patch_;
+    std::map<uint32_t, Live>                   live_;
+    std::vector<std::pair<uint64_t, StateMem>> dead_; // freed once the audio thread adopted gen
+    std::vector<int>                           free_slots_;
+    int                                        next_slot_ = 0;
+    uint64_t                                   gen_ = 0;
+    uint32_t                                   failed_node_ = 0;
+    bool                                       attached_ = false;
+
+    // shared
+    std::atomic<Snapshot *>   pending_ { nullptr };
+    SpscRing<Snapshot *, 256> retired_;
+    std::atomic<uint64_t>     adopted_gen_ { 0 };
+    SpscRing<Cmd, 4096>       cmds_;
+    std::atomic<uint64_t>     time_ { 0 };
+    std::atomic<uint32_t>     apply_failures_ { 0 }, nonfinite_ { 0 };
+    Telemetry                 telemetry_;
+
+    // audio-owned
+    Snapshot *cur_ = nullptr;
+    size_t    script_pos_ = 0;
 };
 
 } // namespace rack

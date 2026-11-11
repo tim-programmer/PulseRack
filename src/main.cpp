@@ -1,4 +1,4 @@
-// PulseRack: the application. `pulserack [patch.rack]`
+// PulseRack: the application. `pulserack [--no-audio] [patch.rack]`
 #include "ui/rack_ui.h"
 
 #include <cstdio>
@@ -11,10 +11,13 @@ int main(int argc, char **argv)
     {
         if (!std::strcmp(argv[i], "-h") || !std::strcmp(argv[i], "--help"))
         {
-            std::printf("usage: pulserack [patch.rack]\n");
+            std::printf("usage: pulserack [--no-audio] [patch.rack]\n");
             return 0;
         }
-        opt.patch_path = argv[i];
+        if (!std::strcmp(argv[i], "--no-audio"))
+            opt.audio = false;
+        else
+            opt.patch_path = argv[i];
     }
     int       status = 0;
     const int rc = gpuic::run(
