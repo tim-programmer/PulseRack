@@ -97,6 +97,26 @@ Slot free_slot(const Patch &p, const ModuleDesc &d, int x0, int y0, int width_hp
 // patches written before panels had a size.
 int resolve_overlaps(Patch &p);
 
+// ---- the sequencer's step grid (milestone 6): between its controls and its jacks, 16 columns of
+// one page of the 64 steps; above them, the page tabs. In the panel's pixels.
+inline constexpr int   kGridColumns = 16, kGridPages = 4;
+inline constexpr float kGridTabH = 16, kGridNoteH = 92, kGridPadH = 13;
+inline constexpr int   kGridNoteLow = 24, kGridNoteHigh = 108; // the note bar's range: C1 .. C8
+inline constexpr float kGridPxPerSemitone = 4;                 // a drag on a note bar
+struct StepGrid
+{
+    Rect area;
+    Rect tab(int page) const;
+    Rect note_bar(int column) const; // the column's note (drag it)
+    Rect on_pad(int column) const;   // on / rest
+    Rect tie_pad(int column) const;  // tied to the next step
+    // the column under a point of the panel, or -1
+    int column_at(float x) const;
+};
+StepGrid step_grid(const PanelLayout &L); // for a module with steps
+// The fraction of the note bar a note fills (0 .. 1 over C1 .. C8, clamped).
+float note_fill(int note);
+
 // ---- cables (milestone 3). Everything in rack pixels, from the model alone, so a cable follows a
 // panel while it is dragged without waiting for a layout pass.
 struct Pt

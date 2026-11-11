@@ -756,6 +756,13 @@ RACK_DESC(kSeqDesc, "seq", "Sequencer", kEvent, 16, SeqNode, kSeqPorts, kSeqPara
     seq_reset, seq_process, seq_apply_step, seq_cap,
     "Step sequencer, up to 64 steps of note, velocity, gate and tie");
 
+int32_t module_position(const ModuleDesc &desc, const void *state)
+{
+    if (&desc == &kSeqDesc)
+        return (int32_t)pcl_seq_position(&static_cast<const SeqNode *>(state)->seq);
+    return -1;
+}
+
 uint32_t dropped_events(const ModuleDesc &desc, const void *state)
 {
     if (&desc == &kArpDesc)

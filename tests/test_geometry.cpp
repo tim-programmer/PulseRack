@@ -249,3 +249,38 @@ TEST(geometry_cables_sag_and_orient)
     auto [f3, t3] = as_cable(p, out, out2); // two outputs: as given, for can_connect to refuse
     CHECK(f3 == out && t3 == out2 && p.can_connect(f3, t3) == Err::NotAnInput);
 }
+
+TEST(geometry_the_step_grid_fits_between_the_controls_and_the_jacks)
+{
+    for (const ModuleDesc *d : all_modules())
+    {
+        if (!d->has_steps)
+            continue;
+        const PanelLayout &L = panel_layout(*d);
+        const StepGrid     g = step_grid(L);
+        CHECK(g.area.y >= L.controls_bottom && g.area.bottom() <= L.jacks_top);
+        CHECK(g.area.x >= kPad && g.area.right() <= L.width - kPad + 0.01f);
+        std::vector<Rect> all;
+        for (int p = 0; p < kGridPages; p++)
+            all.push_back(g.tab(p));
+        for (int c = 0; c < kGridColumns; c++)
+        {
+            all.push_back(g.note_bar(c));
+            all.push_back(g.on_pad(c));
+            all.push_back(g.tie_pad(c));
+            CHECK(g.note_bar(c).w >= 10); // big enough to hit
+            const Rect &b = g.note_bar(c);
+            CHECK(g.column_at(b.x + b.w / 2) == c && g.column_at(b.x + 1) == c);
+        }
+        for (size_t i = 0; i < all.size(); i++)
+        {
+            CHECK(all[i].x >= g.area.x - 0.01f && all[i].right() <= g.area.right() + 0.01f);
+            CHECK(all[i].y >= g.area.y && all[i].bottom() <= g.area.bottom());
+            for (size_t j = 0; j < i; j++)
+                CHECK(!all[i].overlaps(all[j]));
+        }
+        CHECK(g.column_at(g.area.x - 1) == -1 && g.column_at(g.area.right() + 1) == -1);
+    }
+    CHECK(note_fill(24) == 0 && note_fill(108) == 1 && note_fill(0) == 0 && note_fill(127) == 1);
+    CHECK(std::fabs(note_fill(66) - 0.5f) < 1e-6f);
+}

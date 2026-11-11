@@ -26,6 +26,8 @@ bool keyboard_push(void *state, uint64_t at, uint8_t type, uint8_t note, uint8_t
 // How many events the sequencer, arpeggiator or clock dropped for lack of room (telemetry for the
 // panel's LED).
 uint32_t dropped_events(const ModuleDesc &desc, const void *state);
+// The step a sequencer played last (telemetry for its step grid's playhead); -1 for other modules.
+int32_t module_position(const ModuleDesc &desc, const void *state);
 
 // ---- every module descriptor (defined in modules_lib.cpp and modules_glue.cpp)
 extern const ModuleDesc kOscDesc, kNoiseDesc, kSahDesc, kLfoDesc, kAdsrDesc, kVcaDesc, kSvfDesc,

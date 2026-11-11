@@ -281,6 +281,54 @@ int resolve_overlaps(Patch &p)
     return moved;
 }
 
+StepGrid step_grid(const PanelLayout &L)
+{
+    StepGrid g;
+    g.area = { kPad, L.controls_bottom + 4, L.width - 2 * kPad,
+        L.jacks_top - 4 - (L.controls_bottom + 4) };
+    return g;
+}
+
+Rect StepGrid::tab(int page) const
+{
+    const float w = (area.w - 3 * 4) / kGridPages;
+    return { area.x + (float)page * (w + 4), area.y, w, kGridTabH };
+}
+
+namespace
+{
+    Rect column_rect(const Rect &area, int c, float y, float h)
+    {
+        const float pitch = area.w / kGridColumns;
+        return { area.x + (float)c * pitch + 1, y, pitch - 2, h };
+    }
+} // namespace
+
+Rect StepGrid::note_bar(int c) const
+{
+    return column_rect(area, c, area.y + kGridTabH + 4, kGridNoteH);
+}
+Rect StepGrid::on_pad(int c) const
+{
+    return column_rect(area, c, area.y + kGridTabH + 4 + kGridNoteH + 4, kGridPadH);
+}
+Rect StepGrid::tie_pad(int c) const
+{
+    return column_rect(area, c, area.y + kGridTabH + 4 + kGridNoteH + 4 + kGridPadH + 3, kGridPadH);
+}
+int StepGrid::column_at(float x) const
+{
+    if (x < area.x || x >= area.right())
+        return -1;
+    return std::min(kGridColumns - 1, (int)((x - area.x) / (area.w / kGridColumns)));
+}
+
+float note_fill(int note)
+{
+    return std::clamp(
+        (float)(note - kGridNoteLow) / (float)(kGridNoteHigh - kGridNoteLow), 0.f, 1.f);
+}
+
 Pt jack_center(const Node &n, size_t port)
 {
     const Rect &j = panel_layout(*n.desc).jacks[port];

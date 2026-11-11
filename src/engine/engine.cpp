@@ -166,6 +166,7 @@ Err Engine::compile()
         {
             telemetry_.activity[(size_t)slot].store(0.f);
             telemetry_.dropped[(size_t)slot].store(0);
+            telemetry_.position[(size_t)slot].store(-1);
         }
         live_[n.id] = Live { n.desc, std::move(mem), slot };
     }
@@ -364,6 +365,8 @@ void Engine::render(size_t frames, float *left, float *right)
                 raise_to(telemetry_.activity[(size_t)pr.slot], cur_->activity[i]);
                 telemetry_.dropped[(size_t)pr.slot].store(
                     dropped_events(*pr.desc, pr.state), std::memory_order_relaxed);
+                telemetry_.position[(size_t)pr.slot].store(
+                    module_position(*pr.desc, pr.state), std::memory_order_relaxed);
             }
         }
         float pl = 0, pr = 0;

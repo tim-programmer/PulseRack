@@ -52,6 +52,7 @@ struct Editor
     std::map<uint32_t, Led> leds;
     std::array<int, 2>      meter { 0, 0 }; // the output level, 0 .. 40 (the Audio Output panels)
     int                     load_pct = -1;  // the toolbar's CPU figure
+    std::map<uint32_t, int> playhead;       // a sequencer's step being played, as its grid shows it
 
     // The computer keyboard as a piano: the key's note, held until its key comes up.
     int                            octave = 0; // Z and X: down and up, -4 .. +4 around C4
@@ -67,7 +68,8 @@ struct Editor
     // (kHoverPort - port); hover_text describes it, and the hint line shows it while it is not
     // empty.
     // A cable is hovered as (its input's node, kHoverCable - its input's port).
-    static constexpr int kHoverTitle = -1, kHoverPort = -2, kHoverCable = -1000;
+    // A sequencer's step is hovered as (its node, kHoverStep - the step's index).
+    static constexpr int kHoverTitle = -1, kHoverPort = -2, kHoverCable = -1000, kHoverStep = -2000;
     uint32_t             hover_node = 0;
     int                  hover_item = 0;
     std::string          hover_text;
@@ -158,7 +160,10 @@ struct Editor
     void     remove_module(gpuic::Ctx cx, uint32_t node);
     bool     move_module(gpuic::Ctx cx, uint32_t node, int x, int y); // false: would overlap
     void     set_param(gpuic::Ctx cx, uint32_t node, size_t param, float value);
-    void     say(gpuic::Ctx cx, std::string text); // the status the hint line falls back to
+    // A sequencer's step (milestone 6): the model, the running module, one undo step per step
+    // edited.
+    void set_step(gpuic::Ctx cx, uint32_t node, size_t index, const StepData &step);
+    void say(gpuic::Ctx cx, std::string text); // the status the hint line falls back to
     // The pointer entered (inside) or left a node's control, title or jack (items as above).
     void hover(gpuic::Ctx cx, uint32_t node, int item, bool inside);
     // What the hint line shows: while a cable is dragged, what releasing it would do; otherwise

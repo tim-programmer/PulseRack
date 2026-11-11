@@ -332,8 +332,13 @@ struct PanelView
     int   active = -1; // the control being dragged
     float travel = 0, last_y = 0;
 
-    Editor::Led        led_;       // copied from the editor at render: what the LED shows
-    std::array<int, 2> meter_ { }; // and the output level (Audio Output panels)
+    int                page = 0;         // the step grid's page (16 of the 64 steps)
+    int                step_active = -1; // the step whose note bar is being dragged
+    int                step_note0 = 0;
+    float              step_y0 = 0;
+    int                playhead_ = -1; // copied from the editor at render
+    Editor::Led        led_;           // copied from the editor at render: what the LED shows
+    std::array<int, 2> meter_ { };     // and the output level (Audio Output panels)
 
     // a press on the title or the face: the menu (right button) or a move
     void press_face(Ctx cx, const gp_mouse_event &ev)
@@ -437,6 +442,175 @@ struct PanelView
                     : led_.level ? with_alpha(st::kLedOn, kAlpha[led_.level])
                                  : st::kLedOff);
     }
+    // ---- the step grid
+    StepData step_of(Ctx cx, size_t i) const
+    {
+        const Node *n = find(cx);
+        return n && i < n->steps.size() ? n->steps[i] : StepData { };
+    }
+    void    step_set(Ctx cx, size_t i, StepData s) { ed.get(cx)->set_step(cx, node, i, s); }
+    Element step_grid_element(const Node &n, const PanelLayout &L, Color accent) const
+    {
+        const StepGrid g = step_grid(L);
+        const int      li = find_param(*n.desc, "length");
+        const int      length
+            = li >= 0 ? (int)std::lround(n.params[(size_t)li]) : kGridColumns * kGridPages;
+        Element w = div().absolute().left(0).top(0);
+        for (int p = 0; p < kGridPages; p++)
+        {
+            const Rect r = g.tab(p);
+            const bool on = p == page;
+            w.child(div()
+                    .absolute()
+                    .left(r.x)
+                    .top(r.y)
+                    .w(r.w)
+                    .h(r.h)
+                    .rounded(3)
+                    .bg(on ? with_alpha(accent, 0.35f) : st::kWell)
+                    .flex_row()
+                    .items_center()
+                    .justify_center()
+                    .cursor_pointer()
+                    .child(label(std::to_string(p * kGridColumns + 1) + "-"
+                            + std::to_string((p + 1) * kGridColumns),
+                        9, on ? st::kText : st::kSubtext))
+                    .on_mouse_down([](PanelView &) { })
+                    .on_click(
+                        [p](PanelView &self, Ctx cx)
+                        {
+                            self.page = p;
+                            cx.notify();
+                        }));
+        }
+        for (int c = 0; c < kGridColumns; c++)
+        {
+            const size_t    i = (size_t)(page * kGridColumns + c);
+            const StepData &s = n.steps[i];
+            const bool      in_loop = (int)i < length;
+            const Rect      bar = g.note_bar(c), on = g.on_pad(c), tie = g.tie_pad(c);
+            if ((int)i == playhead_) // the step being played
+                w.child(div()
+                        .absolute()
+                        .left(bar.x - 1)
+                        .top(bar.y - 2)
+                        .w(bar.w + 2)
+                        .h(tie.bottom() - bar.y + 4)
+                        .rounded(3)
+                        .bg(with_alpha(st::kKnobPointer, 0.25f)));
+            const float fill = note_fill(s.note) * bar.h;
+            const float a = in_loop ? 1.f : 0.35f; // steps past the sequence's length are dimmed
+            w.child(div()
+                    .absolute()
+                    .left(bar.x)
+                    .top(bar.y)
+                    .w(bar.w)
+                    .h(bar.h)
+                    .rounded(2)
+                    .bg(with_alpha(st::kWell, a))
+                    .child(div()
+                            .absolute()
+                            .left(0)
+                            .top(bar.h - fill)
+                            .w(bar.w)
+                            .h(fill)
+                            .rounded(2)
+                            .bg(with_alpha(accent, (s.velocity ? 0.8f : 0.2f) * a)))
+                    .child(div()
+                            .absolute()
+                            .left(0)
+                            .top(std::max(0.f, bar.h - fill - 1))
+                            .w(bar.w)
+                            .h(2)
+                            .bg(with_alpha(st::kKnobPointer, s.velocity ? a : 0.4f * a)))
+                    .cursor_pointer()
+                    .on_mouse_down(
+                        [i](PanelView &self, Ctx cx, const gp_mouse_event &ev)
+                        {
+                            const StepData st = self.step_of(cx, i);
+                            if (ev.click_count >= 2) // double-click: on / rest
+                            {
+                                StepData t = st;
+                                t.velocity = st.velocity ? 0 : 100;
+                                self.step_set(cx, i, t);
+                                return;
+                            }
+                            self.step_active = (int)i;
+                            self.step_note0 = st.note;
+                            self.step_y0 = ev.position.y;
+                        })
+                    .on_drag(
+                        [i](PanelView &self, Ctx cx, const gp_mouse_event &ev)
+                        {
+                            if (self.step_active != (int)i)
+                                return;
+                            StepData t = self.step_of(cx, i);
+                            t.note = (uint8_t)std::clamp(self.step_note0
+                                    + (int)std::lround(
+                                        (self.step_y0 - ev.position.y) / kGridPxPerSemitone),
+                                0, 127);
+                            self.step_set(cx, i, t);
+                        })
+                    .on_mouse_up([](PanelView &self) { self.step_active = -1; })
+                    .on_wheel(
+                        [i](PanelView &self, Ctx cx, const gp_wheel_event &ev)
+                        {
+                            const bool octave
+                                = ev.dy == 0 && ev.dx != 0; // Shift+wheel arrives as dx
+                            const float dv = octave ? ev.dx : ev.dy;
+                            int         by = dv > 0 ? -1 : dv < 0 ? 1 : 0;
+                            StepData    t = self.step_of(cx, i);
+                            t.note
+                                = (uint8_t)std::clamp((int)t.note + by * (octave ? 12 : 1), 0, 127);
+                            self.step_set(cx, i, t);
+                        })
+                    .on_hover(
+                        [i](PanelView &self, Ctx cx, bool inside)
+                        {
+                            self.ed.get(cx)->hover(
+                                cx, self.node, Editor::kHoverStep - (int)i, inside);
+                        }));
+            auto pad = [&](const Rect &r, bool lit, Color col)
+            {
+                return div()
+                    .absolute()
+                    .left(r.x)
+                    .top(r.y)
+                    .w(r.w)
+                    .h(r.h)
+                    .rounded(2)
+                    .bg(lit ? with_alpha(col, a) : with_alpha(st::kWell, a))
+                    .border(1)
+                    .border_color(st::kKnobEdge)
+                    .cursor_pointer()
+                    .on_mouse_down([](PanelView &) { })
+                    .on_hover(
+                        [i](PanelView &self, Ctx cx, bool inside)
+                        {
+                            self.ed.get(cx)->hover(
+                                cx, self.node, Editor::kHoverStep - (int)i, inside);
+                        });
+            };
+            w.child(pad(on, s.velocity != 0, st::kLedOn)
+                    .on_click(
+                        [i](PanelView &self, Ctx cx)
+                        {
+                            StepData t = self.step_of(cx, i);
+                            t.velocity = t.velocity ? 0 : 100;
+                            self.step_set(cx, i, t);
+                        }));
+            w.child(pad(tie, s.tie != 0, rgb(0xf9e2af))
+                    .on_click(
+                        [i](PanelView &self, Ctx cx)
+                        {
+                            StepData t = self.step_of(cx, i);
+                            t.tie = t.tie ? 0 : 1;
+                            self.step_set(cx, i, t);
+                        }));
+        }
+        return w;
+    }
+
     Element meters(const PanelLayout &L) const
     {
         const float top = L.controls_bottom + 12, h = std::max(20.f, L.jacks_top - top - 12);
@@ -692,6 +866,8 @@ struct PanelView
             auto    it = e->leds.find(node);
             led_ = it == e->leds.end() ? Editor::Led { } : it->second;
             meter_ = e->meter;
+            auto ph = e->playhead.find(node);
+            playhead_ = ph == e->playhead.end() || !e->audio_running() ? -1 : ph->second;
         }
 
         Element p = div()
@@ -740,6 +916,8 @@ struct PanelView
         for (size_t i = 0; i < d.ports.size(); i++)
             p.child(jack(d, i, L.ports[i], L.jacks[i]));
         p.child(activity_led());
+        if (d.has_steps)
+            p.child(step_grid_element(*n, L, cc.chip));
         if (d.id == "out") // the output level, between its controls and its jacks
             p.child(meters(L));
 
@@ -1378,6 +1556,18 @@ std::string Editor::describe_item(uint32_t node, int item) const
             + (p.is_output ? "      drag from it to an input to connect"
                            : "      drag from it to an output to connect");
     }
+    const int step = kHoverStep - item;
+    if (d.has_steps && step >= 0 && (size_t)step < n->steps.size())
+    {
+        const StepData    &s = n->steps[(size_t)step];
+        static const char *names[12]
+            = { "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B" };
+        const std::string note = std::string(names[s.note % 12]) + std::to_string(s.note / 12 - 1);
+        return std::string(d.name) + "  ·  step " + std::to_string(step + 1) + ": " + note
+            + (s.velocity ? ", on" : ", rest") + (s.tie ? ", tied to the next" : "")
+            + "      drag the bar (or the wheel; Shift: octaves) for the note; the pads: on/rest, "
+              "tie";
+    }
     const int in_port = kHoverCable - item;
     if (in_port >= 0 && (size_t)in_port < d.ports.size())
         if (const Cable *c = engine.patch().cable_into(PortRef { node, (uint16_t)in_port }))
@@ -1471,6 +1661,20 @@ void Editor::tick(Ctx cx)
             view.update(cx, [](PanelView &, Ctx c) { c.notify(); });
         }
     }
+    for (const Node &n : engine.patch().nodes()) // the sequencers' playheads
+        if (n.desc->has_steps)
+        {
+            const int slot = engine.telemetry_slot(n.id);
+            const int pos
+                = slot < 0 ? -1 : t.position[(size_t)slot].load(std::memory_order_relaxed);
+            auto it = playhead.find(n.id);
+            if (it == playhead.end() || it->second != pos)
+            {
+                playhead[n.id] = pos;
+                if (auto v = panels.find(n.id); v != panels.end())
+                    v->second.update(cx, [](PanelView &, Ctx c) { c.notify(); });
+            }
+        }
     bool meters_changed = false;
     for (int ch = 0; ch < 2; ch++)
     { // -60 .. 0 dB on 40 steps
@@ -2083,6 +2287,23 @@ void Editor::set_param(Ctx cx, uint32_t node, size_t param, float value)
     if (hover_node == node
         && hover_item == (int)param) // the control under the pointer: its new value
         hover_text = describe_item(node, hover_item);
+}
+
+void Editor::set_step(Ctx cx, uint32_t node, size_t index, const StepData &step)
+{
+    const Node *n = engine.patch().find(node);
+    if (!n || !n->desc->has_steps || index >= n->steps.size() || n->steps[index] == step)
+        return;
+    checkpoint(cx, std::string(n->desc->name) + " step " + std::to_string(index + 1),
+        (uint64_t)1 << 62 | (uint64_t)node << 16 | index); // a drag on one step: one undo step
+    engine.set_step(node, index, step);
+    touch(cx);
+    if (auto it = panels.find(node); it != panels.end())
+        it->second.update(cx, [](PanelView &, Ctx c) { c.notify(); });
+    hover_node = node;
+    hover_item = kHoverStep - (int)index;
+    hover_text = describe_item(node, hover_item);
+    hint_line.update(cx, [](HintLine &, Ctx c) { c.notify(); });
 }
 
 // ---- files

@@ -37,7 +37,9 @@ struct Telemetry
     std::atomic<float>                              load { 0 };   // set by the audio device's owner
     std::array<std::atomic<float>, kTelemetrySlots> activity { }; // per module: its outputs
     std::array<std::atomic<uint32_t>, kTelemetrySlots> dropped { }; // per module: events it dropped
-    std::atomic<uint64_t>                              commands_lost { 0 }; // the ring was full
+    std::array<std::atomic<int32_t>, kTelemetrySlots>
+                          position { };        // per sequencer: its step, else -1
+    std::atomic<uint64_t> commands_lost { 0 }; // the ring was full
 
     float take_peak(int ch) { return peak[(size_t)ch].exchange(0.f, std::memory_order_relaxed); }
     float take_activity(int slot)

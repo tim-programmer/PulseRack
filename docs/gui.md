@@ -403,3 +403,24 @@ output's level to 0 is silence; undone, the engine is heard again); a move by th
 cable and its sound, redone and undone; all the way back to the empty patch (not unsaved) and forward with both redo keys; a new edit
 dropping the redo list; the saved mark following undo and redo across a save; Ctrl+Z in the search box; a new history on opening.
 
+## As built (milestone 6, part 2: the sequencer's step grid)
+
+**What works.** The Sequencer's panel has a **step grid** between its controls and its jacks: **four pages of 16 steps** (tabs
+1-16 ... 49-64 above the columns) instead of the 16-column scroller the design had (tabs are easier to hit in a 16 HP panel). Each
+column is one step: a **note bar** (its height is the note, C1 to C8; drag it, 4 px a semitone; the wheel, a semitone a notch;
+Shift+wheel, an octave; a double-click turns the step on or to a rest), an **on/rest pad** and a **tie pad** below it. A step that
+is a rest shows its note faintly; steps past the sequence's *Length* are dimmed. While audio runs, the **step being played is lit**
+(from telemetry: the library's `pcl_seq_position`, read at 30 Hz). The hint line says what a step is ("step 3: F#3, on, tied to the
+next"). Edits go through `Editor::set_step`: **one undo step per step edited** (a drag and the wheel on one step are one), and the
+running sequencer gets them through the command ring.
+
+**Not done:** a step's own gate length (each step uses the sequence's *Gate*), its velocity (on is 100), and copying or clearing
+pages.
+
+**Code and tests.** Telemetry: `position` per module and the descriptor-side `module_position`. Geometry: `step_grid()` (the tabs and
+each column's bar and pads) and `note_fill()`, with a test that the grid fits between the controls and the jacks with nothing
+overlapping. `ui_steps` (18 checks): the on pad, heard through the engine (a clock, the sequencer, Note to Gate, the output: silent
+with every step a rest, a gate once step 1 is on); the tie pad; a double-click; a drag of 20 px is 5 semitones and one undo step;
+the wheel and Shift+wheel joining that step; undo of the lot; the second page's first column is step 17. `ui_sound` checks that the
+playhead moves through several steps while the clock runs.
+

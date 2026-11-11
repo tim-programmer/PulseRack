@@ -149,9 +149,9 @@ struct Driver
         return e().engine.patch().cable_into(P(n, id));
     }
     bool  hint_has(const char *s) { return e().hint().find(s) != std::string::npos; }
-    float peak() // the engine's output, rendered here (there is no audio device yet)
+    float peak(size_t frames = 4800) // the engine's output, rendered here (no audio device)
     {
-        std::vector<float> l(4800), r(4800);
+        std::vector<float> l(frames), r(frames);
         e().engine.render(l.size(), l.data(), r.data());
         float m = 0;
         for (float v : l)
@@ -330,6 +330,69 @@ struct Driver
         CHECK(node(osc)->x == 0 && node(osc)->y == 0);
     }
     uint32_t vca_ = 0;
+
+    // ---- the sequencer's step grid
+    gp_point in_panel(
+        uint32_t n, const Rect &r) // the window position of a rectangle's centre in a panel
+    {
+        const Node        *nd = node(n);
+        const RackViewport v = rack_viewport(cx(), ed);
+        return { o().x + nd->x * kHp + kPanelBorder + r.x + r.w / 2 - v.x,
+            o().y + nd->y * kHp + kPanelBorder + r.y + r.h / 2 - v.y };
+    }
+    StepGrid grid(uint32_t n) { return step_grid(panel_layout(*node(n)->desc)); }
+    StepData step(uint32_t n, size_t i) { return node(n)->steps[i]; }
+    void     steps()
+    {
+        wait(0.3);
+        const uint32_t clk = e().add_module(cx(), *find_module("clock"));
+        const uint32_t seq = e().add_module(cx(), *find_module("seq"));
+        const uint32_t gate = e().add_module(cx(), *find_module("note_to_gate"));
+        const uint32_t out = e().add_module(cx(), *find_module("out"));
+        CHECK(e().connect(cx(), P(clk, "clock"), P(seq, "in")) == Err::Ok);
+        CHECK(e().connect(cx(), P(seq, "out"), P(gate, "notes")) == Err::Ok);
+        CHECK(e().connect(cx(), P(gate, "gate"), P(out, "l")) == Err::Ok);
+        wait();
+        CHECK(peak() == 0); // every step a rest
+        const StepGrid g = grid(seq);
+
+        // the on pad of step 1, and the engine hears it (the running sequencer got the step)
+        size_t u = undos();
+        click(in_panel(seq, g.on_pad(0)));
+        CHECK(step(seq, 0).velocity == 100 && undos() == u + 1);
+        CHECK(
+            peak(57600) > 0.5f); // the gate, through the output (1.2 s: the loop of 8 steps is 1 s)
+        // the tie pad; a double-click on the bar: on / rest
+        click(in_panel(seq, g.tie_pad(0)));
+        CHECK(step(seq, 0).tie == 1);
+        click(in_panel(seq, g.note_bar(1)), GP_MOUSE_LEFT, 2);
+        CHECK(step(seq, 1).velocity == 100);
+        click(in_panel(seq, g.note_bar(1)), GP_MOUSE_LEFT, 2);
+        CHECK(step(seq, 1).velocity == 0);
+
+        // the note bar: 20 px up is 5 semitones, and one undo step however many moves made it
+        const gp_point b = in_panel(seq, g.note_bar(2));
+        u = undos();
+        drag(b, { b.x, b.y - 20 }, 10);
+        CHECK(step(seq, 2).note == 65 && undos() == u + 1);
+        move(b);
+        gp_simulate_wheel(app, b.x, b.y, 0, 1, 0); // a notch up: a semitone
+        wait();
+        CHECK(step(seq, 2).note == 66 && undos() == u + 1);   // the same step, the same undo step
+        gp_simulate_wheel(app, b.x, b.y, 1, 0, GP_MOD_SHIFT); // Shift: an octave (down)
+        wait();
+        CHECK(step(seq, 2).note == 54);
+        CHECK(hint_has("step 3: F#3"));
+        click(undo_btn());
+        CHECK(step(seq, 2).note == 60); // all of step 3's changes, in one undo
+        // the pages: the second page's first column is step 17
+        click(in_panel(seq, g.tab(1)));
+        click(in_panel(seq, g.on_pad(0)));
+        CHECK(step(seq, 16).velocity == 100 && step(seq, 0).velocity == 100);
+        click(undo_btn());
+        CHECK(step(seq, 16).velocity == 0);
+        CHECK(e().engine.apply_failures() == 0);
+    }
 
     // ---- undo: the toolbar's buttons and Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y
     size_t   undos() { return e().undo_stack.size(); }
@@ -653,6 +716,22 @@ struct Driver
         CHECK(e().held.empty() && led(gate) == 0);
         key("a", false);
         click({ o().x + 900, o().y + 700 }); // the rack takes the keyboard back
+
+        // a sequencer's playhead moves with the music (telemetry at 30 Hz)
+        const uint32_t clk = e().add_module(cx(), *find_module("clock"));
+        const uint32_t seq = e().add_module(cx(), *find_module("seq"));
+        CHECK(e().connect(cx(), P(clk, "clock"), P(seq, "in")) == Err::Ok);
+        e().set_param(cx(), clk, (size_t)find_param(*node(clk)->desc, "bpm"), 300);
+        std::set<int> seen;
+        for (int i = 0; i < 20; i++)
+        {
+            wait(0.1);
+            if (e().playhead.count(seq))
+                seen.insert(e().playhead.at(seq));
+        }
+        CHECK(seen.size() >= 3); // several steps went by
+        for (int pos : seen)
+            CHECK(pos >= -1 && pos < 8); // within the default length
 
         // the toolbar's Audio button: off (the engine is detached, edits apply at once) and on
         // again
@@ -979,10 +1058,11 @@ int main(int argc, char **argv)
                     });
             });
     }
-    static bool sound = false, files = false, undo = false;
+    static bool sound = false, files = false, undo = false, steps = false;
     sound = argc == 2 && !std::strcmp(argv[1], "--sound");
     files = argc == 2 && !std::strcmp(argv[1], "--files");
     undo = argc == 2 && !std::strcmp(argv[1], "--undo");
+    steps = argc == 2 && !std::strcmp(argv[1], "--steps");
     static std::string dir;
     if (files)
     {
@@ -1016,6 +1096,8 @@ int main(int argc, char **argv)
                         Driver { co, app, ed }.files(dir);
                     else if (undo)
                         Driver { co, app, ed }.undo_redo();
+                    else if (steps)
+                        Driver { co, app, ed }.steps();
                     else if (sound)
                         Driver { co, app, ed }.sound();
                     else
