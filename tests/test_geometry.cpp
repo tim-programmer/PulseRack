@@ -313,3 +313,14 @@ TEST(geometry_the_keyboard_strip)
     CHECK(k.key_at(k.area.x + 1, k.area.bottom() - 1) == 0);
     CHECK(k.key_at(k.area.right() - 1, k.area.y + 1) == 23);
 }
+
+TEST(geometry_the_scope_screen_fits)
+{
+    const PanelLayout &L = panel_layout(*find_module("scope"));
+    const Rect         r = scope_display(L);
+    CHECK(r.y >= L.controls_bottom && r.bottom() <= L.jacks_top && r.x >= kPad && r.right() <= L.width - kPad);
+    CHECK(r.w >= 200 && r.h >= 150); // room to see a wave
+    for (const Rect &p : L.params)
+        CHECK(!r.overlaps(p));
+}
+

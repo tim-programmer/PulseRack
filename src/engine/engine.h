@@ -17,6 +17,7 @@
 
 #include "engine/model/patch.h"
 #include "engine/model/plan.h"
+#include "engine/model/scope.h"
 #include "engine/rt/spsc.h"
 
 #include <array>
@@ -81,6 +82,8 @@ public:
     // Frees plans and module states the audio thread has let go of (every UI call does it too).
     void collect();
     int  telemetry_slot(uint32_t node) const; // -1 if the node has no module
+    // An oscilloscope node's newest frame, if one came since the last call (and it is a scope).
+    bool scope_frame(uint32_t node, ScopeFrame &out);
 
     // ---- the audio thread (or the UI thread while none is attached)
     void render(size_t frames, float *left, float *right); // any number of frames; overwritten

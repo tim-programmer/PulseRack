@@ -3,6 +3,10 @@
 // float, Q15 and Q31.
 #include "engine/rt/modules_common.h"
 
+#include "engine/model/scope.h"
+
+#include <cmath>
+
 #include <cstring>
 
 namespace rack
@@ -257,7 +261,173 @@ namespace
     const PortDesc kMergePorts[] = { { "a", "A", Kind::Event, false },
         { "b", "B", Kind::Event, false }, { "out", "OUT", Kind::Event, true } };
 
+    // ============================================================================================================
+    // Oscilloscope Two inputs drawn on its panel. It waits for its trigger (an edge of input A
+    // through the level, or none at all), captures one window into kScopeColumns columns of lowest
+    // and highest values, hands the frame to the window through a triple buffer (scope.h) and waits
+    // again. If no edge comes within three windows (or 0.1 s), it captures anyway, as a scope's
+    // auto mode does, so a signal that never crosses the level is still seen. It has no outputs: a
+    // signal is looked at by plugging a second cable from where it comes from.
+    enum ScopeParam
+    {
+        SCOPE_TIME,
+        SCOPE_SCALE_A,
+        SCOPE_SCALE_B,
+        SCOPE_TRIGGER,
+        SCOPE_LEVEL,
+        SCOPE_COUNT
+    };
+    constexpr std::string_view kTriggerLabels[] = { "free", "rise", "fall" };
+    struct ScopeNode
+    {
+        ScopeTriple tb;
+        uint32_t    sr;
+        float       time_ms, scale[2], level;
+        int         trigger;
+        // the capture
+        bool     capturing;
+        float    prev;    // input A's last sample, for the edge
+        uint64_t waited;  // samples since it was armed
+        double   col_len; // samples a column covers
+        uint64_t pos;     // samples into the window
+        int      col;
+        bool     triggered;
+        uint32_t seq;
+    };
+    void scope_arm(ScopeNode *n)
+    {
+        n->capturing = false;
+        n->waited = 0;
+    }
+    bool scope_init(void *s, const NodeContext &ctx, const float *p)
+    {
+        auto *n = as<ScopeNode>(s);
+        n->tb.init();
+        n->sr = ctx.sample_rate;
+        n->time_ms = p[SCOPE_TIME];
+        n->scale[0] = p[SCOPE_SCALE_A];
+        n->scale[1] = p[SCOPE_SCALE_B];
+        n->trigger = (int)std::lround(p[SCOPE_TRIGGER]);
+        n->level = p[SCOPE_LEVEL];
+        scope_arm(n);
+        return true;
+    }
+    void scope_reset(void *s) { scope_arm(as<ScopeNode>(s)); }
+    void scope_start(ScopeNode *n, bool triggered)
+    {
+        const double window = std::max<double>(kScopeColumns, n->time_ms * 0.001 * n->sr);
+        n->capturing = true;
+        n->triggered = triggered;
+        n->col_len = window / kScopeColumns;
+        n->pos = 0;
+        n->col = 0;
+        ScopeFrame &f = n->tb.back();
+        for (int ch = 0; ch < 2; ch++)
+        {
+            f.lo[ch][0] = INFINITY;
+            f.hi[ch][0] = -INFINITY;
+        }
+    }
+    void scope_process(void *s, NodeIo &io)
+    {
+        auto               *n = as<ScopeNode>(s);
+        const pcl_sample_t *in[2] = { io.sig_in[0], io.sig_in[1] };
+        for (size_t i = 0; i < io.frames; i++)
+        {
+            const float a = in[0] ? sample_to_float(in[0][i]) : 0.f;
+            if (!n->capturing)
+            {
+                bool go = false, triggered = true;
+                if (n->trigger == 0)
+                    go = true;
+                else if (n->trigger == 1)
+                    go = n->prev < n->level && a >= n->level;
+                else
+                    go = n->prev > n->level && a <= n->level;
+                n->prev = a;
+                if (!go
+                    && ++n->waited > std::max<uint64_t>(
+                           (uint64_t)(3 * n->time_ms * 0.001 * n->sr), n->sr / 10))
+                    go = true, triggered = false; // auto: nothing crossed the level in time
+                if (!go)
+                    continue;
+                scope_start(n, triggered);
+            }
+            ScopeFrame &f = n->tb.back();
+            for (int ch = 0; ch < 2; ch++)
+            {
+                const float v = (in[ch] ? sample_to_float(in[ch][i]) : 0.f) * n->scale[ch];
+                f.lo[ch][n->col] = std::min(f.lo[ch][n->col], v);
+                f.hi[ch][n->col] = std::max(f.hi[ch][n->col], v);
+            }
+            n->pos++;
+            if ((double)n->pos >= (n->col + 1) * n->col_len)
+            {
+                if (++n->col == kScopeColumns)
+                { // the window is full: hand it over, and wait for the next trigger
+                    f.seq = ++n->seq;
+                    f.window_ms = (float)(n->pos * 1000.0 / n->sr);
+                    f.has[0] = in[0] != nullptr;
+                    f.has[1] = in[1] != nullptr;
+                    f.triggered = n->triggered;
+                    n->tb.publish();
+                    scope_arm(n);
+                    n->prev = a;
+                    continue;
+                }
+                for (int ch = 0; ch < 2; ch++)
+                {
+                    f.lo[ch][n->col] = INFINITY;
+                    f.hi[ch][n->col] = -INFINITY;
+                }
+            }
+        }
+    }
+    const PortDesc kScopePorts[]
+        = { { "in_a", "IN A", Kind::Signal, false }, { "in_b", "IN B", Kind::Signal, false } };
+    const ParamDesc kScopeParams[] = {
+        param("time", "Time", "ms", 5, 1000, 20, Scale::Log,
+            Control::Knob, // (5 ms: 240 samples, a column each)
+            [](void *s, float v)
+            {
+                as<ScopeNode>(s)->time_ms = v;
+                return true;
+            }),
+        param("scale_a", "Scale A", "x", 0.1f, 10, 1, Scale::Log, Control::Knob,
+            [](void *s, float v)
+            {
+                as<ScopeNode>(s)->scale[0] = v;
+                return true;
+            }),
+        param("scale_b", "Scale B", "x", 0.1f, 10, 1, Scale::Log, Control::Knob,
+            [](void *s, float v)
+            {
+                as<ScopeNode>(s)->scale[1] = v;
+                return true;
+            }),
+        param(
+            "trigger", "Trigger", "", 0, 2, 1, Scale::Enum, Control::Selector,
+            [](void *s, float v)
+            {
+                as<ScopeNode>(s)->trigger = (int)std::lround(v);
+                return true;
+            },
+            kTriggerLabels),
+        param("level", "Level", "", -1, 1, 0, Scale::Linear, Control::Knob,
+            [](void *s, float v)
+            {
+                as<ScopeNode>(s)->level = v;
+                return true;
+            }),
+    };
+    static_assert(std::size(kScopeParams) == SCOPE_COUNT);
+
 } // namespace
+
+bool scope_take(const ModuleDesc &desc, void *state, ScopeFrame &out)
+{
+    return &desc == &kScopeDesc && as<ScopeNode>(state)->tb.take(out);
+}
 
 bool keyboard_push(void *state, uint64_t at, uint8_t type, uint8_t note, uint8_t velocity)
 {
@@ -299,5 +469,8 @@ RACK_GLUE(kNoteToGateDesc, "note_to_gate", "Note to Gate", kEvent, 4, GateNode, 
     gate_init, gate_reset, gate_process, nullptr, "Turns notes into a gate signal");
 RACK_GLUE(kMergeDesc, "merge", "Merge", kEvent, 4, EmptyNode, kMergePorts, { }, merge_init, nullptr,
     merge_process, merge_cap, "Merges two event streams into one, in time order");
+RACK_GLUE(kScopeDesc, "scope", "Oscilloscope", kUtility, 16, ScopeNode, kScopePorts, kScopeParams,
+    scope_init, scope_reset, scope_process, nullptr,
+    "Draws two signals on its panel, triggered on an edge of the first, like a bench scope");
 
 } // namespace rack

@@ -40,6 +40,12 @@ const Plan &Engine::plan() const
     return cur_ ? cur_->plan : empty;
 }
 
+bool Engine::scope_frame(uint32_t node, ScopeFrame &out)
+{
+    auto it = live_.find(node);
+    return it != live_.end() && scope_take(*it->second.desc, it->second.mem.get(), out);
+}
+
 int Engine::telemetry_slot(uint32_t node) const
 {
     auto it = live_.find(node);

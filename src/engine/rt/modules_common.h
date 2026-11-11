@@ -26,6 +26,10 @@ bool keyboard_push(void *state, uint64_t at, uint8_t type, uint8_t note, uint8_t
 // How many events the sequencer, arpeggiator or clock dropped for lack of room (telemetry for the
 // panel's LED).
 uint32_t dropped_events(const ModuleDesc &desc, const void *state);
+// An oscilloscope's newest frame, if one came since the last call (the UI thread: the reader's side
+// of its triple buffer); false for other modules.
+struct ScopeFrame;
+bool scope_take(const ModuleDesc &desc, void *state, ScopeFrame &out);
 // The step a sequencer played last (telemetry for its step grid's playhead); -1 for other modules.
 int32_t module_position(const ModuleDesc &desc, const void *state);
 
@@ -33,6 +37,6 @@ int32_t module_position(const ModuleDesc &desc, const void *state);
 extern const ModuleDesc kOscDesc, kNoiseDesc, kSahDesc, kLfoDesc, kAdsrDesc, kVcaDesc, kSvfDesc,
     kBiquadDesc, kClockDesc, kArpDesc, kSeqDesc;
 extern const ModuleDesc kKeyboardDesc, kAudioOutDesc, kMixerDesc, kAttenuverterDesc,
-    kNoteToGateDesc, kMergeDesc;
+    kNoteToGateDesc, kMergeDesc, kScopeDesc;
 
 } // namespace rack

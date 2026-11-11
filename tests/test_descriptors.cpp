@@ -37,7 +37,7 @@ TEST(descriptors_ids_are_unique_and_well_formed)
                 CHECK(p.min == 0 && p.max == 1);
         }
     }
-    CHECK(ids.size() == 17);
+    CHECK(ids.size() == 18);
 }
 
 // The wrappers index their jacks by slot number; the descriptors list them by name. They must
@@ -67,6 +67,7 @@ TEST(descriptors_slot_counts_match_the_wrappers)
         { "attenuverter", 1, 1, 0, 0 },
         { "note_to_gate", 0, 1, 1, 0 },
         { "merge", 0, 0, 2, 1 },
+        { "scope", 2, 0, 0, 0 },
     };
     for (const Expect &x : table)
     {

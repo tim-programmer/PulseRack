@@ -9,7 +9,7 @@ namespace rack
 
 std::span<const ModuleDesc *const> all_modules()
 {
-    static const std::array<const ModuleDesc *, 17> table = {
+    static const std::array<const ModuleDesc *, 18> table = {
         &kOscDesc,
         &kNoiseDesc,
         &kSahDesc,
@@ -27,6 +27,7 @@ std::span<const ModuleDesc *const> all_modules()
         &kAttenuverterDesc,
         &kNoteToGateDesc,
         &kMergeDesc,
+        &kScopeDesc,
     };
     return table;
 }

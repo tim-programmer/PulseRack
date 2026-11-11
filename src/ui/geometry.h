@@ -130,6 +130,9 @@ struct KeyStrip
 };
 KeyStrip keyboard_strip(const PanelLayout &L); // for the Keyboard module
 
+// ---- the oscilloscope's screen: between its controls and its jacks (panel pixels).
+Rect scope_display(const PanelLayout &L);
+
 // ---- cables (milestone 3). Everything in rack pixels, from the model alone, so a cable follows a
 // panel while it is dragged without waiting for a layout pass.
 struct Pt
