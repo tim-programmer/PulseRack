@@ -287,9 +287,17 @@ struct PanelView
     Editor::Led        led_;       // copied from the editor at render: what the LED shows
     std::array<int, 2> meter_ { }; // and the output level (Audio Output panels)
 
-    bool     moving = false; // the title bar is being dragged
-    gp_point grab { };
-    int      x0 = 0, y0 = 0;
+    // a press on the title or the face: the menu (right button) or a move
+    void press_face(Ctx cx, const gp_mouse_event &ev)
+    {
+        Editor *e = ed.get(cx);
+        if (!e || !find(cx))
+            return;
+        if (ev.button == GP_MOUSE_RIGHT)
+            open_menu(cx, *e, node);
+        else if (ev.button == GP_MOUSE_LEFT)
+            e->panel_drag_begin(cx, node, ev.position);
+    }
 
     const Node *find(Ctx cx) const
     {
@@ -523,6 +531,7 @@ struct PanelView
                         .child(label(format_value(p, value), 11, st::kText))
                         .child(label(">", 12, st::kSubtext)))
                 .cursor_pointer()
+                .on_mouse_down([](PanelView &) { }) // a control's press, not the panel's
                 .on_click([i, w = r.w](PanelView &self, Ctx cx, const gp_mouse_event &ev)
                     { self.click(cx, i, ev, w); })
                 .on_wheel([i](PanelView &self, Ctx cx, const gp_wheel_event &ev)
@@ -565,6 +574,7 @@ struct PanelView
                            .child(std::move(body)))
                 .child(std::move(name))
                 .cursor_pointer()
+                .on_mouse_down([](PanelView &) { }) // a control's press, not the panel's
                 .on_click([i, w = r.w](PanelView &self, Ctx cx, const gp_mouse_event &ev)
                     { self.click(cx, i, ev, w); });
             break;
@@ -636,16 +646,22 @@ struct PanelView
             meter_ = e->meter;
         }
 
-        Element p
-            = div()
-                  .w(L.width)
-                  .h(L.height)
-                  .rounded(4)
-                  .bg_gradient(180, { stop(cc.top, 0), stop(cc.bottom, 1) })
-                  .border(kPanelBorder)
-                  .border_color(st::kKnobEdge)
-                  .shadow(0, 3, 8, with_alpha(rgb(0x000000), 0.4f))
-                  .on_mouse_down([](PanelView &) { }); // a press on the panel does not pan the rack
+        Element p = div()
+                        .w(L.width)
+                        .h(L.height)
+                        .rounded(4)
+                        .bg_gradient(180, { stop(cc.top, 0), stop(cc.bottom, 1) })
+                        .border(kPanelBorder)
+                        .border_color(st::kKnobEdge)
+                        .shadow(0, 3, 8, with_alpha(rgb(0x000000), 0.4f))
+                        // the face moves the panel (a press on it does not pan the rack); controls,
+                        // jacks and cables take their own presses first
+                        .on_mouse_down([](PanelView &self, Ctx cx, const gp_mouse_event &ev)
+                            { self.press_face(cx, ev); })
+                        .on_drag([](PanelView &self, Ctx cx, const gp_mouse_event &ev)
+                            { self.ed.get(cx)->panel_drag_move(cx, ev.position); })
+                        .on_mouse_up([](PanelView &self, Ctx cx, const gp_mouse_event &ev)
+                            { self.ed.get(cx)->panel_drag_end(cx, ev.position); });
 
         // the title bar moves the panel; a right-click opens its menu
         p.child(div()
@@ -662,33 +678,12 @@ struct PanelView
                 .overflow_hidden()
                 .child(label(std::string(d.name), L.width < 100 ? 9 : 11, st::kText).font_bold())
 
-                .on_mouse_down(
-                    [](PanelView &self, Ctx cx, const gp_mouse_event &ev)
-                    {
-                        const Node *n = self.find(cx);
-                        Editor     *e = self.ed.get(cx);
-                        if (!n)
-                            return;
-                        if (ev.button == GP_MOUSE_RIGHT)
-                        {
-                            open_menu(cx, *e, self.node);
-                            return;
-                        }
-                        self.moving = ev.button == GP_MOUSE_LEFT;
-                        self.grab = ev.position;
-                        self.x0 = (int)n->x;
-                        self.y0 = (int)n->y;
-                    })
-                .on_drag(
-                    [](PanelView &self, Ctx cx, const gp_mouse_event &ev)
-                    {
-                        if (!self.moving)
-                            return;
-                        const int dx = (int)std::lround((ev.position.x - self.grab.x) / kHp);
-                        const int dy = (int)std::lround((ev.position.y - self.grab.y) / kHp);
-                        self.ed.get(cx)->move_module(cx, self.node, self.x0 + dx, self.y0 + dy);
-                    })
-                .on_mouse_up([](PanelView &self) { self.moving = false; })
+                .on_mouse_down([](PanelView &self, Ctx cx, const gp_mouse_event &ev)
+                    { self.press_face(cx, ev); })
+                .on_drag([](PanelView &self, Ctx cx, const gp_mouse_event &ev)
+                    { self.ed.get(cx)->panel_drag_move(cx, ev.position); })
+                .on_mouse_up([](PanelView &self, Ctx cx, const gp_mouse_event &ev)
+                    { self.ed.get(cx)->panel_drag_end(cx, ev.position); })
                 .on_hover([](PanelView &self, Ctx cx, bool inside)
                     { self.ed.get(cx)->hover(cx, self.node, Editor::kHoverTitle, inside); }));
 
@@ -831,11 +826,29 @@ struct DragView
         Editor *e = ed.get(cx);
         if (!e)
             return div();
-        Element w = div().absolute().left(0).top(0);
+        Element           w = div().absolute().left(0).top(0);
+        const ModuleDesc *od = nullptr; // where a module dragged in, or a panel moved, would land
+        int               ox = 0, oy = 0;
+        bool              ofits = false;
         if (const auto &m = e->mdrag; m.active && m.moved && m.over_rack)
-        { // where a module dragged from the browser would land
-            const Rect  r = node_rect(*m.desc, (float)m.x, (float)m.y);
-            const Color c = m.fits ? st::kLedOn : st::kDanger;
+        {
+            od = m.desc;
+            ox = m.x;
+            oy = m.y;
+            ofits = m.fits;
+        }
+        else if (const auto &pd = e->pdrag; pd.active && pd.moved)
+            if (const Node *n = e->engine.patch().find(pd.node))
+            {
+                od = n->desc;
+                ox = pd.x;
+                oy = pd.y;
+                ofits = pd.fits;
+            }
+        if (od)
+        {
+            const Rect  r = node_rect(*od, (float)ox, (float)oy);
+            const Color c = ofits ? st::kLedOn : st::kDanger;
             w.child(div()
                     .absolute()
                     .left(r.x)
@@ -843,13 +856,19 @@ struct DragView
                     .w(r.w)
                     .h(r.h)
                     .rounded(4)
-                    .bg(with_alpha(st::category(m.desc->category).top, m.fits ? 0.45f : 0.25f))
+                    .bg(with_alpha(st::category(od->category).top, ofits ? 0.45f : 0.25f))
                     .border(2)
-                    .border_color(c)
-                    .flex_col()
-                    .items_center()
-                    .pt(3)
-                    .child(label(std::string(m.desc->name), 11, st::kText).font_bold()));
+                    .border_color(c));
+            if (e->mdrag
+                    .active) // a module from the browser: its name (a moved panel shows its own)
+                w.child(div()
+                        .absolute()
+                        .left(r.x)
+                        .top(r.y + 3)
+                        .w(r.w)
+                        .flex_row()
+                        .justify_center()
+                        .child(label(std::string(od->name), 11, st::kText).font_bold()));
         }
         if (!e->drag.active)
             return w;
@@ -959,7 +978,9 @@ struct RackView
             y += kPanelHeight) // a faint line between rows of panels
             content.child(div().absolute().left(0).top(y).w(cw).h(1).bg(st::kRackLine));
 
-        for (auto &[id, view] : e->panels)
+        const uint32_t lifted = e->pdrag.active && e->pdrag.moved ? e->pdrag.node : 0;
+        auto           place = [&](uint32_t id, Entity<PanelView> &view)
+        {
             if (const Node *n = patch.find(id))
                 content.child(div()
                         .absolute()
@@ -967,6 +988,12 @@ struct RackView
                         .top(n->y * kHp)
                         .key_id(id)
                         .child(view.cached()));
+        };
+        for (auto &[id, view] : e->panels)
+            if (id != lifted)
+                place(id, view);
+        if (auto it = e->panels.find(lifted); it != e->panels.end()) // over the others
+            place(lifted, it->second);
         for (auto &[key, view] : e->cable_views) // over the panels
             content.child(div()
                     .absolute()
@@ -1364,6 +1391,82 @@ bool Editor::piano(Ctx cx, const gp_key_event &ev, bool down)
             sent ? "Note " + note_name(note) + (audio_running() ? "" : "  (audio is off)")
                  : "No Keyboard module: add one to play notes from the computer keyboard.");
     return true;
+}
+
+// ---- panels moved on the rack
+
+void Editor::panel_drag_begin(Ctx cx, uint32_t node, gp_point window)
+{
+    const Node *n = engine.patch().find(node);
+    if (!n)
+        return;
+    pdrag = PanelDrag { };
+    pdrag.active = true;
+    pdrag.node = node;
+    pdrag.start = window;
+    pdrag.x0 = n->x;
+    pdrag.y0 = n->y;
+    const Pt q = to_rack(cx, window);
+    pdrag.grab = { q.x - n->x * kHp, q.y - n->y * kHp };
+}
+
+void Editor::panel_drag_move(Ctx cx, gp_point window)
+{
+    if (!pdrag.active)
+        return;
+    Node *n = engine.patch().find(pdrag.node);
+    if (!n)
+    {
+        pdrag = PanelDrag { };
+        return;
+    }
+    if (!pdrag.moved && std::hypot(window.x - pdrag.start.x, window.y - pdrag.start.y) < 4)
+        return; // a click, so far
+    pdrag.moved = true;
+    const Pt q = to_rack(cx, window);
+    // the panel goes where the pointer takes it (its cables with it: their ends come from the
+    // model)
+    n->x = std::max(0.f, (q.x - pdrag.grab.x) / kHp);
+    n->y = std::max(0.f, (q.y - pdrag.grab.y) / kHp);
+    pdrag.x = (int)std::lround(n->x);
+    pdrag.y = (int)std::lround(n->y);
+    pdrag.fits = !collides(engine.patch(), *n->desc, pdrag.x, pdrag.y, pdrag.node);
+    const std::string name(n->desc->name);
+    status = pdrag.fits ? "Release to put " + name + " here."
+                        : "No room here for " + name
+            + ": it would overlap another panel; released here, it goes back.";
+    refresh_rack(cx);
+    refresh_cables_of(cx, pdrag.node);
+    hint_line.update(cx, [](HintLine &, Ctx c) { c.notify(); });
+    drag_view.update(cx, [](DragView &, Ctx c) { c.notify(); });
+}
+
+void Editor::panel_drag_end(Ctx cx, gp_point window)
+{
+    if (!pdrag.active)
+        return;
+    panel_drag_move(cx, window);
+    const PanelDrag d = pdrag;
+    pdrag = PanelDrag { };
+    drag_view.update(cx, [](DragView &, Ctx c) { c.notify(); });
+    Node *n = engine.patch().find(d.node);
+    if (!d.moved || !n)
+        return; // a click
+    const std::string name(n->desc->name);
+    if (d.fits)
+    {
+        n->x = (float)d.x;
+        n->y = (float)d.y;
+        say(cx, "Moved " + name + ".");
+    }
+    else
+    {
+        n->x = d.x0;
+        n->y = d.y0;
+        say(cx, "Not moved: " + name + " would overlap another panel there.");
+    }
+    refresh_rack(cx);
+    refresh_cables_of(cx, d.node);
 }
 
 // ---- modules dragged from the browser

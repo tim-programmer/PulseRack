@@ -312,3 +312,26 @@ the engine's command ring (`architecture.md`, *As built (milestone 4)*).
 **Not done** (milestone 4 stops here): the on-screen keyboard strip on the Keyboard panel; the sequencer's step grid and its
 playhead; a choice of device; underruns are not measured or shown.
 
+## As built: moving panels (asked for after milestone 4)
+
+You found moving a panel clunky: (1) a panel already on the rack should drag freely, with the green/red outline of the browser
+drag, and it was hard to move from where it was; (2) it should be draggable from any unused part of its face, not only the title.
+
+**The cause.** On every pointer move the panel jumped to the grid place under the pointer and **stayed put whenever that place was
+taken** (`Editor::move_module` refused it), so it stuck against its neighbours, could not be carried across them, and gave no sign
+of where it would land. Only the 20 px title bar started a move; the face took the press and did nothing (so as not to pan the
+rack).
+
+**Now.** A press on the title **or anywhere on the face that is not a control, a jack or a cable** starts a move once the pointer
+has gone 4 px (a click does nothing). The panel **follows the pointer freely**, unsnapped, drawn over the other panels; its cables
+follow it (its model position is the free one meanwhile, and their ends come from the model). The **outline** of the browser drag
+shows the snapped place it would land on, green if free and red if it would overlap, with the reason on the hint line. **The
+release** puts it there if green, and **back where it was** if red ("Not moved: ..."). A right-click on the face opens the panel's
+menu, as on the title. Selectors and switches now take their own press, so a press on one never moves the panel.
+
+**Code and tests.** `Editor::panel_drag_begin/move/end` and `PanelDrag` (the old per-panel move state is gone; `move_module`
+stays for code that places a panel directly). `ui_smoke` (123 checks) adds: a click on the face does nothing; a panel pressed on
+its face and carried over a neighbour (red mid-drag, the panel and its cable following) to a free place beyond (green), where the
+release leaves it; released on another panel it goes back; a knob on the face still turns and the panel stays; a move by the
+title. The earlier tests (a refused move onto a neighbour, an accepted one to the next row) pass unchanged.
+`ui_smoke --pose-panel PATCH NODE X Y` holds a panel mid-move for a screenshot.

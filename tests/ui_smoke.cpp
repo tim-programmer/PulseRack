@@ -5,6 +5,7 @@
 //   ui_smoke --pose PATCH NODE PORT X Y   opens PATCH, presses on that jack and holds a cable at
 //                             window (X, Y), for a screenshot of a drag (GPUIC_SCREENSHOT,
 //   ui_smoke --pose-module PATCH CARD X Y   the same with the browser's CARD-th card held at (X, Y)
+//   ui_smoke --pose-panel PATCH NODE X Y   the same with a panel held by its face at (X, Y)
 //                             GPUIC_WAIT_MS)
 #include "engine/model/registry.h"
 #include "ui/geometry.h"
@@ -260,6 +261,65 @@ struct Driver
     }
     gp_point o() { return rack_origin(); }
 
+    // A panel moved by its face: it follows the pointer freely (over its neighbours, its cable with
+    // it), the outline says where it would land, and the release puts it there or back.
+    gp_point face(uint32_t n) // a point on the panel's face between its controls and its jacks
+    {
+        const Node        *nd = node(n);
+        const PanelLayout &L = panel_layout(*nd->desc);
+        const RackViewport v = rack_viewport(cx(), ed);
+        return { o().x + nd->x * kHp + L.width / 2 - v.x,
+            o().y + nd->y * kHp + (L.controls_bottom + L.jacks_top) / 2 - v.y };
+    }
+    void carry(uint32_t osc, uint32_t adsr)
+    {
+        const Patch &patch = e().engine.patch();
+        CHECK(node(osc)->x == 0 && node(osc)->y == 0 && into(vca_of(), "in"));
+        float free_x = 0; // the first free place right of everything on the first row
+        for (const Node &n : patch.nodes())
+            if (n.id != osc && n.y == 0)
+                free_x = std::max(free_x, n.x + n.desc->width_hp);
+        const gp_point f = face(osc), cable0 = cable_middle(P(vca_of(), "in"));
+        click(f); // a click on the face does nothing
+        CHECK(node(osc)->x == 0 && !e().pdrag.active);
+        press(f);
+        const float over_adsr = (node(adsr)->x + 1) * kHp;
+        for (int i = 1; i <= 10; i++)
+        {
+            move({ f.x + over_adsr * i / 10, f.y });
+            wait(0.02);
+        }
+        wait();
+        CHECK(e().pdrag.moved && !e().pdrag.fits && hint_has("No room")); // red over the ADSR
+        CHECK(node(osc)->x > node(adsr)->x - 1);                          // carried over it, freely
+        CHECK(cable_middle(P(vca_of(), "in")).x > cable0.x + 50);         // its cable with it
+        for (int i = 1; i <= 10; i++)
+        {
+            move({ f.x + over_adsr + (free_x * kHp - over_adsr) * i / 10, f.y });
+            wait(0.02);
+        }
+        wait();
+        CHECK(e().pdrag.fits && e().pdrag.x == (int)free_x && hint_has("Release to put"));
+        release({ f.x + free_x * kHp, f.y });
+        CHECK(node(osc)->x == free_x && node(osc)->y == 0 && !e().pdrag.active);
+        // released on another panel: it goes back
+        const gp_point f2 = face(osc);
+        drag(f2, { f2.x - (free_x - node(adsr)->x) * kHp, f2.y }, 12);
+        CHECK(node(osc)->x == free_x && hint_has("Not moved"));
+        // a knob on the face still turns its knob, and the panel stays
+        const float    fr = param(osc, "frequency");
+        const gp_point k = control(osc, "frequency");
+        drag(k, { k.x, k.y - 30 });
+        CHECK(param(osc, "frequency") != fr && node(osc)->x == free_x);
+        click(k, GP_MOUSE_LEFT, 2); // its default again
+        // and back to where it started, for what follows (by its title this time)
+        const gp_point t = control_center(cx(), ed, osc, -1);
+        drag({ t.x - 20, t.y }, { t.x - 20 - free_x * kHp, t.y }, 12);
+        CHECK(node(osc)->x == 0 && node(osc)->y == 0);
+    }
+    uint32_t vca_ = 0;
+    uint32_t vca_of() { return vca_; }
+
     // With the sound card on (SDL's dummy driver in the tests): the engine runs on the audio
     // thread.
     int  led(uint32_t n) { return e().leds.count(n) ? e().leds.at(n).level : 0; }
@@ -442,7 +502,9 @@ struct Driver
         CHECK(node(vca)->x == 8 && node(vca)->y == kPanelHeightHp);
 
         const gp_point o = rack_origin();
+        vca_ = vca;
         cables(osc, vca, adsr);
+        carry(osc, adsr);
 
         // ---- panning: drag empty space
         drag({ o.x + 900, o.y + 300 }, { o.x + 700, o.y + 250 });
@@ -529,6 +591,36 @@ int main(int argc, char **argv)
 {
     if (argc == 3 && !std::strcmp(argv[1], "--check-ppm"))
         return check_ppm(argv[2]);
+    if (argc == 6 && !std::strcmp(argv[1], "--pose-panel"))
+    {
+        static Options  opt;
+        static uint32_t which;
+        static gp_point to;
+        opt.patch_path = argv[2];
+        opt.audio = false;
+        which = (uint32_t)std::atoi(argv[3]);
+        to = { (float)std::atof(argv[4]), (float)std::atof(argv[5]) };
+        setenv("GPUIC_IGNORE_REAL_MOUSE", "1", 1);
+        return gpuic::run(
+            [](App app)
+            {
+                std::string error;
+                auto        ed = open_rack(app, opt, &error);
+                app.ctx(ed).spawn(
+                    [app, ed](Co &co)
+                    {
+                        co.sleep(0.2);
+                        Driver         d { co, app, ed };
+                        const gp_point a = d.face(which);
+                        d.press(a);
+                        for (int i = 1; i <= 8; i++)
+                        {
+                            d.move({ a.x + (to.x - a.x) * i / 8, a.y + (to.y - a.y) * i / 8 });
+                            d.wait(0.02);
+                        }
+                    });
+            });
+    }
     if (argc == 6 && !std::strcmp(argv[1], "--pose-module"))
     {
         static Options  opt;

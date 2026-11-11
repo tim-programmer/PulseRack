@@ -104,6 +104,20 @@ struct Editor
     } mdrag;
     gpuic::Entity<PointerChip> chip; // the module's name following the pointer
 
+    // ---- a panel moved on the rack: it follows the pointer freely (its model position is the free
+    // one meanwhile, so its cables follow too); the outline shows the snapped place it would land
+    // on, and the release puts it there if that is free, or back where it was.
+    struct PanelDrag
+    {
+        bool     active = false, moved = false;
+        uint32_t node = 0;
+        gp_point start { };      // window pixels, at the press
+        Pt       grab { };       // the pointer's offset in the panel (rack pixels)
+        float    x0 = 0, y0 = 0; // where it was (rack units)
+        int      x = 0, y = 0;   // where it would land
+        bool     fits = false;
+    } pdrag;
+
     // ---- edits (each updates the patch, the engine and the views that show it)
     // Adds a module at the first free place near the visible part of the rack; 0 if the library
     // refused its settings.
@@ -120,7 +134,8 @@ struct Editor
     // what is under the pointer, or the last action.
     std::string hint() const
     {
-        return drag.active || mdrag.moved || hover_text.empty() ? status : hover_text;
+        return drag.active || mdrag.moved || pdrag.moved || hover_text.empty() ? status
+                                                                               : hover_text;
     }
     std::string describe_item(uint32_t node, int item) const;
 
@@ -140,6 +155,10 @@ struct Editor
     void module_drag_begin(gpuic::Ctx cx, const ModuleDesc &d, gp_point window);
     void module_drag_move(gpuic::Ctx cx, gp_point window);
     void module_drag_end(gpuic::Ctx cx, gp_point window);
+    // A press on a panel's title or face: past a few pixels it becomes a move (see PanelDrag).
+    void panel_drag_begin(gpuic::Ctx cx, uint32_t node, gp_point window);
+    void panel_drag_move(gpuic::Ctx cx, gp_point window);
+    void panel_drag_end(gpuic::Ctx cx, gp_point window);
     // Where a module dragged by its title's middle would land, for a pointer at `window`.
     Slot drop_slot(gpuic::Ctx cx, const ModuleDesc &d, gp_point window);
 
