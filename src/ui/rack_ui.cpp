@@ -89,7 +89,7 @@ struct HintLine
 struct Toolbar
 {
     Entity<Editor>                    ed;
-    template <class F> static Element button(const char *text, float w, F &&f)
+    template <class F> static Element button(const char *text, float w, F &&f, bool enabled = true)
     {
         return div()
             .w(w)
@@ -104,7 +104,7 @@ struct Toolbar
             .hover_bg(st::kBorder)
             .border(1)
             .border_color(st::kBorder)
-            .child(label(text, 12, st::kText))
+            .child(label(text, 12, enabled ? st::kText : st::kDim))
             .on_click(std::forward<F>(f));
     }
     Element render(Ctx cx)
@@ -139,6 +139,13 @@ struct Toolbar
                 "Save", st::kSaveW, [](Toolbar &self, Ctx cx) { self.ed.get(cx)->save(cx); }))
             .child(button("Save as", st::kSaveAsW,
                 [](Toolbar &self, Ctx cx) { self.ed.get(cx)->save_as(cx); }))
+            .child(div().w(8 - st::kToolGap))
+            .child(button(
+                "Undo", st::kUndoW, [](Toolbar &self, Ctx cx) { self.ed.get(cx)->undo(cx); },
+                e && !e->undo_stack.empty()))
+            .child(button(
+                "Redo", st::kRedoW, [](Toolbar &self, Ctx cx) { self.ed.get(cx)->redo(cx); },
+                e && !e->redo_stack.empty()))
             .child(div().w(8))
             // the name, with a mark while there are unsaved changes
             .child(label((e ? e->patch_name : std::string()) + (dirty ? "  *" : ""), 13,
@@ -1176,18 +1183,19 @@ struct Overlay
 
     template <class F> static Element item(std::string title, std::string about, F &&f)
     {
-        Element it = div()
-                         .h(about.empty() ? st::kFileItemH : st::kFileExampleH)
-                         .flex_shrink_0()
-                         .overflow_hidden() // a description longer than two lines is cut, never overlaps
-                         .px(10)
-                         .justify_center()
-                         .rounded(4)
-                         .flex_col()
-                         .gap(2)
-                         .cursor_pointer()
-                         .hover_bg(st::kSurface)
-                         .child(label(std::move(title), 12, st::kText));
+        Element it
+            = div()
+                  .h(about.empty() ? st::kFileItemH : st::kFileExampleH)
+                  .flex_shrink_0()
+                  .overflow_hidden() // a description longer than two lines is cut, never overlaps
+                  .px(10)
+                  .justify_center()
+                  .rounded(4)
+                  .flex_col()
+                  .gap(2)
+                  .cursor_pointer()
+                  .hover_bg(st::kSurface)
+                  .child(label(std::move(title), 12, st::kText));
         if (!about.empty())
             it.child(label(std::move(about), 10, st::kSubtext));
         it.on_click(std::forward<F>(f));
@@ -1616,10 +1624,16 @@ void Editor::panel_drag_end(Ctx cx, gp_point window)
     const std::string name(n->desc->name);
     if (d.fits)
     {
+        if ((float)d.x != d.x0 || (float)d.y != d.y0)
+        { // the step holds where it was, not where the drag took it meanwhile
+            n->x = d.x0;
+            n->y = d.y0;
+            checkpoint(cx, "Move " + name);
+            n = engine.patch().find(d.node);
+            touch(cx);
+        }
         n->x = (float)d.x;
         n->y = (float)d.y;
-        if (n->x != d.x0 || n->y != d.y0)
-            touch(cx);
         say(cx, "Moved " + name + ".");
     }
     else
@@ -1743,6 +1757,8 @@ Err Editor::connect(Ctx cx, PortRef a, PortRef b)
 {
     Patch &patch = engine.patch();
     const auto [from, to] = as_cable(patch, a, b);
+    if (patch.can_connect(from, to) == Err::Ok)
+        checkpoint(cx, "Connect " + port_name(from) + " -> " + port_name(to));
     const Err e = patch.connect(from, to);
     if (e != Err::Ok)
     {
@@ -1768,6 +1784,7 @@ void Editor::disconnect(Ctx cx, PortRef to)
     if (!c)
         return;
     const std::string what = port_name(c->from) + "  ->  " + port_name(c->to);
+    checkpoint(cx, "Remove the cable " + port_name(c->from) + " -> " + port_name(c->to));
     engine.patch().disconnect(to);
     engine.compile();
     sync_cables(cx);
@@ -1894,6 +1911,9 @@ void Editor::jack_release(Ctx cx, gp_point window)
             say(cx, "The cable is where it was.");
             return;
         }
+        checkpoint(
+            cx, d.picked ? "Move a cable" : "Connect " + port_name(f) + " -> " + port_name(t));
+        ++batch; // the disconnect and connect below are this one step
         if (d.picked)
         { // moved to another input: same cable, same colour
             const auto it = cable_colour.find({ d.picked->to.node, d.picked->to.port });
@@ -1906,6 +1926,7 @@ void Editor::jack_release(Ctx cx, gp_point window)
         if (connect(cx, f, t) != Err::Ok
             && d.picked) // cannot happen after can_connect; put it back
             connect(cx, d.picked->from, d.picked->to);
+        --batch;
     }
     else if (d.picked && !d.over)
         disconnect(cx, d.picked->to);
@@ -1969,11 +1990,14 @@ uint32_t Editor::add_module_at(Ctx cx, const ModuleDesc &d, int x, int y)
     Patch &patch = engine.patch();
     if (collides(patch, d, x, y))
         return 0;
+    checkpoint(cx, "Add " + std::string(d.name));
     const uint32_t id = patch.add_node(d, (float)x, (float)y);
     if (engine.compile() != Err::Ok)
     {
         patch.remove_node(id);
         engine.compile();
+        if (!undo_stack.empty() && batch == 0) // nothing changed: no step
+            undo_stack.pop_back();
         say(cx, std::string(d.name) + ": the library refused its default settings; not added");
         return 0;
     }
@@ -2009,6 +2033,7 @@ void Editor::remove_module(Ctx cx, uint32_t node)
     if (!n)
         return;
     const std::string name(n->desc->name);
+    checkpoint(cx, "Delete " + name);
     engine.patch().remove_node(node);
     if (hover_node == node)
     {
@@ -2031,6 +2056,8 @@ bool Editor::move_module(Ctx cx, uint32_t node, int x, int y)
         return true;
     if (collides(engine.patch(), *n->desc, x, y, node))
         return false;
+    checkpoint(cx, "Move " + std::string(n->desc->name));
+    n = engine.patch().find(node);
     n->x = (float)x;
     n->y = (float)y;
     refresh_rack(cx);
@@ -2044,6 +2071,9 @@ void Editor::set_param(Ctx cx, uint32_t node, size_t param, float value)
     const Node *n = engine.patch().find(node);
     if (!n || param >= n->params.size())
         return;
+    checkpoint(cx, std::string(n->desc->name) + " " + std::string(n->desc->params[param].name),
+        (uint64_t)1 << 63 | (uint64_t)node << 16
+            | param); // a drag or a run of wheel notches: one step
     engine.set_param(node, param, value);
     touch(cx);
     auto it = panels.find(node);
@@ -2070,10 +2100,113 @@ Editor::~Editor()
 
 void Editor::touch(Ctx cx)
 {
-    if (dirty)
-        return;
-    dirty = true;
+    version = ++next_version;
+    const bool was = dirty;
+    dirty = version != saved_version;
+    if (dirty != was)
+        toolbar.update(cx, [](Toolbar &, Ctx c) { c.notify(); });
+}
+
+// ---- undo
+
+void Editor::checkpoint(Ctx cx, std::string what, uint64_t merge)
+{
+    if (batch > 0)
+        return; // part of a larger action, which has its own step
+    if (merge && merge == merge_key && !undo_stack.empty())
+        return; // the same control again: the step it is in already holds the value before
+    undo_stack.push_back(Version { engine.patch(), version, std::move(what) });
+    if (undo_stack.size() > kUndoLimit)
+        undo_stack.erase(undo_stack.begin());
+    redo_stack.clear();
+    merge_key = merge;
     toolbar.update(cx, [](Toolbar &, Ctx c) { c.notify(); });
+}
+
+void Editor::forget_view_state(Ctx cx)
+{
+    drag = CableDrag { };
+    mdrag = ModuleDrag { };
+    pdrag = PanelDrag { };
+    hover_node = 0;
+    hover_text.clear();
+    file_menu_open = false;
+    ask = Ask { };
+    if (RackView *rv = rack.get(cx))
+    {
+        rv->menu_node = 0;
+        rv->menu_cable.reset();
+    }
+    overlay.update(cx, [](Overlay &, Ctx c) { c.notify(); });
+    drag_view.update(cx, [](DragView &, Ctx c) { c.notify(); });
+}
+
+void Editor::restore(Ctx cx, Patch target)
+{
+    Patch old = std::move(engine.patch());
+    engine.patch() = std::move(target);
+    engine.compile();
+    // a module that is still there keeps running; what it was set to before reaches it again
+    for (const Node &n : engine.patch().nodes())
+    {
+        const Node *o = old.find(n.id);
+        if (!o || o->desc != n.desc)
+            continue; // (a module back from the dead was made from its settings)
+        for (size_t i = 0; i < n.params.size(); i++)
+            if (o->params[i] != n.params[i])
+                engine.set_param(n.id, i, n.params[i]);
+        for (size_t k = 0; k < n.steps.size() && k < o->steps.size(); k++)
+            if (!(o->steps[k] == n.steps[k]))
+                engine.set_step(n.id, k, n.steps[k]);
+    }
+    forget_view_state(cx);
+    sync_panels(cx);
+    sync_cables(cx);
+    for (auto &[id, view] : panels)
+        view.update(cx, [](PanelView &, Ctx c) { c.notify(); });
+    refresh_rack(cx);
+}
+
+void Editor::undo(Ctx cx)
+{
+    if (undo_stack.empty())
+    {
+        say(cx, "Nothing to undo.");
+        return;
+    }
+    Version v = std::move(undo_stack.back());
+    undo_stack.pop_back();
+    redo_stack.push_back(Version { engine.patch(), version, v.what });
+    restore(cx, std::move(v.patch));
+    version = v.version;
+    dirty = version != saved_version;
+    merge_key = 0;
+    toolbar.update(cx, [](Toolbar &, Ctx c) { c.notify(); });
+    say(cx, "Undone: " + v.what + ".");
+}
+
+void Editor::redo(Ctx cx)
+{
+    if (redo_stack.empty())
+    {
+        say(cx, "Nothing to redo.");
+        return;
+    }
+    Version v = std::move(redo_stack.back());
+    redo_stack.pop_back();
+    undo_stack.push_back(Version { engine.patch(), version, v.what });
+    restore(cx, std::move(v.patch));
+    version = v.version;
+    dirty = version != saved_version;
+    merge_key = 0;
+    toolbar.update(cx, [](Toolbar &, Ctx c) { c.notify(); });
+    say(cx, "Redone: " + v.what + ".");
+}
+
+bool Editor::search_focused(Ctx cx)
+{
+    Browser *b = browser.get(cx);
+    return b && b->search && cx.is_focused(Focus(b->search.focus(cx.app())));
 }
 
 void Editor::close_overlays(Ctx cx)
@@ -2219,6 +2352,7 @@ bool Editor::save_to(Ctx cx, const std::string &path)
     }
     file_path = path;
     patch_name = file_name(path);
+    saved_version = version;
     dirty = false;
     toolbar.update(cx, [](Toolbar &, Ctx c) { c.notify(); });
     say(cx, "Saved " + patch_name + ".");
@@ -2296,6 +2430,11 @@ bool Editor::open_text(Ctx cx, const std::string &text, const std::string &name,
     }
     file_path = path;
     patch_name = name;
+    undo_stack.clear(); // a new history for a new document
+    redo_stack.clear();
+    merge_key = 0;
+    version = ++next_version;
+    saved_version = dirty_after ? 0 : version;
     dirty = dirty_after;
     sync_panels(cx);
     sync_cables(cx);
@@ -2366,6 +2505,22 @@ Entity<Editor> open_rack(App app, const Options &opt, std::string *error)
     app.bind_key("ctrl-s", "file::save");
     app.bind_key("ctrl-shift-s", "file::save_as");
     app.bind_key("escape", "ui::escape");
+    app.bind_key("ctrl-z", "edit::undo");
+    app.bind_key("ctrl-shift-z", "edit::redo");
+    app.bind_key("ctrl-y", "edit::redo");
+    app.on_global_action("edit::undo",
+        [ed](Ctx cx)
+        {
+            if (Editor *e = ed.get(cx);
+                e && !e->search_focused(cx)) // the search box's own text, then
+                e->undo(cx);
+        });
+    app.on_global_action("edit::redo",
+        [ed](Ctx cx)
+        {
+            if (Editor *e = ed.get(cx); e && !e->search_focused(cx))
+                e->redo(cx);
+        });
     app.on_global_action("file::new", [ed](Ctx cx) { ed.get(cx)->request(cx, Editor::Then::New); });
     app.on_global_action(
         "file::open", [ed](Ctx cx) { ed.get(cx)->request(cx, Editor::Then::OpenDialog); });

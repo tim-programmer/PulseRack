@@ -25,6 +25,9 @@ inline constexpr float kNewX = 12 + kAppNameW + kToolGap;
 inline constexpr float kOpenX = kNewX + kNewW + kToolGap;
 inline constexpr float kSaveX = kOpenX + kOpenW + kToolGap;
 inline constexpr float kSaveAsX = kSaveX + kSaveW + kToolGap;
+inline constexpr float kUndoW = 50, kRedoW = 50;
+inline constexpr float kUndoX = kSaveAsX + kSaveAsW + kToolGap + 8; // a little apart from the files
+inline constexpr float kRedoX = kUndoX + kUndoW + kToolGap;
 inline constexpr float kFileMenuW = 520, kFileItemH = 30, kFileExampleH = 58, kFileHeaderH = 24;
 // the unsaved-changes question: a box in the middle of the window, its buttons along the bottom
 // right

@@ -196,6 +196,27 @@ struct Editor
     Pt          to_rack(gpuic::Ctx cx, gp_point window); // window pixels -> rack pixels
     std::string port_name(PortRef r) const;              // "Oscillator OUT"
 
+    // ---- undo (milestone 6). Each user action stores the patch as it was before; undo puts it
+    // back (modules that are still there keep running, and every changed parameter or step reaches
+    // them). Consecutive changes of one control are one step. Opening a file starts a new history.
+    struct Version
+    {
+        Patch       patch;
+        uint64_t    version;
+        std::string what; // "Delete Oscillator", for the hint line
+    };
+    std::vector<Version> undo_stack, redo_stack;
+    uint64_t version = 0, saved_version = 0, next_version = 0; // dirty: version != saved
+    uint64_t merge_key = 0; // the control the last step is about (0: none)
+    int      batch = 0;     // inside an action made of others: no steps of their own
+    static constexpr size_t kUndoLimit = 200;
+    void                    checkpoint(gpuic::Ctx cx, std::string what, uint64_t merge = 0);
+    void                    undo(gpuic::Ctx cx);
+    void                    redo(gpuic::Ctx cx);
+    void restore(gpuic::Ctx cx, Patch target); // the patch, with the running modules following it
+    void forget_view_state(gpuic::Ctx cx);     // drags, menus, selection, hover
+    bool search_focused(gpuic::Ctx cx);        // keys are the search box's then
+
     // ---- files. Each of New, Open, a factory patch and Recover asks first if there are unsaved
     // changes (the `ask` question); perform() does it without asking.
     void request(gpuic::Ctx cx, Then then, int factory = -1);

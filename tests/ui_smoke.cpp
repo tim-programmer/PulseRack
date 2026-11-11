@@ -331,6 +331,125 @@ struct Driver
     }
     uint32_t vca_ = 0;
 
+    // ---- undo: the toolbar's buttons and Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y
+    size_t   undos() { return e().undo_stack.size(); }
+    gp_point undo_btn() { return btn(style::kUndoX, style::kUndoW); }
+    gp_point redo_btn() { return btn(style::kRedoX, style::kRedoW); }
+    void     undo_redo()
+    {
+        const Patch &patch = e().engine.patch();
+        wait(0.3);
+        click(undo_btn());
+        CHECK(hint_has("Nothing to undo") && undos() == 0);
+
+        // a module from the browser, another, and a cable dragged between them: three steps
+        click(add_button(0)); // the oscillator
+        const uint32_t osc = newest();
+        const uint32_t out = e().add_module(cx(), *find_module("out"));
+        wait();
+        drag(J(osc, "out"), J(out, "l"));
+        CHECK(into(out, "l") && undos() == 3 && e().dirty);
+        CHECK(peak() > 0.1f);
+
+        // a knob dragged (many changes) is one step; the wheel on the same knob joins it; another
+        // knob is a step of its own
+        const size_t     fi = (size_t)find_param(*node(osc)->desc, "frequency");
+        const ParamDesc &fd = node(osc)->desc->params[fi];
+        const float      f0 = param(osc, "frequency");
+        const gp_point   k = control(osc, "frequency");
+        drag(k, { k.x, k.y - 60 }, 12);
+        CHECK(undos() == 4 && param(osc, "frequency") != f0);
+        move(k);
+        gp_simulate_wheel(app, k.x, k.y, 0, 1, 0);
+        gp_simulate_wheel(app, k.x, k.y, 0, 1, 0);
+        wait();
+        CHECK(undos() == 4);
+        e().set_param(cx(), osc, (size_t)find_param(*node(osc)->desc, "pulse_width"), 0.3f);
+        CHECK(undos() == 5);
+        // one undo takes the pulse width back, the next the whole of the frequency's changes
+        gp_simulate_keystrokes(app, "ctrl-z");
+        wait(0.1);
+        CHECK(param(osc, "pulse_width")
+            == node(osc)->desc->params[(size_t)find_param(*node(osc)->desc, "pulse_width")].def);
+        click(undo_btn());
+        CHECK(param(osc, "frequency") == f0 && hint_has("Undone: Oscillator Frequency"));
+        (void)fd;
+
+        // undo reaches the running module: the output's level to 0 is silence, undone is sound
+        // again
+        e().set_param(cx(), out, (size_t)find_param(*node(out)->desc, "level"), 0);
+        CHECK(peak() == 0);
+        gp_simulate_keystrokes(app, "ctrl-z");
+        wait(0.1);
+        CHECK(param(out, "level") > 0 && peak() > 0.1f);
+
+        // a move by the face, undone: back where it was
+        const float    x0 = node(osc)->x;
+        const gp_point f = face(osc);
+        drag(f, { f.x, f.y + kPanelHeightHp * kHp }, 12);
+        CHECK(node(osc)->y == kPanelHeightHp);
+        click(undo_btn());
+        CHECK(node(osc)->x == x0 && node(osc)->y == 0);
+
+        // a module deleted with its cable, undone: back, cable and sound included
+        const size_t before = undos();
+        e().remove_module(cx(), osc);
+        CHECK(!node(osc) && !into(out, "l") && peak() == 0 && undos() == before + 1);
+        click(undo_btn());
+        CHECK(
+            node(osc) && into(out, "l") && into(out, "l")->from == P(osc, "out") && peak() > 0.1f);
+        CHECK(e().panels.count(osc) && e().cable_views.size() == 1);
+        // ... and redone
+        click(redo_btn());
+        CHECK(!node(osc) && patch.cables().empty());
+        gp_simulate_keystrokes(app, "ctrl-z"); // (back)
+        wait(0.1);
+        CHECK(node(osc) != nullptr);
+
+        // all the way back: the empty patch, as it was opened, so not unsaved; then all forward
+        while (!e().undo_stack.empty())
+            click(undo_btn());
+        CHECK(patch.nodes().empty() && !e().dirty);
+        // the redo list holds the two modules, the cable, and (on top of them) the deletion that
+        // was redone and undone again above
+        CHECK(e().redo_stack.size() == 4);
+        for (int i = 0; i < 3; i++)
+        {
+            gp_simulate_keystrokes(app, i % 2 ? "ctrl-y" : "ctrl-shift-z");
+            wait(0.1);
+        }
+        CHECK(
+            patch.nodes().size() == 2 && into(out, "l") && e().redo_stack.size() == 1 && e().dirty);
+        CHECK(peak() > 0.1f);
+        // a new edit after an undo drops what could be redone
+        e().add_module(cx(), *find_module("noise"));
+        CHECK(e().redo_stack.empty());
+
+        // the saved version: undo after a save is unsaved again, redo is saved again
+        CHECK(e().save_to(
+                  cx(), std::filesystem::temp_directory_path().string() + "/pulserack_undo.rack")
+            && !e().dirty);
+        click(undo_btn());
+        CHECK(e().dirty);
+        click(redo_btn());
+        CHECK(!e().dirty);
+        std::filesystem::remove(std::filesystem::temp_directory_path() / "pulserack_undo.rack");
+
+        // Ctrl+Z in the search box is the search box's
+        const size_t n = patch.nodes().size();
+        click({ style::kBrowserPad + 40,
+            style::kToolbarH + style::kBrowserPad + style::kSearchH / 2 });
+        gp_simulate_text(app, "x");
+        gp_simulate_keystrokes(app, "ctrl-z");
+        wait(0.1);
+        CHECK(patch.nodes().size() == n);
+        click({ o().x + 900, o().y + 700 });
+        // opening a patch starts a new history
+        e().perform(cx(), Editor::Then::Factory, factory_index("sequence"));
+        CHECK(e().undo_stack.empty() && e().redo_stack.empty());
+        CHECK(e().engine.apply_failures() == 0 && e().engine.nonfinite_samples() == 0);
+    }
+
     // ---- files: the toolbar's buttons, the Open menu, the unsaved-changes question, recovery. The
     // chooser is this test's: it answers with `next` (a path, or nothing for a cancelled dialog).
     std::optional<std::string> next;
@@ -860,9 +979,10 @@ int main(int argc, char **argv)
                     });
             });
     }
-    static bool sound = false, files = false;
+    static bool sound = false, files = false, undo = false;
     sound = argc == 2 && !std::strcmp(argv[1], "--sound");
     files = argc == 2 && !std::strcmp(argv[1], "--files");
+    undo = argc == 2 && !std::strcmp(argv[1], "--undo");
     static std::string dir;
     if (files)
     {
@@ -894,6 +1014,8 @@ int main(int argc, char **argv)
                 {
                     if (files)
                         Driver { co, app, ed }.files(dir);
+                    else if (undo)
+                        Driver { co, app, ed }.undo_redo();
                     else if (sound)
                         Driver { co, app, ed }.sound();
                     else

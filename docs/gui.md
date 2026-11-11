@@ -381,3 +381,25 @@ only answer.
 
 **Not done:** recent files; a choice of folder for the examples (they are in the program); autosave while working; undo (milestone 6).
 
+## As built (milestone 6, part 1: undo)
+
+**What works.** **Undo** and **Redo** in the toolbar (dimmed when there is nothing to undo or redo), and Ctrl+Z, Ctrl+Shift+Z and
+Ctrl+Y (not while the search box has the keyboard: its text is its own). Every edit is a step: a module added (from the browser,
+by *Add* or by dragging it in), deleted, moved; a cable made, moved to another input, or removed; a control changed. **Consecutive
+changes of one control are one step** (a knob drag, then wheel notches on the same knob; another control starts a new step), as
+designed. The hint line says what was undone or redone ("Undone: Oscillator Frequency."). Undoing back to the version that was
+saved clears the unsaved mark; a new edit after an undo drops what could have been redone; opening a file or an example starts a new
+history. At most 200 steps are kept.
+
+**How.** Each step keeps a copy of the patch model (a few kilobytes) from before the action. Undo and redo swap it back in the way
+opening a file does, but the modules whose id and type are still there keep running (their state is not made again, so an LFO's
+phase or a held note goes on), and every parameter or sequencer step that differs is sent to its running module through the
+engine's command ring: without that, the model would be undone and the sound not. A module that comes back after a deletion is
+made from its settings. An action made of others (a cable moved from one input to another: a removal and a connection) is one step.
+
+**Tests.** `ui_undo` (29 checks): nothing to undo at first; three steps for two modules and a dragged cable; a knob drag and two
+wheel notches on it are one step, another knob a second; undo by key and by button; **undo reaching the running module** (the
+output's level to 0 is silence; undone, the engine is heard again); a move by the face undone; a deleted module coming back with its
+cable and its sound, redone and undone; all the way back to the empty patch (not unsaved) and forward with both redo keys; a new edit
+dropping the redo list; the saved mark following undo and redo across a save; Ctrl+Z in the search box; a new history on opening.
+
