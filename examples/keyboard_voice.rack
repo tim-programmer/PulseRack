@@ -1,0 +1,22 @@
+# A voice for the computer keyboard: keyboard -> oscillator and envelope -> filter -> VCA -> output. Play it with A W S E D F ... (Z and X: octave).
+# No key script: it is silent until you play.
+pulserack 1
+node 1 keyboard x=0 y=0
+node 2 osc x=6 y=0
+param 2 waveform saw
+node 3 adsr x=14 y=0
+param 3 attack 5
+param 3 decay 300
+param 3 sustain 0.5
+param 3 release 400
+node 4 svf x=22 y=0
+param 4 cutoff 1200
+param 4 resonance 0.4
+node 5 vca x=30 y=0
+node 6 out x=34 y=0
+cable 1.notes -> 2.note
+cable 1.notes -> 3.note
+cable 2.out -> 4.in
+cable 4.lp -> 5.in
+cable 3.out -> 5.gain
+cable 5.out -> 6.l

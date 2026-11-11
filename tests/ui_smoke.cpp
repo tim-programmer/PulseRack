@@ -6,8 +6,12 @@
 //                             window (X, Y), for a screenshot of a drag (GPUIC_SCREENSHOT,
 //   ui_smoke --pose-module PATCH CARD X Y   the same with the browser's CARD-th card held at (X, Y)
 //   ui_smoke --pose-panel PATCH NODE X Y   the same with a panel held by its face at (X, Y)
+//   ui_smoke --pose-ask PATCH   opens PATCH, makes a change and asks New: the unsaved-changes
+//   question
 //                             GPUIC_WAIT_MS)
+#include "engine/model/patchfile.h"
 #include "engine/model/registry.h"
+#include "ui/files.h"
 #include "ui/geometry.h"
 #include "ui/rack_ui.h"
 #include "ui/style.h"
@@ -17,6 +21,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <algorithm>
+#include <filesystem>
 #include <fstream>
 #include <set>
 #include <vector>
@@ -66,6 +71,13 @@ struct Driver
     Co            &co;
     App            app;
     Entity<Editor> ed;
+
+    Driver(Co &c, App a, Entity<Editor> e)
+        : co(c)
+        , app(a)
+        , ed(e)
+    {
+    }
 
     void wait(double s = 0.06) { co.sleep(s); }
     void move(gp_point p, uint32_t mods = 0)
@@ -318,6 +330,152 @@ struct Driver
         CHECK(node(osc)->x == 0 && node(osc)->y == 0);
     }
     uint32_t vca_ = 0;
+
+    // ---- files: the toolbar's buttons, the Open menu, the unsaved-changes question, recovery. The
+    // chooser is this test's: it answers with `next` (a path, or nothing for a cancelled dialog).
+    std::optional<std::string> next;
+    int                        asked_open = 0, asked_save = 0;
+    gp_point                   btn(float x, float w) { return { x + w / 2, style::kToolbarH / 2 }; }
+    // the Open menu's rows: 0 "Open a file", then Recover if shown, then the examples
+    gp_point menu_row(int row, bool recover_shown)
+    {
+        float       y = style::kToolbarH - 2 + 1 + 4;
+        const float x = style::kOpenX + 1 + 4 + 60;
+        if (row == 0)
+            return { x, y + style::kFileItemH / 2 };
+        y += style::kFileItemH;
+        if (recover_shown)
+        {
+            if (row == 1)
+                return { x, y + style::kFileExampleH / 2 };
+            y += style::kFileExampleH;
+            row--;
+        }
+        y += style::kFileHeaderH;
+        return { x, y + (row - 1) * style::kFileExampleH + style::kFileExampleH / 2 };
+    }
+    gp_point ask_button(int which) // 0 Save, 1 Don't save, 2 Cancel
+    {
+        const float l = (style::kWindowW - style::kAskW) / 2,
+                    t = (style::kWindowH - style::kAskH) / 2;
+        const float y = t + style::kAskH - 1 - style::kAskPad - style::kAskBtnH / 2;
+        const float save_x = l + style::kAskW - 1 - style::kAskPad - style::kAskBtnW / 2;
+        return { save_x - which * (style::kAskBtnW + style::kAskGap), y };
+    }
+    int factory_index(const char *name)
+    {
+        const auto f = factory_patches();
+        for (size_t i = 0; i < f.size(); i++)
+            if (f[i].name == name)
+                return (int)i;
+        return -1;
+    }
+    void files(const std::string &dir)
+    {
+        namespace fs = std::filesystem;
+        e().chooser = [this](Ctx c, bool save, const std::string &)
+        {
+            (save ? asked_save : asked_open)++;
+            e().file_chosen(c, save, next);
+        };
+        const Patch &patch = e().engine.patch();
+        wait(0.3);
+        CHECK(e().patch_name == "untitled" && !e().dirty && e().file_path.empty());
+
+        // an edit makes the patch unsaved; Ctrl+S on an untitled patch asks where (".rack" added)
+        const uint32_t osc = e().add_module(cx(), *find_module("osc"));
+        CHECK(e().dirty);
+        next = dir + "/one";
+        gp_simulate_keystrokes(app, "ctrl-s");
+        wait(0.15);
+        CHECK(asked_save == 1 && !e().dirty && e().file_path == dir + "/one.rack"
+            && e().patch_name == "one.rack");
+        std::string text, err;
+        CHECK(read_file(dir + "/one.rack", &text, &err) && text == save_patch(patch));
+        // a knob turned, then the Save button: the same file, without asking
+        click(control(osc, "frequency"), GP_MOUSE_LEFT, 2); // (its default: no change)
+        e().set_param(cx(), osc, (size_t)find_param(*node(osc)->desc, "frequency"), 440);
+        CHECK(e().dirty);
+        click(btn(style::kSaveX, style::kSaveW));
+        CHECK(asked_save == 1 && !e().dirty && read_file(dir + "/one.rack", &text, &err)
+            && text.find("param " + std::to_string(osc) + " frequency 440") != std::string::npos);
+
+        // the Open menu: an example, opened at once (nothing unsaved), untitled
+        click(btn(style::kOpenX, style::kOpenW));
+        CHECK(e().file_menu_open);
+        click(menu_row(1 + factory_index("sequence"), false));
+        CHECK(
+            !e().file_menu_open && e().patch_name == "Sequence (example)" && e().file_path.empty());
+        CHECK(patch.nodes().size() == 8 && patch.cables().size() == 8 && !e().dirty);
+        CHECK(e().cable_views.size() == 8 && e().panels.size() == 8);
+
+        // unsaved changes, then Open a file: the question; Cancel keeps everything
+        e().set_param(cx(), patch.nodes()[0].id, 0, patch.nodes()[0].desc->params[0].max);
+        CHECK(e().dirty);
+        next = dir + "/one.rack";
+        click(btn(style::kOpenX, style::kOpenW));
+        click(menu_row(0, false));
+        CHECK(e().ask.shown && hint_has("Unsaved changes"));
+        click(ask_button(2));
+        CHECK(!e().ask.shown && asked_open == 0 && patch.nodes().size() == 8 && e().dirty);
+        // ... and "Don't save" goes on: the chooser, then the file
+        click(btn(style::kOpenX, style::kOpenW));
+        click(menu_row(0, false));
+        click(ask_button(1));
+        CHECK(asked_open == 1 && e().patch_name == "one.rack" && patch.nodes().size() == 1
+            && !e().dirty);
+        CHECK(patch.nodes()[0].params[(size_t)find_param(*patch.nodes()[0].desc, "frequency")]
+            == 440);
+
+        // a change, then Ctrl+N: "Save" writes the file first, then a new patch
+        e().set_param(cx(), patch.nodes()[0].id,
+            (size_t)find_param(*patch.nodes()[0].desc, "frequency"), 880);
+        gp_simulate_keystrokes(app, "ctrl-n");
+        wait(0.15);
+        CHECK(e().ask.shown);
+        click(ask_button(0));
+        CHECK(patch.nodes().empty() && e().patch_name == "untitled" && !e().dirty
+            && e().file_path.empty());
+        CHECK(read_file(dir + "/one.rack", &text, &err)
+            && text.find("frequency 880") != std::string::npos);
+        // an untitled patch with changes, then New and "Save": where to, then new
+        e().add_module(cx(), *find_module("vca"));
+        next = dir + "/two.rack";
+        click(btn(style::kNewX, style::kNewW));
+        click(ask_button(0));
+        CHECK(asked_save == 2 && patch.nodes().empty() && fs::exists(dir + "/two.rack"));
+        // Save as on a cancelled dialog: nothing changes
+        e().add_module(cx(), *find_module("noise"));
+        next.reset();
+        click(btn(style::kSaveAsX, style::kSaveAsW));
+        CHECK(asked_save == 3 && e().dirty && hint_has("Cancelled"));
+
+        // what would be lost at close is kept, and offered back in the menu
+        CHECK(!e().has_recovery());
+        e().write_recovery(); // (what closing the window does: checked for real at the end)
+        CHECK(e().has_recovery());
+        e().new_patch(cx()); // (without asking)
+        click(btn(style::kOpenX, style::kOpenW));
+        click(menu_row(1, true)); // Recover
+        CHECK(patch.nodes().size() == 1 && patch.nodes()[0].desc->id == "noise" && e().dirty);
+        CHECK(!e().has_recovery() && e().patch_name == "recovered patch" && e().file_path.empty());
+
+        // a damaged file does not open, and changes nothing
+        CHECK(write_file_atomic(dir + "/bad.rack", "pulserack 1\nnode one two\n", &err));
+        next = dir + "/bad.rack";
+        e().perform(cx(), Editor::Then::OpenDialog, -1);
+        CHECK(hint_has("Not opened") && patch.nodes().size() == 1 && e().dirty);
+        // a save that fails says so, and the patch stays unsaved
+        CHECK(
+            !e().save_to(cx(), dir + "/no/such/dir/x.rack") && e().dirty && hint_has("Not saved"));
+        // Escape closes the menu
+        click(btn(style::kOpenX, style::kOpenW));
+        CHECK(e().file_menu_open);
+        gp_simulate_keystrokes(app, "escape");
+        wait(0.1);
+        CHECK(!e().file_menu_open);
+        // left with unsaved changes: closing the window keeps them (checked after it closes)
+    }
     uint32_t vca_of() { return vca_; }
 
     // With the sound card on (SDL's dummy driver in the tests): the engine runs on the audio
@@ -591,6 +749,27 @@ int main(int argc, char **argv)
 {
     if (argc == 3 && !std::strcmp(argv[1], "--check-ppm"))
         return check_ppm(argv[2]);
+    if (argc == 3 && !std::strcmp(argv[1], "--pose-ask"))
+    {
+        static Options opt;
+        opt.patch_path = argv[2];
+        opt.audio = false;
+        return gpuic::run(
+            [](App app)
+            {
+                std::string error;
+                auto        ed = open_rack(app, opt, &error);
+                app.ctx(ed).spawn(
+                    [app, ed](Co &co)
+                    {
+                        co.sleep(0.2);
+                        Editor     *e = app.get(ed);
+                        const Node &n = e->engine.patch().nodes()[0];
+                        e->set_param(app.ctx(ed), n.id, 0, n.desc->params[0].max);
+                        e->request(app.ctx(ed), Editor::Then::New);
+                    });
+            });
+    }
     if (argc == 6 && !std::strcmp(argv[1], "--pose-panel"))
     {
         static Options  opt;
@@ -681,8 +860,17 @@ int main(int argc, char **argv)
                     });
             });
     }
-    static bool sound = false;
+    static bool sound = false, files = false;
     sound = argc == 2 && !std::strcmp(argv[1], "--sound");
+    files = argc == 2 && !std::strcmp(argv[1], "--files");
+    static std::string dir;
+    if (files)
+    {
+        namespace fs = std::filesystem;
+        dir = (fs::temp_directory_path() / "pulserack_ui_files").string();
+        fs::remove_all(dir);
+        fs::create_directories(dir);
+    }
     if (sound)
         setenv("SDL_AUDIO_DRIVER", "dummy", 1); // never the real sound card in a test
     if (!std::getenv("DISPLAY") && !std::getenv("WAYLAND_DISPLAY"))
@@ -697,18 +885,30 @@ int main(int argc, char **argv)
             std::string error;
             Options     opt;
             opt.audio = sound; // otherwise the test renders the engine itself
+            if (files)
+                opt.state_dir = dir + "/state";
             auto ed = open_rack(app, opt, &error);
             CHECK((bool)ed);
             app.ctx(ed).spawn(
                 [app, ed](Co &co)
                 {
-                    if (sound)
+                    if (files)
+                        Driver { co, app, ed }.files(dir);
+                    else if (sound)
                         Driver { co, app, ed }.sound();
                     else
                         Driver { co, app, ed }.run();
                     app.quit();
                 });
         });
+    if (files) // the window closed with unsaved changes: they were kept
+    {
+        std::string text, err;
+        CHECK(read_file(recovery_path(dir + "/state"), &text, &err));
+        CHECK(text.find("noise") != std::string::npos
+            && text.find("# Kept when PulseRack closed") == 0);
+        std::filesystem::remove_all(dir);
+    }
     std::printf("%d checks, %d failed\n", checks, failures);
     return failures ? 1 : 0;
 }

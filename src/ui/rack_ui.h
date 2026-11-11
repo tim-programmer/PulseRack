@@ -11,6 +11,7 @@
 #include <gpuic/gpuic.hpp>
 
 #include <array>
+#include <functional>
 #include <map>
 #include <memory>
 #include <optional>
@@ -28,12 +29,14 @@ struct HintLine;
 struct CableView;
 struct DragView;
 struct PointerChip;
+struct Overlay;
 
 // The model of the window: the engine, the patch's name, the hint line's text, and the handles of
 // the views that show them. An entity, so handlers anywhere reach it through a handle.
 struct Editor
 {
     Engine engine { 48000 }; // made again at the audio device's rate when it starts
+    ~Editor();               // keeps an unsaved patch (see write_recovery)
     // The sound card, declared after the engine so it stops before the engine goes (and the Editor
     // is an entity, so both go before gpuic's SDL_Quit). Null until audio is first started.
     std::unique_ptr<audio::AudioOut> audio;
@@ -55,6 +58,9 @@ struct Editor
     std::map<std::string, uint8_t> held;
 
     std::string patch_name = "untitled";
+    std::string file_path;     // where Save writes; empty: untitled (Save asks)
+    bool        dirty = false; // changed since it was opened or saved
+    std::string state_dir;     // where an unsaved patch is kept at close; empty: nowhere
     std::string
         status; // what the last action did; the hint line shows it when the pointer is over nothing
     // What the pointer is over: a node's control (item >= 0), its title bar (kHoverTitle) or a jack
@@ -103,6 +109,31 @@ struct Editor
         bool              fits = false;
     } mdrag;
     gpuic::Entity<PointerChip> chip; // the module's name following the pointer
+
+    // ---- files (milestone 5)
+    gpuic::Entity<Overlay>
+         overlay; // the Open menu and the unsaved-changes question, over the window
+    bool file_menu_open = false;
+    enum class Then : uint8_t // what to do once unsaved changes are dealt with
+    {
+        Nothing,
+        New,
+        OpenDialog,
+        Factory,
+        Recover
+    };
+    struct Ask
+    {
+        bool shown = false;
+        Then then = Then::Nothing;
+        int  factory = -1;
+    } ask;
+    Then after_save = Then::Nothing; // a Save asked for by that question, then this
+    int  after_save_factory = -1;
+    // Asks the user for a file: `save` for a place to save to. The answer comes back through
+    // file_chosen (now or later, on this thread). The window uses SDL's native dialogs; the tests
+    // put their own here.
+    std::function<void(gpuic::Ctx, bool save, const std::string &suggested)> chooser;
 
     // ---- a panel moved on the rack: it follows the pointer freely (its model position is the free
     // one meanwhile, so its cables follow too); the outline shows the snapped place it would land
@@ -165,8 +196,29 @@ struct Editor
     Pt          to_rack(gpuic::Ctx cx, gp_point window); // window pixels -> rack pixels
     std::string port_name(PortRef r) const;              // "Oscillator OUT"
 
-    // Replaces the patch with a file's; false and `error` set if it does not load.
-    bool load_file(gpuic::Ctx cx, const std::string &path, std::string *error);
+    // ---- files. Each of New, Open, a factory patch and Recover asks first if there are unsaved
+    // changes (the `ask` question); perform() does it without asking.
+    void request(gpuic::Ctx cx, Then then, int factory = -1);
+    void answer(gpuic::Ctx cx, int choice); // the question: 0 save, 1 do not save, 2 cancel
+    void perform(gpuic::Ctx cx, Then then, int factory);
+    void new_patch(gpuic::Ctx cx);
+    void save(gpuic::Ctx cx);    // to file_path, or asks where if untitled
+    void save_as(gpuic::Ctx cx); // asks where
+    bool save_to(gpuic::Ctx cx, const std::string &path);
+    // What the chooser answers: a path, or nothing (cancelled); `error` if the dialog failed.
+    void file_chosen(
+        gpuic::Ctx cx, bool save, std::optional<std::string> path, const std::string &error = { });
+    // Replaces the patch with a file's; false and `error` set (nothing changed) if it does not
+    // load.
+    bool open_path(gpuic::Ctx cx, const std::string &path, std::string *error);
+    bool open_text(gpuic::Ctx cx, const std::string &text, const std::string &name,
+        const std::string &path, bool dirty_after, std::string *error);
+    void touch(gpuic::Ctx cx); // something changed: the patch is unsaved
+    // The unsaved patch, kept in state_dir when the window closes (gpuic cannot ask before it
+    // does).
+    void write_recovery() const;
+    bool has_recovery() const;
+    void close_overlays(gpuic::Ctx cx);
 
     // ---- sound (milestone 4)
     bool        start_audio(gpuic::Ctx cx); // false: no device (audio_error says why)
@@ -188,6 +240,7 @@ struct Options
 {
     std::string patch_path; // empty: an empty rack
     bool audio = true;      // open the sound card at start (the tests drive the engine themselves)
+    std::string state_dir;  // where an unsaved patch is kept at close; empty: nowhere (the tests)
 };
 
 // Builds the views and opens the window. Returns the editor (tests drive it), or a null handle and

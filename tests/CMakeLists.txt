@@ -24,6 +24,9 @@ if(PULSERACK_BUILD_GUI)
     # with the sound card on, through SDL's dummy driver (no real device is needed or used)
     add_test(NAME ui_sound COMMAND ui_smoke --sound)
     set_tests_properties(ui_sound PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 60)
+    # files: New, Open, Save, the question, examples and recovery, with the test's own file chooser
+    add_test(NAME ui_files COMMAND ui_smoke --files)
+    set_tests_properties(ui_files PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 60)
 
     add_test(NAME ui_screenshot COMMAND pulserack ${CMAKE_SOURCE_DIR}/examples/sequence.rack)
     set_tests_properties(ui_screenshot PROPERTIES FIXTURES_SETUP shot TIMEOUT 30

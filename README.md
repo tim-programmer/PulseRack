@@ -8,8 +8,9 @@ The reference for the look and the workflow is Voltage Modular: a module browser
 (search, filter, an *Add* button per module), a rack of panels on the right, cables between
 jacks, and a toolbar for new/save/open and the audio device.
 
-**Status: milestones 0 to 4 are built**: the gpuic spike, the headless engine, the window, cables, and sound (SDL3 output on
-its own thread, the computer keyboard as a piano, LEDs and meters). Next: saving and loading patches (milestone 5). The name is a placeholder.
+**Status: milestones 0 to 5 are built**: the gpuic spike, the headless engine, the window, cables, sound (SDL3 output on its
+own thread, the computer keyboard as a piano, LEDs and meters), and saving and loading patches. Next: polish and the later modules
+(milestone 6). The name is a placeholder.
 
 ## Documents
 
@@ -30,7 +31,8 @@ build/src/pulserack examples/sequence.rack                                  # th
 build/src/rack-render examples/sequence.rack bass.wav 8                     # render a patch to a WAV file
 ```
 
-`examples/` has three patches (a sequenced bass line, an arpeggio, a filter sweep). PulseCoreLib and gpuic are fetched from GitHub
+`examples/` has four patches (a sequenced bass line, an arpeggio, a filter sweep, a voice for the computer keyboard); they are
+built into the program too, under *Open > Examples*. PulseCoreLib and gpuic are fetched from GitHub
 (branch `main`); to build against local checkouts, add `-DFETCHCONTENT_SOURCE_DIR_PULSECORELIB=/path/to/PulseCoreLib` and
 `-DFETCHCONTENT_SOURCE_DIR_GPUIC=/path/to/gpuic`. gpuic's own dependencies (SDL3, FreeType, HarfBuzz, FriBidi) must be installed
 (`-DPULSERACK_GPUIC_DEPENDENCIES=AUTO` lets gpuic download what is missing); `-DPULSERACK_BUILD_GUI=OFF` builds the engine alone.

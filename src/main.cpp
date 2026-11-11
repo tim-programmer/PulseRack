@@ -1,4 +1,5 @@
 // PulseRack: the application. `pulserack [--no-audio] [patch.rack]`
+#include "ui/files.h"
 #include "ui/rack_ui.h"
 
 #include <cstdio>
@@ -7,6 +8,7 @@
 int main(int argc, char **argv)
 {
     rack::ui::Options opt;
+    opt.state_dir = rack::ui::default_state_dir(); // an unsaved patch is kept there at close
     for (int i = 1; i < argc; i++)
     {
         if (!std::strcmp(argv[i], "-h") || !std::strcmp(argv[i], "--help"))

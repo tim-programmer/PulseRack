@@ -335,3 +335,49 @@ its face and carried over a neighbour (red mid-drag, the panel and its cable fol
 release leaves it; released on another panel it goes back; a knob on the face still turns and the panel stays; a move by the
 title. The earlier tests (a refused move onto a neighbour, an accepted one to the next row) pass unchanged.
 `ui_smoke --pose-panel PATCH NODE X Y` holds a panel mid-move for a screenshot.
+
+## As built (milestone 5: save and load)
+
+**What works.** The toolbar has **New**, **Open**, **Save** and **Save as** (and Ctrl+N, Ctrl+O, Ctrl+S, Ctrl+Shift+S), then the
+patch's name, marked with ` *` while it has **unsaved changes** (every edit marks it: modules added, moved or deleted, a control
+turned, a cable made or removed). **Open** is a menu: *Open a file...* (the system's file dialog, through SDL3), the **factory
+patches** (the four in `examples/`, compiled into the program, each with its description), and *Recover the unsaved patch* when
+there is one. **New**, **Open** and an example ask first when there are unsaved changes: *Save* (to its file, or where you choose
+if it has none, then goes on), *Don't save*, or *Cancel*; the question covers the window until it is answered, and Escape closes
+it or the menu. Save on an untitled patch asks where; a name without an extension gets `.rack`. An example opens **untitled**, so
+Save never overwrites it. A file is written to a temporary file and renamed, so a failed save leaves the old file as it was, and
+says why. A file that does not load changes nothing and says why; a module whose settings the library refuses puts the old patch
+back. The view forgets what it held about the old patch (selection, drags, menus, scroll, cable colours, which are given again in
+file order).
+
+**Closing the window with unsaved changes.** gpuic has no way to ask before a window closes, so the patch is **kept** instead:
+when the window closes, the editor writes it to `$XDG_STATE_HOME/pulserack/unsaved.rack` (or `~/.local/state/pulserack/`); a
+crash does not get that far (no autosave while working). The next start
+says so on the hint line, and *Open > Recover the unsaved patch* brings it back (unsaved, untitled), after which the kept copy is
+removed.
+
+**Code.** `src/ui/files.{h,cpp}` (reading, the atomic write, the state directory; no window) and the generated
+`factory_patches.cpp` (from `examples/*.rack` at configure time; a changed example reconfigures); `src/ui/dialog.cpp` (SDL's
+dialogs; SDL may answer on another thread, so the answer is passed to the main thread with `gp_post`, gpuic's one thread-safe call);
+in `rack_ui`: the `Overlay` view (the menu and the question), and the `Editor`'s `request` / `answer` / `perform`, `open_text`,
+`save_to`, `touch`, `write_recovery`. The chooser is a `std::function` on the editor, so the tests can answer it.
+
+**Tests.** `rack_tests` (4 more cases): every factory patch is the file in `examples/`, loads without a warning, compiles and has no
+overlapping panels; the atomic write round-trips, replaces, leaves nothing behind, and on failure keeps the old file; the state
+directory follows `XDG_STATE_HOME`. `ui_files` (32 checks) drives the toolbar and the menu with the test's own chooser: Ctrl+S on an
+untitled patch, the Save button, an example from the menu, the question answered Cancel, Don't save and Save (with and without a
+file), Save as cancelled, recovery through the menu, a damaged file, a failed save, Escape, and, after the window has really
+closed, the kept patch on disk. `ui_smoke --pose-ask PATCH` shows the question for a screenshot.
+
+**Decisions (mine, for your review).**
+1. **Unsaved changes are kept at close, not asked about** (gpuic cannot intercept the close; see below).
+2. **Examples open untitled**; **New** is an empty patch (no template).
+3. Cable colours are not saved (as in milestone 3); module positions are, as whole rack units.
+4. No list of recent files.
+
+**Requests for gpuic** (not sent; for a later prompt): a way to **set a window's title** (the patch name and its unsaved mark belong
+there), and a **close request** a program can answer ("save changes?"), so that keeping the patch is the fallback rather than the
+only answer.
+
+**Not done:** recent files; a choice of folder for the examples (they are in the program); autosave while working; undo (milestone 6).
+

@@ -2,12 +2,15 @@
 
 #include "engine/model/patchfile.h"
 #include "engine/model/registry.h"
+#include "ui/dialog.h"
+#include "ui/files.h"
 #include "ui/geometry.h"
 #include "ui/style.h"
 
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <filesystem>
 #include <fstream>
 #include <sstream>
 
@@ -85,23 +88,61 @@ struct HintLine
 
 struct Toolbar
 {
-    Entity<Editor> ed;
-    Element        render(Ctx cx)
+    Entity<Editor>                    ed;
+    template <class F> static Element button(const char *text, float w, F &&f)
+    {
+        return div()
+            .w(w)
+            .h(st::kToolBtnH)
+            .flex_shrink_0()
+            .rounded(4)
+            .flex_row()
+            .items_center()
+            .justify_center()
+            .cursor_pointer()
+            .bg(st::kSurfaceHi)
+            .hover_bg(st::kBorder)
+            .border(1)
+            .border_color(st::kBorder)
+            .child(label(text, 12, st::kText))
+            .on_click(std::forward<F>(f));
+    }
+    Element render(Ctx cx)
     {
         Editor      *e = ed.get(cx);
         const size_t n = e ? e->engine.patch().nodes().size() : 0;
+        const bool   dirty = e && e->dirty;
         return div()
             .w_full()
             .h(st::kToolbarH)
             .flex_row()
             .items_center()
-            .gap(14)
+            .gap(st::kToolGap)
             .px(12)
             .bg(st::kSurface)
             .border_bottom(1)
             .border_color(st::kBorder)
-            .child(label("PulseRack", 13, st::kText).font_bold())
-            .child(label(e ? e->patch_name : std::string(), 13, st::kSubtext))
+            .child(div()
+                    .w(st::kAppNameW)
+                    .flex_shrink_0()
+                    .child(label("PulseRack", 13, st::kText).font_bold()))
+            .child(button("New", st::kNewW,
+                [](Toolbar &self, Ctx cx) { self.ed.get(cx)->request(cx, Editor::Then::New); }))
+            .child(button("Open  v", st::kOpenW,
+                [](Toolbar &self, Ctx cx)
+                {
+                    Editor *e = self.ed.get(cx);
+                    e->file_menu_open = !e->file_menu_open;
+                    e->overlay.update(cx, [](Overlay &, Ctx c) { c.notify(); });
+                }))
+            .child(button(
+                "Save", st::kSaveW, [](Toolbar &self, Ctx cx) { self.ed.get(cx)->save(cx); }))
+            .child(button("Save as", st::kSaveAsW,
+                [](Toolbar &self, Ctx cx) { self.ed.get(cx)->save_as(cx); }))
+            .child(div().w(8))
+            // the name, with a mark while there are unsaved changes
+            .child(label((e ? e->patch_name : std::string()) + (dirty ? "  *" : ""), 13,
+                dirty ? st::kText : st::kSubtext))
             .child(label(std::to_string(n) + (n == 1 ? " module" : " modules"), 12, st::kDim))
             .child(div().flex_1())
             .child(label(e ? e->audio_status() : std::string(), 12, st::kDim))
@@ -1127,6 +1168,125 @@ struct PointerChip
     }
 };
 
+// Over the whole window, only while something is shown: the Open menu (a click outside closes it)
+// and the unsaved-changes question (modal: nothing under it can be reached until it is answered).
+struct Overlay
+{
+    Entity<Editor> ed;
+
+    template <class F> static Element item(std::string title, std::string about, F &&f)
+    {
+        Element it = div()
+                         .h(about.empty() ? st::kFileItemH : st::kFileExampleH)
+                         .flex_shrink_0()
+                         .overflow_hidden() // a description longer than two lines is cut, never overlaps
+                         .px(10)
+                         .justify_center()
+                         .rounded(4)
+                         .flex_col()
+                         .gap(2)
+                         .cursor_pointer()
+                         .hover_bg(st::kSurface)
+                         .child(label(std::move(title), 12, st::kText));
+        if (!about.empty())
+            it.child(label(std::move(about), 10, st::kSubtext));
+        it.on_click(std::forward<F>(f));
+        return it;
+    }
+    template <class F> static Element choice(const char *text, Color bg, Color fg, F &&f)
+    {
+        return div()
+            .w(st::kAskBtnW)
+            .h(st::kAskBtnH)
+            .rounded(4)
+            .flex_row()
+            .items_center()
+            .justify_center()
+            .cursor_pointer()
+            .bg(bg)
+            .hover_bg(st::kBorder)
+            .child(label(text, 12, fg))
+            .on_click(std::forward<F>(f));
+    }
+
+    Element render(Ctx cx)
+    {
+        Editor *e = ed.get(cx);
+        if (!e || (!e->file_menu_open && !e->ask.shown))
+            return div();
+        Element layer = div().absolute().left(0).top(0).w(8000).h(8000);
+        if (e->ask.shown)
+        {
+            layer.bg(with_alpha(rgb(0x000000), 0.45f));
+            layer.on_mouse_down([](Overlay &) { });
+            layer.child(div()
+                    .absolute()
+                    .left((st::kWindowW - st::kAskW) / 2)
+                    .top((st::kWindowH - st::kAskH) / 2)
+                    .w(st::kAskW)
+                    .h(st::kAskH)
+                    .p(st::kAskPad)
+                    .gap(10)
+                    .flex_col()
+                    .rounded(6)
+                    .bg(st::kSurfaceHi)
+                    .border(1)
+                    .border_color(st::kBorder)
+                    .shadow(0, 10, 30, with_alpha(rgb(0x000000), 0.6f))
+                    .child(label("Unsaved changes to " + e->patch_name, 14, st::kText).font_bold())
+                    .child(label("Save them first?", 12, st::kSubtext))
+                    .child(div().flex_1())
+                    .child(div()
+                            .flex_row()
+                            .gap(st::kAskGap)
+                            .justify_end()
+                            .child(choice("Cancel", st::kSurface, st::kText,
+                                [](Overlay &self, Ctx c) { self.ed.get(c)->answer(c, 2); }))
+                            .child(choice("Don't save", st::kSurface, st::kDanger,
+                                [](Overlay &self, Ctx c) { self.ed.get(c)->answer(c, 1); }))
+                            .child(choice("Save", st::kAccent, st::kBase,
+                                [](Overlay &self, Ctx c) { self.ed.get(c)->answer(c, 0); }))));
+            return layer;
+        }
+        // the Open menu, under its button
+        layer.on_mouse_down([](Overlay &self, Ctx c) { self.ed.get(c)->close_overlays(c); });
+        Element menu = div()
+                           .absolute()
+                           .left(st::kOpenX)
+                           .top(st::kToolbarH - 2)
+                           .w(st::kFileMenuW)
+                           .p(4)
+                           .flex_col()
+                           .rounded(5)
+                           .bg(st::kSurfaceHi)
+                           .border(1)
+                           .border_color(st::kBorder)
+                           .shadow(0, 8, 20, with_alpha(rgb(0x000000), 0.5f));
+        menu.on_mouse_down([](Overlay &) { }); // a press in the menu does not close it
+        menu.child(item("Open a file...      Ctrl+O", "",
+            [](Overlay &self, Ctx c) { self.ed.get(c)->request(c, Editor::Then::OpenDialog); }));
+        if (e->has_recovery())
+            menu.child(item("Recover the unsaved patch",
+                "kept when PulseRack last closed with unsaved changes",
+                [](Overlay &self, Ctx c) { self.ed.get(c)->request(c, Editor::Then::Recover); }));
+        menu.child(div()
+                .h(st::kFileHeaderH)
+                .flex_shrink_0()
+                .px(10)
+                .flex_row()
+                .items_end()
+                .pb(3)
+                .child(label("Examples", 10, st::kDim)));
+        const auto f = factory_patches();
+        for (size_t i = 0; i < f.size(); i++)
+            menu.child(
+                item(std::string(f[i].title), std::string(f[i].about), [i](Overlay &self, Ctx c)
+                    { self.ed.get(c)->request(c, Editor::Then::Factory, (int)i); }));
+        layer.child(std::move(menu));
+        return layer;
+    }
+};
+
 struct Root
 {
     Entity<Editor> ed;
@@ -1147,6 +1307,7 @@ struct Root
                     .child(div().flex_1().h_full().min_w(0).child(e->rack.cached())))
             .child(e->hint_line.cached())
             .child(div().absolute().left(0).top(0).child(e->chip.cached()))
+            .child(div().absolute().left(0).top(0).child(e->overlay.cached()))
             // the computer keyboard as a piano: keys reach the root when nothing focused takes them
             .on_key_down(
                 [](Root &self, Ctx cx, const gp_key_event &ev)
@@ -1457,6 +1618,8 @@ void Editor::panel_drag_end(Ctx cx, gp_point window)
     {
         n->x = (float)d.x;
         n->y = (float)d.y;
+        if (n->x != d.x0 || n->y != d.y0)
+            touch(cx);
         say(cx, "Moved " + name + ".");
     }
     else
@@ -1594,6 +1757,7 @@ Err Editor::connect(Ctx cx, PortRef a, PortRef b)
         return Err::BadPatch;
     }
     sync_cables(cx);
+    touch(cx);
     say(cx, "Connected " + port_name(from) + "  ->  " + port_name(to) + ".");
     return Err::Ok;
 }
@@ -1607,6 +1771,7 @@ void Editor::disconnect(Ctx cx, PortRef to)
     engine.patch().disconnect(to);
     engine.compile();
     sync_cables(cx);
+    touch(cx);
     say(cx, "Removed the cable " + what + ".");
 }
 
@@ -1814,6 +1979,7 @@ uint32_t Editor::add_module_at(Ctx cx, const ModuleDesc &d, int x, int y)
     }
     sync_panels(cx);
     refresh_rack(cx);
+    touch(cx);
     say(cx,
         "Added " + std::string(d.name)
             + ".      Drag its title to move it; right-click the title to delete it.");
@@ -1852,6 +2018,7 @@ void Editor::remove_module(Ctx cx, uint32_t node)
     engine.compile();
     sync_panels(cx);
     sync_cables(cx); // its cables went with it
+    touch(cx);
     say(cx, "Deleted " + name + ".");
 }
 
@@ -1868,6 +2035,7 @@ bool Editor::move_module(Ctx cx, uint32_t node, int x, int y)
     n->y = (float)y;
     refresh_rack(cx);
     refresh_cables_of(cx, node); // its cables follow
+    touch(cx);
     return true;
 }
 
@@ -1877,6 +2045,7 @@ void Editor::set_param(Ctx cx, uint32_t node, size_t param, float value)
     if (!n || param >= n->params.size())
         return;
     engine.set_param(node, param, value);
+    touch(cx);
     auto it = panels.find(node);
     if (it != panels.end())
         it->second.update(cx, [](PanelView &, Ctx c) { c.notify(); });
@@ -1886,34 +2055,256 @@ void Editor::set_param(Ctx cx, uint32_t node, size_t param, float value)
         hover_text = describe_item(node, hover_item);
 }
 
-bool Editor::load_file(Ctx cx, const std::string &path, std::string *error)
+// ---- files
+
+Editor::~Editor()
 {
-    std::ifstream f(path);
-    if (!f)
+    try
     {
-        *error = path + ": cannot be read";
+        write_recovery();
+    }
+    catch (...)
+    { // a destructor must not throw; the patch is lost, as it would have been without this
+    }
+}
+
+void Editor::touch(Ctx cx)
+{
+    if (dirty)
+        return;
+    dirty = true;
+    toolbar.update(cx, [](Toolbar &, Ctx c) { c.notify(); });
+}
+
+void Editor::close_overlays(Ctx cx)
+{
+    if (!file_menu_open && !ask.shown)
+        return;
+    file_menu_open = false;
+    ask = Ask { };
+    overlay.update(cx, [](Overlay &, Ctx c) { c.notify(); });
+}
+
+void Editor::request(Ctx cx, Then then, int factory)
+{
+    file_menu_open = false;
+    if (dirty && !engine.patch().nodes().empty())
+    {
+        ask = Ask { true, then, factory };
+        overlay.update(cx, [](Overlay &, Ctx c) { c.notify(); });
+        say(cx, "Unsaved changes to " + patch_name + ": save them first?");
+        return;
+    }
+    overlay.update(cx, [](Overlay &, Ctx c) { c.notify(); });
+    perform(cx, then, factory);
+}
+
+void Editor::answer(Ctx cx, int choice)
+{
+    const Ask a = ask;
+    ask = Ask { };
+    overlay.update(cx, [](Overlay &, Ctx c) { c.notify(); });
+    if (choice == 2)
+    {
+        say(cx, "Cancelled.");
+        return;
+    }
+    if (choice == 1)
+    {
+        perform(cx, a.then, a.factory);
+        return;
+    }
+    // save first, then go on: at once if the patch has a file, after the chooser if not
+    if (!file_path.empty())
+    {
+        if (save_to(cx, file_path))
+            perform(cx, a.then, a.factory);
+        return;
+    }
+    after_save = a.then;
+    after_save_factory = a.factory;
+    save_as(cx);
+}
+
+void Editor::perform(Ctx cx, Then then, int factory)
+{
+    std::string err;
+    switch (then)
+    {
+    case Then::Nothing:
+        break;
+    case Then::New:
+        new_patch(cx);
+        break;
+    case Then::OpenDialog:
+        if (chooser)
+            chooser(cx, false, file_path);
+        break;
+    case Then::Factory:
+    {
+        const auto f = factory_patches();
+        if (factory >= 0 && (size_t)factory < f.size())
+        {
+            const FactoryPatch &fp = f[(size_t)factory];
+            // an example opens untitled: Save asks where, so the example itself is never
+            // overwritten
+            if (!open_text(cx, std::string(fp.text), std::string(fp.title) + " (example)", "",
+                    false, &err))
+                say(cx, err);
+        }
+        break;
+    }
+    case Then::Recover:
+    {
+        std::string       text;
+        const std::string path = recovery_path(state_dir);
+        if (!read_file(path, &text, &err)
+            || !open_text(cx, text, "recovered patch", "", true, &err))
+        {
+            say(cx, err);
+            break;
+        }
+        std::error_code ec;
+        std::filesystem::remove(path, ec); // it is in the window now, unsaved
+        say(cx,
+            "Recovered the patch that was not saved when PulseRack last closed. Save it to keep "
+            "it.");
+        break;
+    }
+    }
+}
+
+namespace
+{
+    std::string with_extension(std::string path)
+    {
+        const std::string name = file_name(path);
+        if (name.find('.') == std::string::npos)
+            path += ".rack";
+        return path;
+    }
+} // namespace
+
+void Editor::new_patch(Ctx cx)
+{
+    std::string err;
+    if (open_text(cx, "pulserack 1\n", "untitled", "", false, &err))
+        say(cx, "A new, empty patch.");
+}
+
+void Editor::save(Ctx cx)
+{
+    file_menu_open = false;
+    if (file_path.empty())
+        save_as(cx);
+    else
+        save_to(cx, file_path);
+}
+
+void Editor::save_as(Ctx cx)
+{
+    file_menu_open = false;
+    if (chooser)
+        chooser(cx, true, file_path.empty() ? std::string("untitled.rack") : file_path);
+}
+
+bool Editor::save_to(Ctx cx, const std::string &path)
+{
+    std::string err;
+    if (!write_file_atomic(path, save_patch(engine.patch()), &err))
+    {
+        say(cx, "Not saved: " + err + ".");
+        after_save = Then::Nothing;
         return false;
     }
-    std::stringstream ss;
-    ss << f.rdbuf();
-    const LoadResult r = load_patch(ss.str(), engine.patch());
+    file_path = path;
+    patch_name = file_name(path);
+    dirty = false;
+    toolbar.update(cx, [](Toolbar &, Ctx c) { c.notify(); });
+    say(cx, "Saved " + patch_name + ".");
+    return true;
+}
+
+void Editor::file_chosen(
+    Ctx cx, bool saving, std::optional<std::string> path, const std::string &error)
+{
+    const Then then = after_save;
+    const int  factory = after_save_factory;
+    after_save = Then::Nothing;
+    if (!path)
+    {
+        say(cx, error.empty() ? "Cancelled." : "No file dialog: " + error + ".");
+        return;
+    }
+    std::string err;
+    if (saving)
+    {
+        if (save_to(cx, with_extension(*path)))
+            perform(cx, then, factory);
+    }
+    else if (!open_path(cx, *path, &err))
+        say(cx, "Not opened: " + err + ".");
+}
+
+bool Editor::open_path(Ctx cx, const std::string &path, std::string *error)
+{
+    std::string text;
+    if (!read_file(path, &text, error))
+        return false;
+    return open_text(cx, text, file_name(path), path, false, error);
+}
+
+bool Editor::open_text(Ctx cx, const std::string &text, const std::string &name,
+    const std::string &path, bool dirty_after, std::string *error)
+{
+    Patch            loaded;
+    const LoadResult r = load_patch(text, loaded);
     if (!r.ok)
     {
-        *error = path + ": " + r.error;
+        *error = name + ": " + r.error;
         return false;
     }
-    const int moved = resolve_overlaps(engine.patch());
+    const int moved = resolve_overlaps(loaded);
+    // swap it in; if the library refuses a module's settings, the old patch comes back
+    Patch old = std::move(engine.patch());
+    engine.patch() = std::move(loaded);
     if (engine.compile() != Err::Ok)
     {
         *error
-            = path + ": module " + std::to_string(engine.failed_node()) + " refused its settings";
+            = name + ": module " + std::to_string(engine.failed_node()) + " refused its settings";
+        engine.patch() = std::move(old);
+        engine.compile();
         return false;
     }
-    const size_t slash = path.find_last_of('/');
-    patch_name = slash == std::string::npos ? path : path.substr(slash + 1);
+    // what the view held about the old patch goes
+    drag = CableDrag { };
+    mdrag = ModuleDrag { };
+    pdrag = PanelDrag { };
+    selected.reset();
+    hover_node = 0;
+    hover_text.clear();
+    leds.clear();
+    cable_colour.clear(); // colours in file order again
+    next_colour = 0;
+    file_menu_open = false;
+    ask = Ask { };
+    if (RackView *rv = rack.get(cx))
+    {
+        rv->menu_node = 0;
+        rv->menu_cable.reset();
+        rv->scroll.to(cx, 0, 0);
+    }
+    file_path = path;
+    patch_name = name;
+    dirty = dirty_after;
     sync_panels(cx);
     sync_cables(cx);
-    std::string msg = "Opened " + patch_name + ".";
+    for (auto &[id, view] : panels) // a kept id may now be another module
+        view.update(cx, [](PanelView &, Ctx c) { c.notify(); });
+    overlay.update(cx, [](Overlay &, Ctx c) { c.notify(); });
+    drag_view.update(cx, [](DragView &, Ctx c) { c.notify(); });
+    toolbar.update(cx, [](Toolbar &, Ctx c) { c.notify(); });
+    std::string msg = "Opened " + name + ".";
     if (moved)
         msg += "  " + std::to_string(moved) + " panel(s) moved apart: they overlapped.";
     if (!r.warnings.empty())
@@ -1921,6 +2312,27 @@ bool Editor::load_file(Ctx cx, const std::string &path, std::string *error)
             + " warning(s), the first: " + r.warnings[0];
     say(cx, msg);
     return true;
+}
+
+void Editor::write_recovery() const
+{
+    const std::string path = recovery_path(state_dir);
+    if (path.empty() || !dirty || engine.patch().nodes().empty())
+        return;
+    std::error_code ec;
+    std::filesystem::create_directories(state_dir, ec);
+    std::string err;
+    (void)write_file_atomic(path,
+        "# Kept when PulseRack closed with unsaved changes to " + patch_name + ".\n"
+            + save_patch(engine.patch()),
+        &err);
+}
+
+bool Editor::has_recovery() const
+{
+    const std::string path = recovery_path(state_dir);
+    std::error_code   ec;
+    return !path.empty() && std::filesystem::exists(path, ec);
 }
 
 // =====================================================================================================
@@ -1943,6 +2355,23 @@ Entity<Editor> open_rack(App app, const Options &opt, std::string *error)
     app.get(e->drag_view)->ed = ed;
     e->chip = app.new_view<PointerChip>();
     app.get(e->chip)->ed = ed;
+    e->overlay = app.new_view<Overlay>();
+    app.get(e->overlay)->ed = ed;
+    e->state_dir = opt.state_dir;
+    e->chooser = [ed](Ctx cx, bool save, const std::string &suggested)
+    { native_file_dialog(cx, ed, save, suggested); };
+    // the file commands' keys, and Escape for the menu and the question
+    app.bind_key("ctrl-n", "file::new");
+    app.bind_key("ctrl-o", "file::open");
+    app.bind_key("ctrl-s", "file::save");
+    app.bind_key("ctrl-shift-s", "file::save_as");
+    app.bind_key("escape", "ui::escape");
+    app.on_global_action("file::new", [ed](Ctx cx) { ed.get(cx)->request(cx, Editor::Then::New); });
+    app.on_global_action(
+        "file::open", [ed](Ctx cx) { ed.get(cx)->request(cx, Editor::Then::OpenDialog); });
+    app.on_global_action("file::save", [ed](Ctx cx) { ed.get(cx)->save(cx); });
+    app.on_global_action("file::save_as", [ed](Ctx cx) { ed.get(cx)->save_as(cx); });
+    app.on_global_action("ui::escape", [ed](Ctx cx) { ed.get(cx)->close_overlays(cx); });
     // Delete or Backspace removes the selected cable, unless something focused (the search box)
     // takes the key
     app.bind_key("delete", "rack::delete_cable");
@@ -1969,8 +2398,11 @@ Entity<Editor> open_rack(App app, const Options &opt, std::string *error)
                     .on_change([](Browser &, Ctx cx) { cx.notify(); })
                     .build();
 
-    if (!opt.patch_path.empty() && !e->load_file(app.ctx(), opt.patch_path, error))
+    if (!opt.patch_path.empty() && !e->open_path(app.ctx(), opt.patch_path, error))
         return { };
+    if (e->has_recovery())
+        e->status
+            = "A patch with unsaved changes was kept when PulseRack last closed: Open > Recover.";
 
     auto root = app.new_view<Root>();
     app.get(root)->ed = ed;

@@ -16,6 +16,20 @@ using gpuic::rgb;
 // ---- chrome
 inline constexpr float kWindowW = 1400, kWindowH = 900;
 inline constexpr float kToolbarH = 36;
+// the toolbar's file buttons, at fixed places (the Open menu hangs under its button)
+inline constexpr float kAppNameW = 76; // "PulseRack"
+inline constexpr float kToolGap = 6;
+inline constexpr float kNewW = 50, kOpenW = 64, kSaveW = 50, kSaveAsW = 68;
+inline constexpr float kToolBtnH = 24;
+inline constexpr float kNewX = 12 + kAppNameW + kToolGap;
+inline constexpr float kOpenX = kNewX + kNewW + kToolGap;
+inline constexpr float kSaveX = kOpenX + kOpenW + kToolGap;
+inline constexpr float kSaveAsX = kSaveX + kSaveW + kToolGap;
+inline constexpr float kFileMenuW = 520, kFileItemH = 30, kFileExampleH = 58, kFileHeaderH = 24;
+// the unsaved-changes question: a box in the middle of the window, its buttons along the bottom
+// right
+inline constexpr float kAskW = 400, kAskH = 150, kAskPad = 18, kAskBtnW = 92, kAskBtnH = 28,
+                       kAskGap = 8;
 inline constexpr float kHintH = 26;
 inline constexpr float kBrowserW = 280;
 inline constexpr float kBrowserPad = 10;

@@ -13,8 +13,37 @@ target_link_libraries(rack_engine PUBLIC pcl::pcl PRIVATE rack_warnings)
 add_executable(rack-render render_main.cpp)
 target_link_libraries(rack-render PRIVATE rack_engine rack_warnings)
 
-# The rack's geometry (panel layout, knob mapping, placement): no window, so the headless tests use it.
-add_library(rack_geometry STATIC ui/geometry.cpp)
+# The rack's geometry (panel layout, knob mapping, placement) and patch files: no window, so the headless tests use them.
+# The factory patches: examples/*.rack compiled in as text, so the application needs no path to them.
+# (A changed or new .rack file reconfigures, so the copy is never stale.)
+file(GLOB RACK_FACTORY_PATCHES CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/examples/*.rack)
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${RACK_FACTORY_PATCHES})
+set(rack_factory_body "")
+foreach(f ${RACK_FACTORY_PATCHES})
+    get_filename_component(name ${f} NAME_WE)
+    file(READ ${f} text)
+    string(REPLACE "_" " " title "${name}")
+    string(SUBSTRING "${title}" 0 1 first)
+    string(TOUPPER "${first}" first)
+    string(SUBSTRING "${title}" 1 -1 rest)
+    string(REGEX MATCH "^# ([^\n]*)" _ "${text}")
+    set(about "${CMAKE_MATCH_1}")
+    string(APPEND rack_factory_body "    { \"${name}\", \"${first}${rest}\", R\"rack(${about})rack\", R\"rack(${text})rack\" },\n")
+endforeach()
+file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/factory_patches.cpp.in
+"// Generated from examples/*.rack by src/CMakeLists.txt: do not edit.
+#include \"ui/files.h\"
+
+namespace rack::ui
+{
+static const FactoryPatch kFactory[] = {
+${rack_factory_body}};
+std::span<const FactoryPatch> factory_patches() { return kFactory; }
+} // namespace rack::ui
+")
+configure_file(${CMAKE_CURRENT_BINARY_DIR}/factory_patches.cpp.in ${CMAKE_CURRENT_BINARY_DIR}/factory_patches.cpp COPYONLY)
+
+add_library(rack_geometry STATIC ui/geometry.cpp ui/files.cpp ${CMAKE_CURRENT_BINARY_DIR}/factory_patches.cpp)
 target_link_libraries(rack_geometry PUBLIC rack_engine PRIVATE rack_warnings)
 
 # The application: the window, cables and sound.
@@ -23,7 +52,7 @@ if(PULSERACK_BUILD_GUI)
     add_library(rack_audio STATIC audio/audio_out.cpp)
     target_include_directories(rack_audio PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
     target_link_libraries(rack_audio PUBLIC rack_engine SDL3::SDL3 PRIVATE rack_warnings)
-    add_library(rack_ui STATIC ui/rack_ui.cpp)
+    add_library(rack_ui STATIC ui/rack_ui.cpp ui/dialog.cpp)
     target_link_libraries(rack_ui PUBLIC rack_geometry rack_audio gpuic::gpuic gpuic::cpp PRIVATE rack_warnings)
     add_executable(pulserack main.cpp)
     target_link_libraries(pulserack PRIVATE rack_ui rack_warnings)
