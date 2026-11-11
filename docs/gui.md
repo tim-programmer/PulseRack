@@ -424,3 +424,15 @@ with every step a rest, a gate once step 1 is on); the tie pad; a double-click; 
 the wheel and Shift+wheel joining that step; undo of the lot; the second page's first column is step 17. `ui_sound` checks that the
 playhead moves through several steps while the clock runs.
 
+## As built (milestone 6, part 3: the on-screen keyboard)
+
+**What works.** The Keyboard panel's face is a **two-octave piano on end** (low notes at the bottom, the Cs named), starting at
+the note the computer keyboard's A key plays (C4, moved by Z and X), so the two show the same range. Pressing a key plays **that**
+Keyboard module; dragging across the keys **glides** (each note released before the next sounds); releasing ends the note. Keys
+light while held, by the mouse or by the computer keyboard. Notes are not undoable (they are not edits).
+
+**Code and tests.** Geometry: `keyboard_strip()` (the keys, black over white, and which key is under a point), with a test (every
+key found at its middle, higher notes higher up, the corners). `ui_steps` adds: a held key heard through Note to Gate and the output,
+silence after the release; a glide from C4 to E4 ending on E4 and leaving nothing held; the computer keyboard playing the same
+module.
+

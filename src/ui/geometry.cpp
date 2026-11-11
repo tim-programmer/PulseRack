@@ -329,6 +329,47 @@ float note_fill(int note)
         (float)(note - kGridNoteLow) / (float)(kGridNoteHigh - kGridNoteLow), 0.f, 1.f);
 }
 
+KeyStrip keyboard_strip(const PanelLayout &L)
+{
+    KeyStrip k;
+    k.area = { kPad + 4, L.controls_bottom + 6, L.width - 2 * kPad - 8,
+        L.jacks_top - 8 - (L.controls_bottom + 6) };
+    return k;
+}
+
+namespace
+{
+    // the white key (0..6) a semitone of an octave is, or the white key below it for a black one
+    constexpr int  kWhiteOf[12] = { 0, 0, 1, 1, 2, 3, 3, 4, 4, 5, 5, 6 };
+    constexpr bool kBlack[12]
+        = { false, true, false, true, false, false, true, false, true, false, true, false };
+} // namespace
+
+bool KeyStrip::is_black(int s) const { return s >= 0 && kBlack[s % 12]; }
+
+Rect KeyStrip::key(int s) const
+{
+    const float h = area.h / kStripWhiteKeys;
+    const int   white = (s / 12) * 7 + kWhiteOf[s % 12]; // 0 is the lowest, at the bottom
+    if (!is_black(s))
+        return { area.x, area.bottom() - (float)(white + 1) * h, area.w, h };
+    const float bh = h * 0.6f; // a black key straddles the line above its white key
+    return { area.x, area.bottom() - (float)(white + 1) * h - bh / 2, area.w * 0.58f, bh };
+}
+
+int KeyStrip::key_at(float x, float y) const
+{
+    if (!area.contains(x, y))
+        return -1;
+    for (int s = 0; s < kStripSemitones; s++) // the black keys lie over the white ones
+        if (is_black(s) && key(s).contains(x, y))
+            return s;
+    for (int s = 0; s < kStripSemitones; s++)
+        if (!is_black(s) && key(s).contains(x, y))
+            return s;
+    return -1;
+}
+
 Pt jack_center(const Node &n, size_t port)
 {
     const Rect &j = panel_layout(*n.desc).jacks[port];

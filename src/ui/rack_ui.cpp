@@ -34,6 +34,13 @@ namespace
         return c;
     }
 
+    std::string note_name(int n)
+    {
+        static const char *names[12]
+            = { "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B" };
+        return std::string(names[n % 12]) + std::to_string(n / 12 - 1);
+    }
+
     std::string lower(std::string s)
     {
         for (char &ch : s)
@@ -336,9 +343,12 @@ struct PanelView
     int                step_active = -1; // the step whose note bar is being dragged
     int                step_note0 = 0;
     float              step_y0 = 0;
-    int                playhead_ = -1; // copied from the editor at render
-    Editor::Led        led_;           // copied from the editor at render: what the LED shows
-    std::array<int, 2> meter_ { };     // and the output level (Audio Output panels)
+    int                playhead_ = -1;  // copied from the editor at render
+    int                strip_note = -1; // the piano key held down with the mouse (a note), or -1
+    int                strip_base = 60; // copied at render: the note of the piano's lowest key
+    std::vector<int>   strip_held_;     // copied at render: the notes the computer keys hold
+    Editor::Led        led_;            // copied from the editor at render: what the LED shows
+    std::array<int, 2> meter_ { };      // and the output level (Audio Output panels)
 
     // a press on the title or the face: the menu (right button) or a move
     void press_face(Ctx cx, const gp_mouse_event &ev)
@@ -442,6 +452,96 @@ struct PanelView
                     : led_.level ? with_alpha(st::kLedOn, kAlpha[led_.level])
                                  : st::kLedOff);
     }
+    // ---- the Keyboard panel's piano
+    int strip_note_at(const gp_mouse_event &ev, const PanelLayout &L) const
+    { // ev.local is relative to the strip's area
+        const KeyStrip k = keyboard_strip(L);
+        const int      s = k.key_at(k.area.x + ev.local.x, k.area.y + ev.local.y);
+        return s < 0 ? -1 : strip_base + s;
+    }
+    void strip_press(Ctx cx, const gp_mouse_event &ev)
+    {
+        const Node *n = find(cx);
+        if (!n || ev.button != GP_MOUSE_LEFT)
+            return;
+        strip_note = strip_note_at(ev, panel_layout(*n->desc));
+        if (strip_note >= 0)
+            ed.get(cx)->strip_key(cx, node, strip_note, true);
+        cx.notify();
+    }
+    void strip_drag(Ctx cx, const gp_mouse_event &ev)
+    { // gliding across the keys: each note is released before the next sounds
+        const Node *n = find(cx);
+        if (!n)
+            return;
+        const int now = strip_note_at(ev, panel_layout(*n->desc));
+        if (now == strip_note)
+            return;
+        if (strip_note >= 0)
+            ed.get(cx)->strip_key(cx, node, strip_note, false);
+        strip_note = now;
+        if (strip_note >= 0)
+            ed.get(cx)->strip_key(cx, node, strip_note, true);
+        cx.notify();
+    }
+    void strip_release(Ctx cx)
+    {
+        if (strip_note >= 0)
+            ed.get(cx)->strip_key(cx, node, strip_note, false);
+        strip_note = -1;
+        cx.notify();
+    }
+    Element strip_element(const PanelLayout &L, Color accent) const
+    {
+        const KeyStrip k = keyboard_strip(L);
+        Element        w = div().absolute().left(0).top(0);
+        auto           lit = [&](int note)
+        {
+            return note == strip_note
+                || std::find(strip_held_.begin(), strip_held_.end(), note) != strip_held_.end();
+        };
+        for (int pass = 0; pass < 2; pass++) // the white keys, then the black ones over them
+            for (int s = 0; s < kStripSemitones; s++)
+            {
+                if (k.is_black(s) != (pass == 1))
+                    continue;
+                const Rect r = k.key(s);
+                const int  note = strip_base + s;
+                Element    key = div()
+                                     .absolute()
+                                     .left(r.x)
+                                     .top(r.y)
+                                     .w(r.w)
+                                     .h(r.h)
+                                     .rounded(2)
+                                     .border(1)
+                                     .border_color(st::kKnobEdge)
+                                     .bg(lit(note)  ? accent
+                                             : pass ? rgb(0x202228)
+                                                    : rgb(0xe6e7ee));
+                if (s % 12 == 0) // the Cs are named
+                    key.flex_row().items_center().justify_end().pr(4).child(
+                        label(note_name(note), 8, rgb(0x55596a)));
+                w.child(std::move(key));
+            }
+        // one element over the keys takes the press, the glide and the release
+        w.child(div()
+                .absolute()
+                .left(k.area.x)
+                .top(k.area.y)
+                .w(k.area.w)
+                .h(k.area.h)
+                .cursor_pointer()
+                .on_mouse_down([](PanelView &self, Ctx cx, const gp_mouse_event &ev)
+                    { self.strip_press(cx, ev); })
+                .on_drag([](PanelView &self, Ctx cx, const gp_mouse_event &ev)
+                    { self.strip_drag(cx, ev); })
+                .on_mouse_up([](PanelView &self, Ctx cx) { self.strip_release(cx); })
+                .on_hover([](PanelView &self, Ctx cx, bool inside)
+                    { self.ed.get(cx)->hover(cx, self.node, Editor::kHoverStrip, inside); }));
+        return w;
+    }
+
     // ---- the step grid
     StepData step_of(Ctx cx, size_t i) const
     {
@@ -868,6 +968,10 @@ struct PanelView
             meter_ = e->meter;
             auto ph = e->playhead.find(node);
             playhead_ = ph == e->playhead.end() || !e->audio_running() ? -1 : ph->second;
+            strip_base = 60 + 12 * e->octave;
+            strip_held_.clear();
+            for (const auto &[k, v] : e->held)
+                strip_held_.push_back(v);
         }
 
         Element p = div()
@@ -918,6 +1022,8 @@ struct PanelView
         p.child(activity_led());
         if (d.has_steps)
             p.child(step_grid_element(*n, L, cc.chip));
+        if (d.id == "keyboard")
+            p.child(strip_element(L, cc.chip));
         if (d.id == "out") // the output level, between its controls and its jacks
             p.child(meters(L));
 
@@ -1556,6 +1662,10 @@ std::string Editor::describe_item(uint32_t node, int item) const
             + (p.is_output ? "      drag from it to an input to connect"
                            : "      drag from it to an output to connect");
     }
+    if (item == kHoverStrip)
+        return std::string(d.name)
+            + "  ·  press the keys to play, drag across them to glide; the computer keys "
+              "A W S E D F ... play every Keyboard too (Z and X: octave)";
     const int step = kHoverStep - item;
     if (d.has_steps && step >= 0 && (size_t)step < n->steps.size())
     {
@@ -1702,16 +1812,6 @@ void Editor::tick(Ctx cx)
     }
 }
 
-namespace
-{
-    std::string note_name(int n)
-    {
-        static const char *names[12]
-            = { "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B" };
-        return std::string(names[n % 12]) + std::to_string(n / 12 - 1);
-    }
-} // namespace
-
 bool Editor::piano(Ctx cx, const gp_key_event &ev, bool down)
 {
     if (ev.mods & (GP_MOD_CTRL | GP_MOD_ALT | GP_MOD_SUPER))
@@ -1729,6 +1829,7 @@ bool Editor::piano(Ctx cx, const gp_key_event &ev, bool down)
         if (down && !ev.repeat)
         {
             octave = std::clamp(octave + (k == "x" ? 1 : -1), -4, 4);
+            refresh_keyboards(cx); // their range follows
             say(cx, "Computer keyboard: the A key plays " + note_name(60 + 12 * octave) + ".");
         }
         return true;
@@ -1759,6 +1860,7 @@ bool Editor::piano(Ctx cx, const gp_key_event &ev, bool down)
     for (const Node &n : engine.patch().nodes())
         if (n.desc->id == "keyboard" && engine.key(n.id, down, note, 100) == Err::Ok)
             sent++;
+    refresh_keyboards(cx); // the pianos light the key
     if (down)
         say(cx,
             sent ? "Note " + note_name(note) + (audio_running() ? "" : "  (audio is off)")
@@ -2287,6 +2389,23 @@ void Editor::set_param(Ctx cx, uint32_t node, size_t param, float value)
     if (hover_node == node
         && hover_item == (int)param) // the control under the pointer: its new value
         hover_text = describe_item(node, hover_item);
+}
+
+void Editor::strip_key(Ctx cx, uint32_t node, int note, bool down)
+{
+    if (note < 0 || note > 127)
+        return;
+    engine.key(node, down, (uint8_t)note, 100);
+    if (down)
+        say(cx, "Note " + note_name(note) + (audio_running() ? "" : "  (audio is off)"));
+}
+
+void Editor::refresh_keyboards(Ctx cx)
+{
+    for (const Node &n : engine.patch().nodes())
+        if (n.desc->id == "keyboard")
+            if (auto it = panels.find(n.id); it != panels.end())
+                it->second.update(cx, [](PanelView &, Ctx c) { c.notify(); });
 }
 
 void Editor::set_step(Ctx cx, uint32_t node, size_t index, const StepData &step)

@@ -69,7 +69,8 @@ struct Editor
     // empty.
     // A cable is hovered as (its input's node, kHoverCable - its input's port).
     // A sequencer's step is hovered as (its node, kHoverStep - the step's index).
-    static constexpr int kHoverTitle = -1, kHoverPort = -2, kHoverCable = -1000, kHoverStep = -2000;
+    static constexpr int kHoverTitle = -1, kHoverPort = -2, kHoverCable = -1000, kHoverStep = -2000,
+                         kHoverStrip = -3000; // the Keyboard panel's piano
     uint32_t             hover_node = 0;
     int                  hover_item = 0;
     std::string          hover_text;
@@ -163,6 +164,9 @@ struct Editor
     // A sequencer's step (milestone 6): the model, the running module, one undo step per step
     // edited.
     void set_step(gpuic::Ctx cx, uint32_t node, size_t index, const StepData &step);
+    // A key of a Keyboard panel's piano, pressed or released (that module only).
+    void strip_key(gpuic::Ctx cx, uint32_t node, int note, bool down);
+    void refresh_keyboards(gpuic::Ctx cx);     // their pianos show the notes the computer keys hold
     void say(gpuic::Ctx cx, std::string text); // the status the hint line falls back to
     // The pointer entered (inside) or left a node's control, title or jack (items as above).
     void hover(gpuic::Ctx cx, uint32_t node, int item, bool inside);

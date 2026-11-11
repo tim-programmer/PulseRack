@@ -117,6 +117,19 @@ StepGrid step_grid(const PanelLayout &L); // for a module with steps
 // The fraction of the note bar a note fills (0 .. 1 over C1 .. C8, clamped).
 float note_fill(int note);
 
+// ---- the Keyboard panel's piano (milestone 6): two octaves on end, the low notes at the bottom,
+// the black keys over the left part of the white ones. In the panel's pixels; a key is a semitone
+// 0..23.
+inline constexpr int kStripSemitones = 24, kStripWhiteKeys = 14;
+struct KeyStrip
+{
+    Rect area;
+    Rect key(int semitone) const; // a key's rectangle
+    bool is_black(int semitone) const;
+    int  key_at(float x, float y) const; // the key under a point (a black key first), or -1
+};
+KeyStrip keyboard_strip(const PanelLayout &L); // for the Keyboard module
+
 // ---- cables (milestone 3). Everything in rack pixels, from the model alone, so a cable follows a
 // panel while it is dragged without waiting for a layout pass.
 struct Pt

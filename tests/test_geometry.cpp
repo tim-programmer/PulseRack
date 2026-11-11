@@ -284,3 +284,32 @@ TEST(geometry_the_step_grid_fits_between_the_controls_and_the_jacks)
     CHECK(note_fill(24) == 0 && note_fill(108) == 1 && note_fill(0) == 0 && note_fill(127) == 1);
     CHECK(std::fabs(note_fill(66) - 0.5f) < 1e-6f);
 }
+
+TEST(geometry_the_keyboard_strip)
+{
+    const PanelLayout &L = panel_layout(*find_module("keyboard"));
+    const KeyStrip     k = keyboard_strip(L);
+    CHECK(k.area.y >= L.controls_bottom && k.area.bottom() <= L.jacks_top);
+    CHECK(k.area.x >= kPad && k.area.right() <= L.width - kPad);
+    CHECK(k.area.h / kStripWhiteKeys >= 16); // a key big enough to press
+    int whites = 0;
+    for (int s = 0; s < kStripSemitones; s++)
+    {
+        const Rect r = k.key(s);
+        CHECK(r.x >= k.area.x && r.right() <= k.area.right() + 0.01f);
+        CHECK(r.y >= k.area.y - 0.01f && r.bottom() <= k.area.bottom() + 0.01f);
+        // the middle of every key finds it (a white key's middle, right of the black keys)
+        const float x = k.is_black(s) ? r.x + r.w / 2 : r.right() - 3;
+        CHECK(k.key_at(x, r.y + r.h / 2) == s);
+        whites += !k.is_black(s);
+        if (s > 0) // higher notes are higher up
+            CHECK(r.y + r.h / 2 < k.key(s - 1).y + k.key(s - 1).h / 2);
+    }
+    CHECK(whites == kStripWhiteKeys);
+    CHECK(k.is_black(1) && k.is_black(13) && !k.is_black(4) && !k.is_black(5));
+    CHECK(k.key_at(k.area.x - 1, k.area.y + 5) == -1
+        && k.key_at(k.area.x + 2, k.area.bottom() + 1) == -1);
+    // the bottom left corner is the lowest C; the top right the highest B
+    CHECK(k.key_at(k.area.x + 1, k.area.bottom() - 1) == 0);
+    CHECK(k.key_at(k.area.right() - 1, k.area.y + 1) == 23);
+}

@@ -392,6 +392,47 @@ struct Driver
         click(undo_btn());
         CHECK(step(seq, 16).velocity == 0);
         CHECK(e().engine.apply_failures() == 0);
+
+        // ---- the Keyboard panel's piano: a held key is a held note (heard through Note to Gate)
+        const uint32_t kb = e().add_module(cx(), *find_module("keyboard"));
+        const uint32_t g2 = e().add_module(cx(), *find_module("note_to_gate"));
+        CHECK(e().connect(cx(), P(kb, "notes"), P(g2, "notes")) == Err::Ok);
+        CHECK(e().connect(cx(), P(g2, "gate"), P(out, "r")) == Err::Ok);
+        e().disconnect(cx(), P(out, "l")); // (the sequencer's gate: only the keyboard is heard now)
+        wait();
+        CHECK(peak() == 0);
+        const KeyStrip k = keyboard_strip(panel_layout(*node(kb)->desc));
+        auto           key_at = [&](int s)
+        {
+            const Rect r = k.key(s);
+            return in_panel(kb,
+                k.is_black(s) ? r : Rect { r.right() - 8, r.y, 6, r.h }); // right of the black keys
+        };
+        move(key_at(0)); // over C4 first, as a hand would be (the hover comes before the press)
+        wait();
+        press(key_at(0));
+        CHECK(hint_has("Note C4") && peak() > 0.5f);
+        release(key_at(0));
+        CHECK(peak() == 0);
+        // a glide from C4 up to E4: every key on the way, each released before the next
+        press(key_at(0));
+        for (int s = 1; s <= 4; s++)
+        {
+            move(key_at(s));
+            wait(0.03);
+        }
+        wait();
+        CHECK(hint_has("Note E4") && peak() > 0.5f);
+        release(key_at(4));
+        CHECK(peak() == 0); // nothing left held
+        // the computer keyboard's notes light the piano too (and play this module)
+        click({ o().x + 900, o().y + 700 });
+        gp_simulate_key(app, "a", true);
+        wait(0.1);
+        CHECK(e().held.count("a") && peak() > 0.5f);
+        gp_simulate_key(app, "a", false);
+        wait(0.1);
+        CHECK(peak() == 0);
     }
 
     // ---- undo: the toolbar's buttons and Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y
