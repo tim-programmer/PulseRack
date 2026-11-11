@@ -295,15 +295,17 @@ recommended answer for each and chose the rest. Each is cheap to change.
     (milestone 4). *(Milestone 2 removed `PanelPos`: the panel layout is computed from the descriptor; see `gui.md`,
     *As built*.)*
 
-**Findings in PulseCoreLib** (the first one has since been fixed there, uncommitted; the second is a note):
+**Findings in PulseCoreLib** (the first one has since been fixed there; the second is a note):
 * **Signed overflow in the Q31 oscillator with a negative `sync_in`.** `pcl_osc_process` takes `sync_in` as "master wrap fractions" in
   [0, 1]; `osc_sync` passes the sample to `osc_comp(delta)`, which computes `INT32_MAX - x`, and a negative `x` overflows (UBSan:
   `pcl_osc.c:105`, `signed integer overflow: 2147483647 - -5422501`). The Q15 and float paths are not undefined behaviour but
-  also get a meaningless fraction. It surfaced because the rack lets any signal (noise, an LFO) be patched into SYNC. The rack now clamps
-  the input to [0, 1] in its oscillator wrapper (and has a regression test). **Fixed in the library afterwards**: `pcl_osc_process` now treats a
-  negative or NaN `sync_in` sample as no event and a float above 1 as 1; its regression test (`test_sync_in_outside_the_contract`) shows the
-  bug was wider than first found: the float build also had undefined behaviour (a negative float converted to unsigned, `pcl_osc.c:245`)
-  and the Q15 build produced different audio. The rack's own clamp can go once that fix is on the library's `main`.
+  also get a meaningless fraction. It surfaced because the rack lets any signal (noise, an LFO) be patched into SYNC. The rack first
+  clamped the input to [0, 1] in its oscillator wrapper (with a regression test). **Fixed in the library afterwards** (PulseCoreLib
+  `fd4f2ec`): `pcl_osc_process` now treats a negative or NaN `sync_in` sample as no event and a float above 1 as 1; its regression test
+  (`test_sync_in_outside_the_contract`) shows the bug was wider than first found: the float build also had undefined behaviour (a
+  negative float converted to unsigned, `pcl_osc.c:245`) and the Q15 build produced different audio. With the fix on the library's
+  `main`, the rack's clamp was removed (2026-11-12); its test `oscillator_sync_input_accepts_any_signal` now checks the library's
+  handling.
 * A float constant such as `0.99f` or `0.49f` is outside a library range written as `0.99` or `0.49` once it is converted to Q30, so
   the same range check passes in float builds and fails in fixed-point builds (the cause of decision 7).
 

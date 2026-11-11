@@ -290,8 +290,9 @@ TEST(event_capacity_is_enough_in_the_worst_case)
 }
 
 // The oscillator's SYNC input takes wrap fractions in [0, 1]; the rack lets any signal be patched
-// in. Bipolar noise there must be harmless (in the Q31 build the library overflows a signed integer
-// on a negative fraction: UBSan found it).
+// in. Bipolar noise there must be harmless. It once overflowed a signed integer in the library's Q31
+// build (UBSan found it); the rack clamped the input until PulseCoreLib fixed it (fd4f2ec), and now
+// passes it straight through, so this test checks the library's handling.
 TEST(oscillator_sync_input_accepts_any_signal)
 {
     for (const char *src : { "noise", "lfo" })

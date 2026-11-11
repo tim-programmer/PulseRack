@@ -62,21 +62,9 @@ namespace
         size_t              pos = 0, i = 0;
 
         // SYNC carries "wrap fractions" in [0, 1] (0 = no event), which only another oscillator's
-        // SYNC OUT makes. The rack lets any signal be patched in, and a negative sample is outside
-        // the library's contract: in the Q31 build it overflows a signed integer (found by UBSan
-        // with noise patched into SYNC). So the input is clamped to [0, 1] on its way in; a
-        // sync-out signal passes unchanged.
-        // PulseCoreLib has since made the same clamp itself; this one can go when that
-        // fix is on its main.
-        pcl_sample_t sync_clean[PCL_MAX_BLOCK];
-        if (sync_in)
-        {
-            for (size_t k = 0; k < io.frames; k++)
-                sync_clean[k] = sync_in[k] < 0
-                    ? (pcl_sample_t)0
-                    : (sync_in[k] > kFullScale ? kFullScale : sync_in[k]);
-            sync_in = sync_clean;
-        }
+        // SYNC OUT makes, but the rack lets any signal be patched in. The library handles that
+        // itself (PulseCoreLib fd4f2ec): a negative or NaN sample is no event, a float above 1
+        // counts as 1. So SYNC goes to it unchanged.
 
         while (pos < io.frames)
         {
