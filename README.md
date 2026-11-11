@@ -20,6 +20,7 @@ are built. No sound yet** (milestone 4): the engine runs, but nothing plays it. 
 | [docs/gui.md](docs/gui.md) | the window: browser, panels, knobs, cable drawing, what gpuic gives us and what is unverified |
 | [docs/gpuic-prompt.md](docs/gpuic-prompt.md) | a self-contained prompt for a gpuic session: a stroked-curve element for cables (done) |
 | [docs/gpuic-prompt-2.md](docs/gpuic-prompt-2.md) | the second one: drag modifiers, drags that keep their element, a hover callback (done) |
+| [docs/gpuic-prompt-3.md](docs/gpuic-prompt-3.md) | the third: an empty cached view stopped UBSan runs (done) |
 
 ## Try it
 

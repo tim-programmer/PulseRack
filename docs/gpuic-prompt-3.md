@@ -1,6 +1,8 @@
 # Prompt for a gpuic session: an empty cached view and UBSan
 
-Status: **draft for your review**, not sent. Written to be pasted into a Claude Code session whose working directory is the gpuic
+Status: **done**: fixed in gpuic `7d2cb8d` (with the same pattern in a list splice and the font cache, `emptyview_test`, and a
+`GPUIC_SANITIZE` option) and checked: PulseRack's tests all pass under clang ASan/UBSan with `halt_on_error=1`. The original text
+follows, as sent. Written to be pasted into a Claude Code session whose working directory is the gpuic
 repository, against gpuic `da89032`. It is self-contained: that session has not seen PulseRack. Everything inside the fence is the
 prompt; the notes after it are for you.
 

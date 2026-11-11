@@ -237,15 +237,16 @@ input, a release on a VCA's input and the engine's output going from silence to 
 lifting a plug onto another input (same colour) and onto empty rack (removed); a drag from an empty input to an output; selecting by
 a click, Backspace going to the focused search box and not to the cable, Delete removing it; the menu's *Delete cable*; a cable
 following its panel; and the module's cables going when it is deleted. `ui_smoke --pose PATCH NODE PORT X Y` holds a cable in
-mid-drag for a screenshot. Float, Q15 and Q31 pass; clang with ASan and UBSan passes the engine tests, and the window tests pass
-all their checks under ASan but **stop on one UBSan report inside gpuic** (below).
+mid-drag for a screenshot. Float, Q15 and Q31 pass. Under clang with ASan and UBSan the window tests first stopped on one report
+inside gpuic (below); since gpuic `7d2cb8d` all of them pass with `halt_on_error=1`.
 
-**gpuic finding (a request for gpuic):** `src/paint.c:983` copies a cached view's paint chunk with
+**gpuic finding** (sent as `gpuic-prompt-3.md`; **fixed in gpuic `7d2cb8d`** and checked): `src/paint.c:983` copies a cached view's paint chunk with
 `memcpy(vv->chunk, pc->scene->items + start, count * sizeof *vv->chunk)`; when the view painted nothing (`count == 0`) and has never
 had a chunk, `vv->chunk` is NULL, and `memcpy(NULL, ..., 0)` is undefined behaviour in C (UBSan: "null pointer passed as argument 1,
 which is declared to never be null"). Harmless in practice; it stops a UBSan run. Cables brought the first cached views that can be
-empty (`DragView` when no cable is being dragged, a `CableView` while its cable is lifted). The fix is a guard, `if (count)`, before
-that `memcpy`. Not changed here: gpuic is its own repository.
+empty (`DragView` when no cable is being dragged, a `CableView` while its cable is lifted). gpuic now skips the copy when there is
+nothing to copy, fixed the same pattern in two more places it found (a list splice and the font cache), added `emptyview_test`, and
+has a `GPUIC_SANITIZE` option that makes any UBSan report fail its tests.
 
 **Decisions taken while building (mine, for your review).**
 1. **A lifted cable stays in the patch until it is released**, so the sound goes on during the drag; where it may go is judged on a
