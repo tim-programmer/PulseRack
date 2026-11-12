@@ -547,3 +547,27 @@ gpuic passes on) until it is up. *Possible request for gpuic:* capture for every
 release events; the task and the probe could then go. Checked in `ui_smoke` with the test's own probe (right button on empty
 rack, middle button on a title and on empty rack; the panel neither moves nor is selected). **Not checked:** the real mouse,
 which the simulated one cannot stand in for here: the probe asks SDL itself.
+
+## As built: menus close on the next press, and the Device box (asked for after MIDI learn)
+
+**A menu closes on the next press.** A right-click menu on the rack (a panel's, a cable's, a control's, a MIDI module's
+device menu) used to close only on a press on empty rack: a press on a panel went to the panel, and the menu stayed. Now,
+while one is open, `RackView` puts one transparent sheet the size of the rack over the panels and cables and under the menu.
+A press on it with any button closes the menu and is **used up**: the knob, jack or panel under the pointer does not get it,
+and the rack is not dragged or deselected. The sheet passes the wheel on (`cx.propagate()`), because an element with no
+wheel handler would swallow it; so the wheel zooms the rack while a menu is open, also over a control that would otherwise
+take it. **Escape** closes these menus too (`Editor::close_overlays`). At most one is open (`RackView::close_menus`).
+
+**The Device box** of the MIDI In and MIDI CC panels (under the controls, where the output panel has its meters) and its menu
+are described in *midi.md*, *As built (step 8 and the modules' Device)*. A menu item's handler keeps no string (gpuic): it
+looks the name up again by its place in the list, as the toolbar's device menu does.
+
+**Blurry text when zoomed in: found, not fixed.** gpuic draws a glyph at `font size x window scale` and lets the transform
+it is painted under stretch it, so under the rack's `gp_scale` the text is soft above 100 %. It is gpuic's to fix:
+*gpuic-prompt-4.md* asks for it, and for drags with the middle and right buttons (so that the 120 Hz pointer polling of the
+rack's panning can go).
+
+**Checked** (`ui_smoke`): with a panel's menu open, a drag on a knob of that panel closes the menu and does not turn the knob;
+a right press on the knob only closes it (no control menu); a press on a jack starts no cable; the middle button does not
+start dragging the rack; afterwards the knob turns again; a control's menu closes on a press on a title without starting a
+learn; Escape; the wheel over empty rack zooms with the menu still open. **Not checked by hand.**

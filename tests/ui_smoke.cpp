@@ -1226,6 +1226,166 @@ struct Driver
             CHECK(param(osc, "frequency") == freq.def);
         }
 
+        // ---- with a menu open, the next press anywhere only closes it (it is used up)
+        {
+            const gp_point title = control_center(cx(), ed, osc, -1);
+            const gp_point knob = control(osc, "frequency");
+            const float    f0 = param(osc, "frequency");
+            const size_t   count = e().engine.patch().nodes().size();
+            CHECK(!rack_menu_open(cx(), ed));
+            click(title, GP_MOUSE_RIGHT); // the panel's menu
+            wait(0.1);
+            CHECK(rack_menu_open(cx(), ed));
+            // a drag on a knob of that panel: the menu is gone and the knob has not moved
+            drag(knob, { knob.x, knob.y - 40 });
+            wait(0.1);
+            CHECK(!rack_menu_open(cx(), ed) && param(osc, "frequency") == f0);
+            // a double click would have put it at its default; a right press would open its menu
+            click(title, GP_MOUSE_RIGHT);
+            wait(0.1);
+            click(knob, GP_MOUSE_RIGHT);
+            wait(0.1);
+            CHECK(!rack_menu_open(cx(), ed));
+            // a press on another panel does not move or select it; on a jack it starts no cable
+            click(title, GP_MOUSE_RIGHT);
+            wait(0.1);
+            press(port_center(cx(), ed, osc, 0));
+            CHECK(!e().drag.active && !rack_menu_open(cx(), ed));
+            release(port_center(cx(), ed, osc, 0));
+            // the middle button too, and it does not start dragging the rack about
+            click(title, GP_MOUSE_RIGHT);
+            wait(0.1);
+            press(knob, GP_MOUSE_MIDDLE);
+            CHECK(!rack_menu_open(cx(), ed) && !e().pan_active);
+            release(knob, GP_MOUSE_MIDDLE);
+            // then the knob works again
+            click(title, GP_MOUSE_RIGHT);
+            wait(0.1);
+            click(knob);
+            wait(0.1);
+            drag(knob, { knob.x, knob.y - 40 });
+            wait(0.1);
+            CHECK(param(osc, "frequency") != f0);
+            click(knob, GP_MOUSE_LEFT, 2); // back to the default
+            wait(0.1);
+            // a control's menu closes the same way, and Escape closes any of them
+            click(knob, GP_MOUSE_RIGHT);
+            wait(0.1);
+            CHECK(control_menu_item(cx(), ed, 0).x >= 0);
+            click(title);
+            wait(0.1);
+            CHECK(!rack_menu_open(cx(), ed) && e().learn_control == -1);
+            click(title, GP_MOUSE_RIGHT);
+            wait(0.1);
+            CHECK(rack_menu_open(cx(), ed));
+            e().close_overlays(cx());
+            wait(0.1);
+            CHECK(!rack_menu_open(cx(), ed));
+            // none of that deleted or changed anything
+            CHECK(e().engine.patch().nodes().size() == count);
+            // the wheel still zooms the rack while a menu is open, and the menu stays
+            click(title, GP_MOUSE_RIGHT);
+            wait(0.1);
+            const gp_point empty { rack_origin().x + 900, rack_origin().y + 600 };
+            move(empty);
+            gp_simulate_wheel(app, empty.x, empty.y, 0, 1, 0);
+            wait(0.1);
+            CHECK(e().zoom != 1 && rack_menu_open(cx(), ed));
+            e().close_overlays(cx());
+            e().set_zoom(cx(), 1, empty);
+            wait(0.1);
+            CHECK(e().zoom == 1 && !rack_menu_open(cx(), ed));
+            e().select_node(cx(), 0);
+        }
+
+        // ---- a MIDI module's own input: the Device box under its controls and its menu. (No
+        // device here: the test says what is plugged in and which slot a name has.)
+        {
+            const uint32_t mi = e().add_module(cx(), *find_module("midi_in"));
+            wait(0.1);
+            CHECK(mi != 0);
+            e().midi_available = { "KeyStep", "Pads #2" };
+            e().settings.midi_inputs = { "KeyStep" };
+            e().engine.midi_slot_of = [](const std::string &n)
+            {
+                return n == "KeyStep" ? 0 : n == "Pads #2" ? 1 : -1;
+            };
+            const gp_point box = device_box_center(cx(), ed, mi);
+            const gp_point away { rack_origin().x + 900, rack_origin().y + 600 }; // empty rack
+            CHECK(box.x >= 0 && device_box_center(cx(), ed, osc).x < 0); // MIDI modules only
+            CHECK(device_menu_item(cx(), ed, 0).x < 0);
+            move(box);
+            wait(0.1);
+            CHECK(e().hint().find("listens to every MIDI input") != std::string::npos);
+            const size_t undo0 = e().undo_stack.size();
+            click(box);
+            wait(0.1);
+            // "Any device", then the two inputs
+            CHECK(device_menu_item(cx(), ed, 0).x >= 0 && device_menu_item(cx(), ed, 2).x >= 0
+                && device_menu_item(cx(), ed, 3).x < 0);
+            click(device_menu_item(cx(), ed, 2)); // an input that is not switched on
+            wait(0.1);
+            CHECK(device_menu_item(cx(), ed, 0).x < 0); // closed
+            CHECK(node(mi)->device == "Pads #2" && e().dirty);
+            CHECK(e().undo_stack.size() == undo0 + 1);
+            // choosing it switched it on
+            CHECK((e().settings.midi_inputs == std::vector<std::string> { "KeyStep", "Pads #2" }));
+            CHECK(e().hint().find("listens to Pads #2") != std::string::npos);
+            CHECK(save_patch(e().engine.patch()).find("device " + std::to_string(mi) + " Pads #2\n")
+                != std::string::npos);
+            // the same one again changes nothing
+            click(box);
+            wait(0.1);
+            click(device_menu_item(cx(), ed, 2));
+            wait(0.1);
+            CHECK(node(mi)->device == "Pads #2" && e().undo_stack.size() == undo0 + 1);
+            // a press on the box of an open menu, or on empty rack, only closes it
+            click(box);
+            wait(0.1);
+            CHECK(device_menu_item(cx(), ed, 0).x >= 0);
+            click(box);
+            wait(0.1);
+            CHECK(device_menu_item(cx(), ed, 0).x < 0);
+            click(box);
+            wait(0.1);
+            click(away);
+            wait(0.1);
+            CHECK(device_menu_item(cx(), ed, 0).x < 0 && node(mi)->device == "Pads #2");
+            // undo and redo
+            e().undo(cx());
+            wait(0.1);
+            CHECK(node(mi)->device.empty());
+            e().redo(cx());
+            wait(0.1);
+            CHECK(node(mi)->device == "Pads #2");
+            // unplugged and switched off: the module's own device is still in its menu
+            e().midi_available = { "KeyStep" };
+            e().settings.midi_inputs = { "KeyStep" };
+            CHECK((e().device_menu_names(mi) == std::vector<std::string> { "KeyStep", "Pads #2" }));
+            click(box);
+            wait(0.1);
+            click(device_menu_item(cx(), ed, 1)); // KeyStep: already on
+            wait(0.1);
+            CHECK(node(mi)->device == "KeyStep");
+            CHECK((e().settings.midi_inputs == std::vector<std::string> { "KeyStep" }));
+            CHECK((e().device_menu_names(mi) == std::vector<std::string> { "KeyStep" }));
+            click(box);
+            wait(0.1);
+            click(device_menu_item(cx(), ed, 0)); // Any device
+            wait(0.1);
+            CHECK(node(mi)->device.empty());
+            CHECK(save_patch(e().engine.patch()).find("device ") == std::string::npos);
+            // a module that takes no MIDI has no device
+            e().set_midi_device(cx(), osc, "KeyStep");
+            CHECK(node(osc)->device.empty());
+            e().remove_module(cx(), mi);
+            wait(0.1);
+            e().midi_available.clear();
+            e().settings.midi_inputs.clear();
+            e().engine.midi_slot_of = nullptr;
+            e().select_node(cx(), 0);
+        }
+
         // ---- a selector: the right half is the next choice, the left half the previous
         gp_point sel = control(osc, "waveform");
         CHECK(param(osc, "waveform") == 2); // saw

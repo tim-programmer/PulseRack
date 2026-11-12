@@ -7,6 +7,7 @@
 
 #include <cstdint>
 #include <span>
+#include <string>
 #include <vector>
 
 namespace rack
@@ -29,6 +30,8 @@ struct Node
     float                 x = 0, y = 0; // rack position (milestone 2)
     std::vector<float>    params;       // natural units, one per descriptor parameter
     std::vector<StepData> steps;        // the sequencer's steps (empty for other types)
+    // A MIDI In or MIDI CC module: the input it listens to, by name (empty: every input).
+    std::string device;
 };
 // A scripted key press for a Keyboard node, so a patch can play itself (rack-render, tests, factory
 // patches).
@@ -69,10 +72,10 @@ public:
         float y = 0);                  // false if the id is taken (file loading)
     Err      remove_node(uint32_t id); // and its cables
     Err      connect(PortRef from, PortRef to);
-    Err      can_connect(PortRef from, PortRef to) const; // what connect would say, changing nothing
-    Err      disconnect(PortRef to); // an input has at most one cable
-    Err      set_param(uint32_t node, size_t param, float value, float *stored = nullptr);
-    Err      set_step(uint32_t node, size_t index, const StepData &step);
+    Err can_connect(PortRef from, PortRef to) const; // what connect would say, changing nothing
+    Err disconnect(PortRef to);                      // an input has at most one cable
+    Err set_param(uint32_t node, size_t param, float value, float *stored = nullptr);
+    Err set_step(uint32_t node, size_t index, const StepData &step);
 
     const Node            *find(uint32_t id) const;
     Node                  *find(uint32_t id);

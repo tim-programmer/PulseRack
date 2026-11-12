@@ -307,3 +307,45 @@ TEST(patchfile_a_step_with_no_options_is_the_default_step)
     CHECK(load("pulserack 1\nnode 1 seq\nstep 1 0 note=50 vel=90\nstep 1 0\nstep 1 5\n", p).ok);
     CHECK(p.find(1)->steps[0] == StepData { } && p.find(1)->steps[5] == StepData { });
 }
+
+TEST(patchfile_a_midi_module_keeps_its_device_by_name)
+{
+    Patch          p;
+    const uint32_t in = p.add_node(*find_module("midi_in"), 0, 0),
+                   cc = p.add_node(*find_module("midi_cc"), 10, 0),
+                   any = p.add_node(*find_module("midi_in"), 20, 0);
+    p.find(in)->device = "Arturia KeyStep 37 MIDI 1";
+    p.find(cc)->device = "nanoKONTROL2 #2"; // a '#' is part of the name, not a comment
+    const std::string text = save_patch(p);
+    CHECK(text.find("device " + std::to_string(in) + " Arturia KeyStep 37 MIDI 1\n")
+        != std::string::npos);
+    CHECK(text.find("device " + std::to_string(cc) + " nanoKONTROL2 #2\n") != std::string::npos);
+    CHECK(text.find("device " + std::to_string(any)) == std::string::npos); // every input: no line
+    Patch back;
+    CHECK(load(text, back).ok && load(text, back).warnings.empty());
+    CHECK(back.find(in)->device == "Arturia KeyStep 37 MIDI 1");
+    CHECK(back.find(cc)->device == "nanoKONTROL2 #2");
+    CHECK(back.find(any)->device.empty());
+    CHECK(save_patch(back) == text);
+
+    // spaces inside the name are kept, those around it (and a CR) are not
+    CHECK(load("pulserack 1\nnode 1 midi_in\ndevice 1   My  Device # 3 \t\r\n", back).ok);
+    CHECK(back.find(1)->device == "My  Device # 3");
+    // a comment elsewhere still is one, and "device" inside one is not a record
+    CHECK(load("pulserack 1\nnode 1 midi_in # device 1 x\n# device 1 y\n", back).ok);
+    CHECK(back.find(1)->device.empty());
+    // refused: no name, no such module, a bad id; skipped with a warning: a module with no MIDI
+    CHECK(!load("pulserack 1\nnode 1 midi_in\ndevice 1\n", back).ok);
+    CHECK(!load("pulserack 1\nnode 1 midi_in\ndevice 1   \n", back).ok);
+    CHECK(!load("pulserack 1\nnode 1 midi_in\ndevice 2 x\n", back).ok);
+    CHECK(!load("pulserack 1\nnode 1 midi_in\ndevice one x\n", back).ok);
+    CHECK(!load("pulserack 1\nnode 1 midi_in\ndevice\n", back).ok);
+    const LoadResult r = load("pulserack 1\nnode 1 osc\ndevice 1 KeyStep\n", back);
+    CHECK(r.ok && r.warnings.size() == 1 && back.find(1)->device.empty());
+    // of a module of an unknown type: skipped with it
+    const LoadResult u = load("pulserack 1\nnode 1 from_the_future\ndevice 1 KeyStep\n", back);
+    CHECK(u.ok && u.warnings.size() == 1);
+    // a name that would break the file is not written
+    p.find(in)->device = "a\nnode 9 osc";
+    CHECK(save_patch(p).find("node 9") == std::string::npos);
+}

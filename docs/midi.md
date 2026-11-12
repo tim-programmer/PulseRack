@@ -1,6 +1,6 @@
 # MIDI controllers
 
-Status: **design, steps 1 to 7 built** (see the *As built* sections at the end). Where the two differ, *As built* and the code win.
+Status: **design, steps 1 to 8 built** (see the *As built* sections at the end). Where the two differ, *As built* and the code win.
 
 MIDI keyboards and controllers playing and turning the rack: notes into a patch, controls (knobs, faders, the mod wheel)
 into signals, and a controller's knobs turning the knobs on screen.
@@ -21,7 +21,7 @@ into signals, and a controller's knobs turning the knobs on screen.
 
 ```
  device A thread ──push──► ring A ─┐
- device B thread ──push──► ring B ─┼──► audio thread: render() drains every ring at the start of a block
+ device B thread ──push──► ring B ─┼──► audio thread: render() drains every ring at the start of a device call
  ...                               ┘
  UI thread: opens and closes devices, follows hot-plugging, MIDI learn (through Engine::set_param)
 ```
@@ -43,8 +43,8 @@ into signals, and a controller's knobs turning the knobs on screen.
 libremidi delivers whole messages (it handles running status). `decode()` turns one into a small, trivially copyable
 `midi::Msg`: note on and off (a note on with velocity 0 is a note off), control change, pitch bend (14 bits, 8192 is the
 middle), channel and key pressure, program change, and the realtime clock, start, continue and stop. Everything else
-(SysEx, MIDI time code, song position) is dropped. Each message keeps libremidi's monotonic timestamp in nanoseconds for
-step 8.
+(SysEx, MIDI time code, song position) is dropped. Each message keeps the time it arrived, in nanoseconds on the
+steady clock, for step 8.
 
 PulseCoreLib's `pcl_event_t` only has note on/off, clock, start and stop. Controls, pitch bend and pressure therefore
 become **signals** in PulseRack, never library events.
@@ -108,11 +108,12 @@ and the knob moves on screen; a sweep becomes one undo step, like a knob drag. M
 3. **`src/midi/`:** the device manager (list ports, hot-plug, open by name, one ring per device), `decode()`, the
    unique names, tests that need no hardware, and a `pulserack-midi` monitor. *(built)*
 4. **Engine:** drain every device ring in `render()`; lost messages per device in the telemetry. *(built)*
-5. **MIDI In module**, and the inputs in the device menu (a switch per device). *(built, without the Device parameter)*
-6. **MIDI CC module.** *(built, without the Device parameter)*
+5. **MIDI In module**, and the inputs in the device menu (a switch per device). *(built; the Device came with step 8)*
+6. **MIDI CC module.** *(built; the Device came with step 8)*
 7. **Global MIDI learn.** *(built)*
 8. **Sample-accurate timing:** a message's timestamp turned into a sample offset with one block of fixed latency
-   (a constant delay instead of up to a block of jitter: 5.3 ms at 256 frames and 48 kHz).
+   (a constant delay instead of up to a block of jitter: 5.3 ms at 256 frames and 48 kHz). *(built, with the modules'
+   Device)*
 9. **Later:** per-patch mappings, MIDI clock in to the clock and sequencer (`PCL_EVT_CLOCK/START/STOP`), MIDI out.
 
 ## As built (steps 1 to 3)
@@ -181,9 +182,8 @@ device slot, and sends the note offs itself when a device is lost, on CC 120 or 
 changes. Up to 128 notes per block; more are dropped and counted (the panel's LED turns red, as for the sequencer).
 
 **Differences from the design:**
-* **No Device parameter yet.** A MIDI In module hears every input that is switched on. Choosing one device per module needs
-  a parameter that holds a name, which the patch file and the descriptors do not have (parameters are numbers); a slot
-  number would not do, because slots are given per run. Several devices at once work; telling them apart in a patch does not.
+* ~~No Device parameter yet.~~ Built with step 8 (*As built (step 8 and the modules' Device)*): it is not a parameter (those
+  are numbers) but a name kept beside them in the patch.
 * No sustain pedal (CC 64), and the realtime messages (clock, start, stop) are ignored until step 9.
 
 **The application.** `Editor` owns the inboxes and (with `PULSERACK_MIDI`) a `midi::Inputs`, both declared before the sound
@@ -212,8 +212,8 @@ latency feels (a block of the device plus up to a block of jitter).
 
 **MIDI CC** (`midi_cc`, 6 HP, in `modules_glue.cpp`): a **Channel** selector (Omni, 1 to 16) and a **Controller** knob
 (0 to 119, 1 at first: the mod wheel); one output, 0 .. 1, smoothed over 3 ms. It starts at 0 (a controller's position is
-not known until it moves) and keeps its value when the controller number or the channel is changed. Like MIDI In it has no
-Device parameter yet: it hears every input that is switched on. No 14-bit pairs.
+not known until it moves) and keeps its value when the controller number or the channel is changed. Its Device came with
+step 8, as MIDI In's did. No 14-bit pairs.
 
 To find a control's number, run `pulserack-midi` and move the control: the second figure of its `control` line is the
 number. (MIDI learn, step 7, will make this unnecessary for knobs on screen.)
@@ -256,3 +256,67 @@ mapped without turning the knob; then 127, 0 and 64 give the ends and the middle
 controller or channel does nothing; with another module selected its control at that place turns and the first module's does
 not; with none selected the hint says so; learning again replaces; Escape cancels; forgetting empties the list.
 **Not yet checked:** a real controller's knob, and the menu by hand (it was not looked at in a screenshot).
+
+## As built (step 8 and the modules' Device)
+
+**Timing.** A message is stamped when it arrives, in the device's callback, with `steady_clock` (not libremidi's own
+timestamp, whose "monotonic" is the raw clock where there is one: the engine could not compare it with its own reading).
+`Engine::render()` feeds MIDI **once per device call** (`feed_midi(frames)`), not once per block: it reads the clock, and a
+message that is `age` samples old is placed `frames - age` samples into the call (to the nearest sample). One that arrived
+just now lands on the last sample, one that arrived a whole call ago or more on the first. Every message is therefore heard
+**one device buffer after it arrived**, where it used to be heard at the start of the next block: the same latency at worst,
+and no jitter within it. A message with no timestamp (`time_ns` 0, as the tests' are), and one taken outside a device call
+(`take_control` with audio off), is heard at once.
+
+Each MIDI In and MIDI CC module keeps the messages it wants in a queue of its own, sorted by sample (`MidiQueue`, 256
+messages; filtered by device and channel as they are when the message arrives). In `process` it takes those that are due
+in the block: a note becomes an event at its offset in the block, and the signals (bend, mod, pressure, velocity, the CC's
+value) are made in stretches from one message to the next, so a change takes effect at its own sample. A device call longer
+than `PCL_MAX_BLOCK` is made in several blocks, and a message waits for the one it falls in. `reset()` empties the queues.
+Note offs the module makes itself between blocks (a change of channel or device) go out at the start of the next block.
+`Engine::set_midi_clock()` gives the tests a clock of their own.
+
+Not done: the device call's own length is taken as the latency. A sound card that calls back unevenly (two calls close
+together, then a gap) moves every message of a call together, which is not heard as jitter between notes of one call but
+is between calls; correcting for it needs the time the buffer will be played at, which SDL does not give.
+
+**A module's Device.** `Node::device` is the name of the one input a MIDI In or MIDI CC module listens to; empty is every
+input that is switched on. It is not a parameter (those are numbers) but is kept beside them: in the patch file as
+`device <node> <name>` after the node's parameters, the name being the rest of the line (so it may hold spaces and a `#`:
+the record is recognised before a comment is cut off). A `device` line for a module that takes no MIDI is skipped with a
+warning.
+
+The engine turns the name into a device slot through `Engine::midi_slot_of`, which the application sets:
+`midi::Inputs::slot_for(name)` gives the name's slot and, if it has none, a free one, so a patch may name a device that is
+not plugged in and hear it when it is. With no MIDI, or when all 8 slots are taken, the name has no slot and the module
+hears nothing (never every device: a patch made for two keyboards must not play both parts from one).
+`Engine::set_device(node, name)` changes it while running (`Cmd::Device`, applied on the audio thread like a parameter);
+`init_state` applies it to a new module; `refresh_devices()` looks every name up again once the device manager has started.
+A MIDI In whose device changes lets go of the notes it holds, as on a change of channel; a MIDI CC keeps its value.
+
+**In the window.** Both panels have a **Device** box under their controls: *Any device* or the name. A click opens a menu
+under it: *Any device*, the inputs present, those switched on in the settings but not plugged in, and the module's own
+device if it is none of these (a patch from another machine). The one in use is in the accent colour. Choosing an input
+that is not switched on **switches it on** (the settings file, as the device menu does), and the hint line says so; it is
+one undo step (the patch's part of it: the machine setting stays). The box's caption turns amber and says *NOT CONNECTED*
+or *SWITCHED OFF* when the module's input cannot be heard; it follows hot-plugging and the device menu's switches.
+`Editor::set_midi_device`, `device_menu_names`; `RackView::dev_node` is the open menu.
+
+**Checked.**
+* `rack_tests`: a note 100 samples old in a call of 256 starts at sample 156 and ends at its own sample; older than the
+  call, exactly a call old, just arrived, stamped after the clock was read, and unstamped; a call of 64; a note on and off
+  40 samples apart in one call; two devices' messages in time order, with a *DeviceLost* between them; bend, the mod wheel,
+  velocity and MIDI CC unchanged before their sample; a call of 1000 frames (the message lands in the third block);
+  `reset()` with a message waiting. A module set to one device hears only that one, a change of device releases held notes,
+  a name with no slot hears nothing from any of the 8, and no name hears all again; a device named in the patch before
+  `compile()`, `refresh_devices()` after the slots changed, no `midi_slot_of` at all, a module that takes no MIDI. The patch
+  file: the round trip, names with spaces and `#`, a comment that mentions a device, the refusals and the warning.
+* `ui_smoke`: the box is on MIDI modules only and its hint says what it listens to; its menu lists *Any device* and the
+  inputs; choosing one that is off sets the device, switches the input on, makes one undo step and marks the patch unsaved,
+  and it is in the saved text; the same one again changes nothing; undo and redo; an unplugged, switched-off device stays in
+  its module's menu until the module leaves it; *Any device*.
+* By eye, in a screenshot: the box on `midi_voice.rack` with a device named in the file (*SWITCHED OFF* with an empty
+  settings file and the KeyStep plugged in).
+
+**Not yet checked:** with the real controller: that fast repeated notes sound even and not grouped by buffer, and the Device
+menu by hand with it plugged in and unplugged. Two controllers at once (there is one here).

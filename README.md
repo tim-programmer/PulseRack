@@ -11,7 +11,8 @@ jacks, and a toolbar for new/save/open and the audio device.
 **Status: milestones 0 to 6 are built**: the gpuic spike, the headless engine, the window, cables, sound (SDL3 output on its
 own thread, the computer keyboard as a piano, LEDs and meters), saving and loading, and the polish of milestone 6 (undo, the
 sequencer's step grid, the on-screen keyboard, the output device, dropouts). In PulseCoreLib now but not yet in the rack: delay,
-sampler, reverb, ladder filter, unison oscillator. **MIDI** (docs/midi.md): steps 1 to 7 of 9 are built (the MIDI In and MIDI CC modules, MIDI learn by a right-click on a control; inputs are
+sampler, reverb, ladder filter, unison oscillator. **MIDI** (docs/midi.md): steps 1 to 8 of 9 are built (the MIDI In and MIDI CC modules, each listening to every input or to one
+chosen in its Device box; messages heard at their own sample; MIDI learn by a right-click on a control; inputs are
 switched on in the device menu). The name is a placeholder.
 
 ## Documents
@@ -22,9 +23,7 @@ switched on in the device menu). The name is a placeholder.
 | [docs/patch-engine.md](docs/patch-engine.md) | the headless part: module descriptors, ports, cables, processing order, the patch file |
 | [docs/gui.md](docs/gui.md) | the window: browser, panels, knobs, cable drawing, what gpuic gives us and what is unverified |
 | [docs/midi.md](docs/midi.md) | MIDI controllers: libremidi, devices and threads, the MIDI In and MIDI CC modules, MIDI learn, the settings file |
-| [docs/gpuic-prompt.md](docs/gpuic-prompt.md) | a self-contained prompt for a gpuic session: a stroked-curve element for cables (done) |
-| [docs/gpuic-prompt-2.md](docs/gpuic-prompt-2.md) | the second one: drag modifiers, drags that keep their element, a hover callback (done) |
-| [docs/gpuic-prompt-3.md](docs/gpuic-prompt-3.md) | the third: an empty cached view stopped UBSan runs (done) |
+| [docs/gpuic-prompt-4.md](docs/gpuic-prompt-4.md) | a self-contained prompt for a gpuic session: sharp text under a scale (the rack's zoom), drags with any button (not sent yet) |
 
 ## Try it
 

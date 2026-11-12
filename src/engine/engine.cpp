@@ -3,6 +3,7 @@
 #include "engine/rt/modules_common.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstring>
 #include <new>
@@ -58,6 +59,7 @@ bool Engine::init_state(const Node &n, void *mem)
     std::memset(mem, 0, d.state_size);
     if (!d.init(mem, NodeContext { sample_rate_ }, n.params.data()))
         return false;
+    midi_set_device(d, mem, device_code(n)); // (a MIDI module; nothing for the others)
     if (d.has_steps)
         for (size_t i = 0; i < n.steps.size(); i++)
             if (!(n.steps[i] == StepData { }) && !d.apply_step(mem, i, n.steps[i]))
@@ -211,6 +213,55 @@ Err Engine::set_param(uint32_t node, size_t param, float value)
     return Err::Ok;
 }
 
+int Engine::device_code(const Node &n) const
+{
+    if (n.device.empty())
+        return kMidiAnyDevice;
+    const int slot = midi_slot_of ? midi_slot_of(n.device) : -1;
+    return slot >= 0 ? slot : kMidiNoDevice;
+}
+
+Err Engine::set_device(uint32_t node, const std::string &name)
+{
+    collect();
+    Node *n = patch_.find(node);
+    if (!n)
+        return Err::NoSuchNode;
+    if (!midi_sink(*n->desc))
+        return Err::NoSuchParam; // not a MIDI module: it has no device
+    n->device = name;
+    auto it = live_.find(node);
+    if (it != live_.end() && midi_sink(*it->second.desc))
+    {
+        Cmd c { };
+        c.type = Cmd::Device;
+        c.desc = it->second.desc;
+        c.state = it->second.mem.get();
+        c.value = (float)device_code(*n);
+        send(c);
+    }
+    return Err::Ok;
+}
+
+void Engine::refresh_devices()
+{
+    for (const Node &n : patch_.nodes())
+        if (midi_sink(*n.desc))
+            set_device(n.id, std::string(n.device));
+}
+
+namespace
+{
+    int64_t steady_ns()
+    {
+        return std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::steady_clock::now().time_since_epoch())
+            .count();
+    }
+} // namespace
+
+void Engine::set_midi_clock(int64_t (*now_ns)()) { midi_now_ = now_ns; }
+
 Err Engine::set_step(uint32_t node, size_t index, const StepData &step)
 {
     collect();
@@ -297,6 +348,9 @@ void Engine::apply(const Cmd &c)
         if (!c.apply_step(c.state, c.index, c.step))
             apply_failures_.fetch_add(1, std::memory_order_relaxed);
         break;
+    case Cmd::Device:
+        midi_set_device(*c.desc, c.state, (int)c.value);
+        break;
     case Cmd::Key:
         keyboard_push(c.state, c.at < 0 ? time_.load(std::memory_order_relaxed) : (uint64_t)c.at,
             c.key_type, c.note, c.velocity);
@@ -354,27 +408,48 @@ void Engine::discard_midi()
 }
 
 // Every message that has arrived, to every MIDI In and MIDI CC module, device by device (the order
-// within a device is kept). With no MIDI In module they are taken and dropped, so nothing piles up.
-void Engine::feed_midi()
+// within a device is kept). With no such module they are taken and dropped, so nothing piles up.
+//
+// When it is heard (docs/midi.md, step 8). In a device call of `frames` samples, a message that
+// arrived `age` samples before the call is placed `frames - age` samples into it: one that came
+// just now at the end, one that came a whole call ago at the start. Every message is therefore
+// heard the same time after it arrived (one device buffer), in place of "at the start of the next
+// block", which was up to a buffer of jitter. A message with no timestamp, or outside a device call
+// (frames 0), is heard at once.
+void Engine::feed_midi(size_t frames)
 {
     if (!midi_)
         return;
-    midi::Msg m;
+    const uint64_t t0 = time_.load(std::memory_order_relaxed);
+    const int64_t  now = frames ? (midi_now_ ? midi_now_() : steady_ns()) : 0;
+    midi::Msg      m;
     for (midi::Inbox &box : *midi_)
         while (box.ring.pop(m))
         {
             if (m.type == midi::Type::Control)
                 controls_.push(m); // for the UI (MIDI learn); dropped if it is not taking them
-            if (cur_ && cur_->ok)
-                for (const auto &[push, state] : cur_->midi_ins)
-                    push(state, m);
+            if (!cur_ || !cur_->ok)
+                continue;
+            uint64_t at = t0;
+            if (frames && m.time_ns > 0)
+            {
+                const double age
+                    = std::max(0.0, (double)(now - m.time_ns) * 1e-9 * (double)sample_rate_);
+                // (to the nearest sample: a whole number of samples is rarely one of nanoseconds)
+                at = t0
+                    + (age + 0.5 >= (double)frames
+                            ? 0
+                            : std::min<uint64_t>(frames - 1, frames - (uint64_t)(age + 0.5)));
+            }
+            for (const auto &[push, state] : cur_->midi_ins)
+                push(state, m, at);
         }
 }
 
 bool Engine::take_control(midi::Msg &out)
 {
     if (!attached_)
-        feed_midi(); // no audio thread: this thread is the audio side
+        feed_midi(0); // no audio thread: this thread is the audio side
     return controls_.pop(out);
 }
 
@@ -396,7 +471,8 @@ void Engine::render(size_t frames, float *left, float *right)
         float       *l = left + done;
         float       *r = right + done;
         begin_block();
-        feed_midi();
+        if (done == 0)
+            feed_midi(frames); // once per device call, after the plan for it is in place
         std::memset(l, 0, n * sizeof(float));
         std::memset(r, 0, n * sizeof(float));
         const uint64_t t = time_.load(std::memory_order_relaxed);

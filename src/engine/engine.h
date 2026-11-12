@@ -23,6 +23,7 @@
 
 #include <array>
 #include <atomic>
+#include <functional>
 #include <map>
 #include <memory>
 #include <vector>
@@ -79,6 +80,17 @@ public:
     // Throws away what waits in the inboxes (detached only): before audio starts, so that what was
     // played while it was off is not heard all at once.
     void discard_midi();
+    // The MIDI input a MIDI In or MIDI CC module listens to, by name (empty: every input); kept in
+    // the patch. The name becomes a device slot through `midi_slot_of` (the application's: the
+    // device manager's slot for the name, or -1); with none, or -1, the module hears nothing.
+    // NoSuchParam for a module that takes no MIDI.
+    Err                                     set_device(uint32_t node, const std::string &name);
+    std::function<int(const std::string &)> midi_slot_of;
+    // Looks every such module's device up again (after `midi_slot_of` was set or changed).
+    void refresh_devices();
+    // The clock MIDI messages are stamped with (Msg::time_ns): steady_clock in nanoseconds unless a
+    // test gives its own. render() turns a message's age into its place in the device's buffer.
+    void set_midi_clock(int64_t (*now_ns)());
     // The control changes (CC) that came by MIDI, for MIDI learn: one per call, in order, false
     // when there is none. (The UI thread. The audio thread passes them on as it feeds the
     // modules; while none is attached this call feeds the modules itself.)
@@ -146,8 +158,8 @@ private:
         Plan                     plan;
         std::vector<ScriptEvent> script;
         // the modules that take MIDI: each one's function (modules_common.h, midi_sink) and state
-        std::vector<std::pair<void (*)(void *, const midi::Msg &), void *>> midi_ins;
-        std::vector<Probe>                                                  probes; // in plan order
+        std::vector<std::pair<void (*)(void *, const midi::Msg &, uint64_t), void *>> midi_ins;
+        std::vector<Probe> probes;   // in plan order
         std::vector<float> activity; // per step, written by Plan::run
     };
     struct Cmd
@@ -156,9 +168,11 @@ private:
         {
             Param,
             Step,
-            Key
+            Key,
+            Device // value: the slot, or kMidiAnyDevice / kMidiNoDevice
         } type;
-        void *state;
+        const ModuleDesc *desc; // Device
+        void             *state;
         bool (*apply)(void *, float);
         bool (*apply_step)(void *, size_t, const StepData &);
         size_t   index;
@@ -179,7 +193,8 @@ private:
     void begin_block();
     void apply(const Cmd &c);
     void feed_script(uint64_t upto);
-    void feed_midi();
+    void feed_midi(size_t frames); // frames: the device call's length, 0 outside one
+    int  device_code(const Node &n) const;
 
     // UI-owned
     uint32_t                                   sample_rate_;
@@ -204,8 +219,9 @@ private:
 
     // audio-owned
     midi::Inboxes *midi_ = nullptr; // (set while detached)
-    Snapshot      *cur_ = nullptr;
-    size_t         script_pos_ = 0;
+    int64_t (*midi_now_)() = nullptr;
+    Snapshot *cur_ = nullptr;
+    size_t    script_pos_ = 0;
 };
 
 } // namespace rack

@@ -23,19 +23,23 @@ inline bool                  ok(pcl_status_t s) { return s == PCL_OK; }
 // Schedules a key event for a Keyboard node at an absolute sample position (engine time). False if
 // its queue is full.
 bool keyboard_push(void *state, uint64_t at, uint8_t type, uint8_t note, uint8_t velocity);
-// A MIDI message for a MIDI In node (the audio thread): notes go out with its next block, controls
-// move its signals, DeviceLost releases what that device holds (docs/midi.md, *Modules*).
+// A MIDI message for a MIDI In or MIDI CC node (the audio thread), with the sample (engine time) it
+// takes effect at: it waits in the node's queue until then (docs/midi.md, *Modules* and step 8).
 namespace midi
 {
     struct Msg;
 }
-void midi_in_push(void *state, const midi::Msg &m);
-void midi_cc_push(void *state, const midi::Msg &m); // the same for a MIDI CC node
+void     midi_in_push(void *state, const midi::Msg &m, uint64_t at);
+void     midi_cc_push(void *state, const midi::Msg &m, uint64_t at);
+uint32_t midi_in_dropped(const void *state); // notes it had no room for
 // The function that takes MIDI messages for a module of this type (the engine gives every message
 // to every such module), or null for a module that takes none.
-using MidiPushFn = void (*)(void *state, const midi::Msg &m);
+using MidiPushFn = void (*)(void *state, const midi::Msg &m, uint64_t at);
 MidiPushFn midi_sink(const ModuleDesc &desc);
-uint32_t   midi_in_dropped(const void *state); // notes it had no room for
+// The device such a module listens to: a slot (0 ..), -1 for every device, -2 for none (its device
+// is not known on this machine). False for a module that takes no MIDI. The audio thread.
+inline constexpr int kMidiAnyDevice = -1, kMidiNoDevice = -2;
+bool                 midi_set_device(const ModuleDesc &desc, void *state, int device);
 // How many events the sequencer, arpeggiator or clock dropped for lack of room (telemetry for the
 // panel's LED).
 uint32_t dropped_events(const ModuleDesc &desc, const void *state);

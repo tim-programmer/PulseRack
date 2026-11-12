@@ -2,6 +2,7 @@
 
 #include "engine/model/patchfile.h"
 #include "engine/model/registry.h"
+#include "engine/rt/modules_common.h"
 #include "ui/dialog.h"
 #include "ui/files.h"
 #include "ui/geometry.h"
@@ -38,6 +39,13 @@ namespace
     }
 
     const Color kBlack = rgb(0x000000), kWhite = rgb(0xffffff);
+
+    // The Device box of a MIDI In or MIDI CC panel: under its controls, in the panel's pixels
+    // (inside its border). A click on it opens the device menu (RackView).
+    Rect device_box(const PanelLayout &L)
+    {
+        return { kPad, L.controls_bottom + 8, L.width - 2 * kPanelBorder - 2 * kPad, 32 };
+    }
 
     // A light that is on glows: a soft halo of its own colour.
     Element glow(Element e, Color c, float blur = 6, float alpha = 0.75f)
@@ -378,6 +386,7 @@ struct Browser
 
 void open_menu(Ctx cx, Editor &e, uint32_t node); // the panel's right-click menu (in the rack view)
 void open_control_menu(Ctx cx, Editor &e, uint32_t node, size_t param); // a control's (MIDI learn)
+void open_device_menu_of(Ctx cx, Editor &e, uint32_t node); // a MIDI module's Device box
 
 // =====================================================================================================
 // A panel: one module, a cached view of its own, so turning a knob rebuilds this panel only.
@@ -850,6 +859,61 @@ struct PanelView
         return w;
     }
 
+    // A MIDI module's Device box: the input it listens to; a click opens the menu to choose one.
+    // Its caption says when that input cannot be heard (it is not plugged in, or is switched off
+    // in the device menu).
+    Element device_element(Ctx cx, const Node &n, const PanelLayout &L, Color chip)
+    {
+        const Rect  r = device_box(L);
+        Editor     *e = ed.get(cx);
+        const char *caption = "DEVICE";
+        bool        heard = true;
+        if (e && !n.device.empty())
+        {
+            const auto in = [&](const std::vector<std::string> &v)
+            { return std::find(v.begin(), v.end(), n.device) != v.end(); };
+            if (!in(e->midi_available))
+                caption = "NOT CONNECTED", heard = false;
+            else if (!in(e->settings.midi_inputs))
+                caption = "SWITCHED OFF", heard = false;
+        }
+        return div()
+            .absolute()
+            .left(r.x)
+            .top(r.y)
+            .w(r.w)
+            .h(r.h)
+            .rounded(3)
+            .bg(st::kWell)
+            .border(1)
+            .border_color(with_alpha(chip, 0.5f))
+            .hover_bg(rgb(0x1a1c22))
+            .px(5)
+            .flex_col()
+            .justify_center()
+            .gap(1)
+            .overflow_hidden()
+            .cursor_pointer()
+            .child(label(caption, 8, heard ? st::kDim : rgb(0xf9e2af)).whitespace_pre())
+            .child(label(n.device.empty() ? std::string("Any device") : n.device, 10,
+                heard ? st::kText : st::kSubtext)
+                    .whitespace_pre())
+            // the box's press, not the panel's
+            .on_mouse_down(
+                [](PanelView &self, Ctx cx, const gp_mouse_event &ev)
+                {
+                    Editor *e = self.ed.get(cx);
+                    if (!e)
+                        return;
+                    if (ev.button == GP_MOUSE_MIDDLE)
+                        e->pan_begin(cx, ev.position, ev.button);
+                    else
+                        open_device_menu_of(cx, *e, self.node);
+                })
+            .on_hover([](PanelView &self, Ctx cx, bool inside)
+                { self.ed.get(cx)->hover(cx, self.node, Editor::kHoverDevice, inside); });
+    }
+
     // The output level as two columns of segments: green, amber near the top, red at the top.
     Element meters(const PanelLayout &L) const
     {
@@ -1243,6 +1307,8 @@ struct PanelView
         }
         if (d.id == "out") // the output level, between its controls and its jacks
             p.child(meters(L));
+        if (midi_sink(d)) // the MIDI input it listens to, under its controls
+            p.child(device_element(cx, *n, L, cc.chip));
 
         if (active >= 0 && (size_t)active < d.params.size())
         { // the value while dragging
@@ -1286,6 +1352,14 @@ namespace
     Pt              control_menu_origin(const Node &n, size_t param)
     {
         const Rect &r = panel_layout(*n.desc).params[param];
+        return { n.x * kHp + kPanelBorder + r.x, n.y * kHp + kPanelBorder + r.y + r.h + 2 };
+    }
+
+    // A MIDI module's device menu: under its Device box.
+    constexpr float kDeviceMenuW = 250;
+    Pt              device_menu_origin(const Node &n)
+    {
+        const Rect r = device_box(panel_layout(*n.desc));
         return { n.x * kHp + kPanelBorder + r.x, n.y * kHp + kPanelBorder + r.y + r.h + 2 };
     }
 
@@ -1418,7 +1492,7 @@ struct DragView
         if (!e)
             return div();
         Element           w = div().absolute().left(0).top(0);
-        const ModuleDesc *od = nullptr; // where a module dragged in, or a panel moved, would land
+        const ModuleDesc *od = nullptr;   // where a module dragged in, or a panel moved, would land
         float             ox = 0, oy = 0; // in HP
         bool              ofits = false;
         if (const auto &m = e->mdrag; m.active && m.moved && m.over_rack)
@@ -1508,6 +1582,16 @@ struct RackView
     size_t                 ctrl_param = 0;
     std::optional<PortRef> menu_cable; // or the cable whose menu is open, at menu_at (rack pixels)
     Pt                     menu_at;
+    uint32_t               dev_node = 0; // or the MIDI module whose device menu is open
+
+    // At most one menu is open. Closes it; true if one was.
+    bool close_menus()
+    {
+        const bool any = menu_node || ctrl_node || menu_cable || dev_node;
+        menu_node = ctrl_node = dev_node = 0;
+        menu_cable.reset();
+        return any;
+    }
 
     template <class F> static Element menu_item(std::string text, Color c, F &&f)
     {
@@ -1553,13 +1637,8 @@ struct RackView
                   .on_mouse_down(
                       [](RackView &self, Ctx cx, const gp_mouse_event &ev)
                       {
-                          if (self.menu_node || self.menu_cable || self.ctrl_node)
-                          {
-                              self.ctrl_node = 0;
-                              self.menu_node = 0;
-                              self.menu_cable.reset();
+                          if (self.close_menus())
                               cx.notify();
-                          }
                           cx.blur(); // the search box lets go of the keyboard (Delete is the
                                      // rack's)
                           if (Editor *e = self.ed.get(cx); e && e->selected)
@@ -1656,6 +1735,25 @@ struct RackView
         content.child(
             div().absolute().left(0).top(0).key_id((uint64_t)1 << 41).child(e->drag_view.cached()));
 
+        // While a menu is open, the next press anywhere else only closes it: one transparent sheet
+        // over the panels and cables and under the menu takes that press (any button) and uses it
+        // up, so a knob under the pointer does not move. It passes the wheel on: an element with
+        // no wheel handler would swallow it (docs/gui.md).
+        if (menu_node || ctrl_node || dev_node || menu_cable)
+            content.child(div()
+                    .absolute()
+                    .left(0)
+                    .top(0)
+                    .w(cw)
+                    .h(ch)
+                    .key_id((uint64_t)1 << 42)
+                    .on_mouse_down(
+                        [](RackView &self, Ctx cx, const gp_mouse_event &)
+                        {
+                            if (self.close_menus())
+                                cx.notify();
+                        })
+                    .on_wheel([](RackView &, Ctx cx, const gp_wheel_event &) { cx.propagate(); }));
         if (menu_cable && patch.cable_into(*menu_cable))
         {
             const PortRef to = *menu_cable;
@@ -1733,6 +1831,54 @@ struct RackView
                 }));
             content.child(std::move(menu));
         }
+        // a MIDI module's device menu, under its Device box: every input, or one of them
+        if (const Node *n = dev_node ? patch.find(dev_node) : nullptr; n && midi_sink(*n->desc))
+        {
+            const uint32_t id = dev_node;
+            const Pt       at = device_menu_origin(*n);
+            Element        menu = div()
+                                      .absolute()
+                                      .left(at.x)
+                                      .top(at.y)
+                                      .w(kDeviceMenuW)
+                                      .p(kControlMenuPad)
+                                      .rounded(5)
+                                      .bg(st::kSurfaceHi)
+                                      .border(1)
+                                      .border_color(st::kBorder)
+                                      .shadow(0, 6, 16, with_alpha(rgb(0x000000), 0.5f))
+                                      .on_mouse_down([](RackView &) { });
+            // the one it has now is in the accent colour
+            menu.child(menu_item("Any device", n->device.empty() ? st::kAccent : st::kText,
+                [id](RackView &self, Ctx cx)
+                {
+                    self.dev_node = 0;
+                    cx.notify();
+                    if (Editor *ed = self.ed.get(cx))
+                        ed->set_midi_device(cx, id, std::string());
+                }));
+            const std::vector<std::string> names = e->device_menu_names(id);
+            for (size_t k = 0; k < names.size(); k++)
+            {
+                const bool here
+                    = std::find(e->midi_available.begin(), e->midi_available.end(), names[k])
+                    != e->midi_available.end();
+                menu.child(menu_item(names[k] + (here ? "" : "   (not connected)"),
+                    names[k] == n->device ? st::kAccent : here ? st::kText : st::kSubtext,
+                    [id, k](RackView &self, Ctx cx)
+                    { // (a handler keeps no string: the name is looked up again by its place)
+                        self.dev_node = 0;
+                        cx.notify();
+                        Editor *ed = self.ed.get(cx);
+                        if (!ed)
+                            return;
+                        const std::vector<std::string> now = ed->device_menu_names(id);
+                        if (k < now.size())
+                            ed->set_midi_device(cx, id, now[k]);
+                    }));
+            }
+            content.child(std::move(menu));
+        }
         if (const Node *n = menu_node ? patch.find(menu_node) : nullptr)
         {
             const uint32_t id = menu_node;
@@ -1776,9 +1922,23 @@ void open_menu(Ctx cx, Editor &e, uint32_t node)
     e.rack.update(cx,
         [node](RackView &r, Ctx c)
         {
+            r.close_menus();
             r.menu_node = node;
-            r.ctrl_node = 0;
-            r.menu_cable.reset();
+            c.notify();
+        });
+}
+
+void open_device_menu_of(Ctx cx, Editor &e, uint32_t node)
+{
+#if PULSERACK_MIDI
+    if (e.midi) // what is plugged in now
+        e.midi_available = e.midi->available();
+#endif
+    e.rack.update(cx,
+        [node](RackView &r, Ctx c)
+        {
+            r.close_menus();
+            r.dev_node = node;
             c.notify();
         });
 }
@@ -1788,10 +1948,9 @@ void open_control_menu(Ctx cx, Editor &e, uint32_t node, size_t param)
     e.rack.update(cx,
         [node, param](RackView &r, Ctx c)
         {
+            r.close_menus();
             r.ctrl_node = node;
             r.ctrl_param = param;
-            r.menu_node = 0;
-            r.menu_cable.reset();
             c.notify();
         });
 }
@@ -1802,8 +1961,7 @@ void open_cable_menu(Ctx cx, Editor &e, PortRef to, Pt at)
     e.rack.update(cx,
         [to, at](RackView &r, Ctx c)
         {
-            r.menu_node = 0;
-            r.ctrl_node = 0;
+            r.close_menus();
             r.menu_cable = to;
             r.menu_at = at;
             c.notify();
@@ -2133,6 +2291,10 @@ std::string Editor::describe_item(uint32_t node, int item) const
                              "plugged here"
                            : "      drag from it to an output to connect");
     }
+    if (item == kHoverDevice)
+        return std::string(d.name) + "  ·  listens to "
+            + (n->device.empty() ? std::string("every MIDI input that is switched on") : n->device)
+            + "      click to choose one MIDI input, or all of them";
     if (item == kHoverStrip)
         return std::string(d.name)
             + "  ·  press the keys to play, drag across them to glide; the computer keys "
@@ -2262,6 +2424,7 @@ void Editor::poll_midi(Ctx cx)
     for (const std::string &e : errors)
         say(cx, "MIDI: " + e + ".");
     midi_available = midi->available();
+    refresh_midi_panels(cx);
     hint_line.update(cx, [](HintLine &, Ctx c) { c.notify(); });
     toolbar.update(cx, [](Toolbar &, Ctx c) { c.notify(); });
     overlay.update(cx, [](Overlay &, Ctx c) { c.notify(); });
@@ -2305,9 +2468,57 @@ void Editor::toggle_midi_input(Ctx cx, const std::string &name)
                            : "MIDI: " + errors[0] + ".");
     }
 #endif
+    refresh_midi_panels(cx); // their Device boxes say whether their input is switched on
     hint_line.update(cx, [](HintLine &, Ctx c) { c.notify(); });
     toolbar.update(cx, [](Toolbar &, Ctx c) { c.notify(); });
     overlay.update(cx, [](Overlay &, Ctx c) { c.notify(); });
+}
+
+// ---- a module's own MIDI input
+
+void Editor::refresh_midi_panels(Ctx cx)
+{
+    for (const Node &n : engine.patch().nodes())
+        if (midi_sink(*n.desc))
+            if (auto it = panels.find(n.id); it != panels.end())
+                it->second.update(cx, [](PanelView &, Ctx c) { c.notify(); });
+}
+
+std::vector<std::string> Editor::device_menu_names(uint32_t node) const
+{
+    std::vector<std::string> names = midi_menu_names();
+    const Node              *n = engine.patch().find(node);
+    if (n && !n->device.empty() && std::find(names.begin(), names.end(), n->device) == names.end())
+        names.push_back(n->device); // from a patch made on another machine, perhaps
+    return names;
+}
+
+void Editor::set_midi_device(Ctx cx, uint32_t node, const std::string &name)
+{
+    const Node *n = engine.patch().find(node);
+    if (!n || !midi_sink(*n->desc) || n->device == name)
+        return;
+    checkpoint(cx, std::string(n->desc->name) + " device");
+    // an input that is chosen is wanted: it is switched on if it was not (a machine setting, which
+    // undo leaves alone)
+    const bool was_on = name.empty()
+        || std::find(settings.midi_inputs.begin(), settings.midi_inputs.end(), name)
+            != settings.midi_inputs.end();
+    if (!was_on)
+        toggle_midi_input(cx, name);
+    engine.set_device(node, name);
+    touch(cx);
+    if (auto it = panels.find(node); it != panels.end())
+        it->second.update(cx, [](PanelView &, Ctx c) { c.notify(); });
+    const bool here
+        = std::find(midi_available.begin(), midi_available.end(), name) != midi_available.end();
+    say(cx,
+        std::string(n->desc->name)
+            + (name.empty() ? " listens to every MIDI input that is switched on."
+                            : " listens to " + name
+                        + (!here         ? "  (not connected: it will be heard when it is)."
+                                : was_on ? "."
+                                         : ", which is now switched on.")));
 }
 
 // ---- MIDI learn
@@ -3403,11 +3614,7 @@ void Editor::forget_view_state(Ctx cx)
     ask = Ask { };
     selected_node = 0;
     if (RackView *rv = rack.get(cx))
-    {
-        rv->menu_node = 0;
-        rv->ctrl_node = 0;
-        rv->menu_cable.reset();
-    }
+        rv->close_menus();
     overlay.update(cx, [](Overlay &, Ctx c) { c.notify(); });
     drag_view.update(cx, [](DragView &, Ctx c) { c.notify(); });
 }
@@ -3429,6 +3636,8 @@ void Editor::restore(Ctx cx, Patch target)
         for (size_t k = 0; k < n.steps.size() && k < o->steps.size(); k++)
             if (!(o->steps[k] == n.steps[k]))
                 engine.set_step(n.id, k, n.steps[k]);
+        if (o->device != n.device)
+            engine.set_device(n.id, std::string(n.device));
     }
     forget_view_state(cx);
     sync_panels(cx);
@@ -3483,6 +3692,12 @@ bool Editor::search_focused(Ctx cx)
 void Editor::close_overlays(Ctx cx)
 {
     learn_cancel(cx); // Escape
+    rack.update(cx,
+        [](RackView &r, Ctx c)
+        {
+            if (r.close_menus()) // a panel's, a cable's, a control's or a device menu
+                c.notify();
+        });
     if (!file_menu_open && !ask.shown && !device_menu_open)
         return;
     file_menu_open = false;
@@ -3697,9 +3912,7 @@ bool Editor::open_text(Ctx cx, const std::string &text, const std::string &name,
     ask = Ask { };
     if (RackView *rv = rack.get(cx))
     {
-        rv->menu_node = 0;
-        rv->ctrl_node = 0;
-        rv->menu_cable.reset();
+        rv->close_menus();
         rv->scroll.to(cx, 0, 0);
     }
     file_path = path;
@@ -3849,6 +4062,16 @@ Entity<Editor> open_rack(App app, const Options &opt, std::string *error)
                     .on_change([](Browser &, Ctx cx) { cx.notify(); })
                     .build();
 
+    // A MIDI module's device is a name in the patch; the device manager gives each name its slot
+    // (set before a patch is loaded; with no MIDI a named device is not heard).
+    e->engine.midi_slot_of = [e]([[maybe_unused]] const std::string &name) -> int
+    {
+#if PULSERACK_MIDI
+        if (e->midi)
+            return e->midi->slot_for(name);
+#endif
+        return -1;
+    };
     if (!opt.patch_path.empty() && !e->open_path(app.ctx(), opt.patch_path, error))
         return { };
     if (e->has_recovery())
@@ -3864,7 +4087,10 @@ Entity<Editor> open_rack(App app, const Options &opt, std::string *error)
     app.open_window(w, root);
     e->engine.set_midi(e->midi_boxes.get()); // (no audio thread yet)
     if (opt.midi)
+    {
         e->start_midi(app.ctx(ed));
+        e->engine.refresh_devices(); // the patch's device names have slots now
+    }
     if (opt.audio) // a failure is shown in the toolbar and the hint line; the window works without
         e->start_audio(app.ctx(ed));
     return ed;
@@ -3911,6 +4137,40 @@ gp_point control_menu_item(Ctx cx, Entity<Editor> ed, int index)
     const gp_point     o = rack_origin();
     const Pt           at = control_menu_origin(*n, rv->ctrl_param);
     return { o.x + (at.x + kControlMenuW / 2 - vp.x) * vp.zoom,
+        o.y + (at.y + kControlMenuPad + ((float)index + 0.5f) * kMenuItemH - vp.y) * vp.zoom };
+}
+
+bool rack_menu_open(Ctx cx, Entity<Editor> ed)
+{
+    Editor   *e = ed.get(cx);
+    RackView *rv = e ? e->rack.get(cx) : nullptr;
+    return rv && (rv->menu_node || rv->ctrl_node || rv->dev_node || rv->menu_cable);
+}
+
+gp_point device_box_center(Ctx cx, Entity<Editor> ed, uint32_t node)
+{
+    Editor     *e = ed.get(cx);
+    const Node *n = e ? e->engine.patch().find(node) : nullptr;
+    if (!n || !midi_sink(*n->desc))
+        return { -1, -1 };
+    const RackViewport vp = viewport_of(cx, *e);
+    const gp_point     o = rack_origin();
+    const Rect         r = device_box(panel_layout(*n->desc));
+    return { o.x + (n->x * kHp + kPanelBorder + r.x + r.w / 2 - vp.x) * vp.zoom,
+        o.y + (n->y * kHp + kPanelBorder + r.y + r.h / 2 - vp.y) * vp.zoom };
+}
+
+gp_point device_menu_item(Ctx cx, Entity<Editor> ed, int index)
+{
+    Editor     *e = ed.get(cx);
+    RackView   *rv = e ? e->rack.get(cx) : nullptr;
+    const Node *n = rv && rv->dev_node ? e->engine.patch().find(rv->dev_node) : nullptr;
+    if (!n || index < 0 || (size_t)index > e->device_menu_names(n->id).size())
+        return { -1, -1 };
+    const RackViewport vp = viewport_of(cx, *e);
+    const gp_point     o = rack_origin();
+    const Pt           at = device_menu_origin(*n);
+    return { o.x + (at.x + kDeviceMenuW / 2 - vp.x) * vp.zoom,
         o.y + (at.y + kControlMenuPad + ((float)index + 0.5f) * kMenuItemH - vp.y) * vp.zoom };
 }
 

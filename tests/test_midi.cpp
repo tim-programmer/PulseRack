@@ -353,6 +353,256 @@ TEST(midi_in_drops_notes_it_has_no_room_for_and_counts_them)
     CHECK(r.now() == 0.0f);
 }
 
+// ---- when a message is heard (docs/midi.md, step 8): its age on a clock the test owns
+namespace
+{
+int64_t           g_clock_ns = 0;
+int64_t           fake_clock() { return g_clock_ns; }
+constexpr int64_t kStart = 1'000'000'000; // any time but 0 (a time of 0 is "no timestamp")
+int64_t           samples_ns(double samples) { return (int64_t)(samples * 1e9 / kRate); }
+// a message that arrived `samples` before the clock's now
+Msg aged(Msg m, double samples)
+{
+    m.time_ns = g_clock_ns - samples_ns(samples);
+    return m;
+}
+// the first sample at or after `from` that is over a half, or -1
+long first_high(const std::vector<float> &v, size_t from = 0)
+{
+    for (size_t i = from; i < v.size(); i++)
+        if (v[i] > 0.5f)
+            return (long)i;
+    return -1;
+}
+struct TimedRig : MidiRig
+{
+    explicit TimedRig(const char *signal = nullptr)
+        : MidiRig(signal)
+    {
+        g_clock_ns = kStart;
+        e.set_midi_clock(fake_clock);
+    }
+    // a device call: the clock moves on by its length afterwards, as the real one does
+    void call(size_t frames = 256)
+    {
+        render(frames);
+        g_clock_ns += samples_ns((double)frames);
+    }
+};
+} // namespace
+
+TEST(midi_timing_a_note_starts_at_its_own_sample)
+{
+    TimedRig r;
+    r.send(aged(msg(Type::NoteOn, 60, 100), 100)); // 100 samples old in a call of 256
+    r.call();
+    CHECK(first_high(r.L) == 156);
+    CHECK(r.L[155] == 0.0f && r.L[255] > 0.99f);
+    r.send(aged(msg(Type::NoteOff, 60), 100));
+    r.call();
+    CHECK(r.L[256 + 155] > 0.99f && r.L[256 + 156] == 0.0f);
+}
+
+TEST(midi_timing_old_new_and_unstamped_messages)
+{
+    { // older than the call: its first sample
+        TimedRig r;
+        r.send(aged(msg(Type::NoteOn, 60, 100), 1000));
+        r.call();
+        CHECK(first_high(r.L) == 0);
+    }
+    { // exactly a call old: its first sample too
+        TimedRig r;
+        r.send(aged(msg(Type::NoteOn, 60, 100), 256));
+        r.call();
+        CHECK(first_high(r.L) == 0);
+    }
+    { // just arrived: the last sample
+        TimedRig r;
+        r.send(aged(msg(Type::NoteOn, 60, 100), 0));
+        r.call();
+        CHECK(first_high(r.L) == 255);
+    }
+    { // stamped after the clock was read (the device's thread ran on): the last sample
+        TimedRig r;
+        r.send(aged(msg(Type::NoteOn, 60, 100), -50));
+        r.call();
+        CHECK(first_high(r.L) == 255);
+    }
+    { // no timestamp: the first sample
+        TimedRig r;
+        r.send(msg(Type::NoteOn, 60, 100));
+        r.call();
+        CHECK(first_high(r.L) == 0);
+    }
+    { // any length of call: 30 samples old in one of 64
+        TimedRig r;
+        r.send(aged(msg(Type::NoteOn, 60, 100), 30));
+        r.call(64);
+        CHECK(first_high(r.L) == 34);
+    }
+}
+
+TEST(midi_timing_messages_keep_their_spacing_and_order)
+{
+    // on and off 40 samples apart in one call: a gate of 40 samples
+    TimedRig r;
+    r.send(aged(msg(Type::NoteOn, 60, 100), 200));
+    r.send(aged(msg(Type::NoteOff, 60), 160));
+    r.call();
+    CHECK(first_high(r.L) == 56);
+    CHECK(r.L[95] > 0.99f && r.L[96] == 0.0f && r.L[255] == 0.0f);
+    // two devices: the later inbox's earlier message still comes first
+    r.send(aged(msg(Type::NoteOn, 62, 100, 0, 0), 50));
+    r.send(aged(msg(Type::NoteOn, 64, 100, 0, 3), 150));
+    r.send(aged(msg(Type::DeviceLost, 0, 0, 0, 3), 100));
+    r.call();
+    CHECK(first_high(r.L, 256) == 256 + 106);
+    CHECK(r.L[256 + 155] > 0.99f); // (the other device's note goes on at 206: no gap is seen)
+    CHECK(r.L[511] > 0.99f);
+    r.send(aged(msg(Type::NoteOff, 62), 10));
+    r.call();
+    CHECK(r.L[512 + 245] > 0.99f && r.L[512 + 246] == 0.0f);
+}
+
+TEST(midi_timing_a_signal_changes_inside_the_block)
+{
+    { // pitch bend: nothing before its sample, moving from it on
+        TimedRig r("bend");
+        r.send(aged(msg(Type::PitchBend, 0, 16383), 100));
+        r.call();
+        for (size_t i = 0; i < 156; i++)
+            CHECK(r.L[i] == 0.0f);
+        CHECK(r.L[156] > 0.0f && r.L[157] > r.L[156] && r.L[255] > r.L[157]);
+    }
+    { // the mod wheel
+        TimedRig r("mod");
+        r.send(aged(msg(Type::Control, 1, 127), 56));
+        r.call();
+        CHECK(r.L[199] == 0.0f && r.L[200] > 0.0f);
+    }
+    { // velocity is not smoothed: a step at the note's sample
+        TimedRig r("velocity");
+        r.send(aged(msg(Type::NoteOn, 60, 127), 100));
+        r.call();
+        CHECK(r.L[155] == 0.0f && std::fabs(r.L[156] - 1.0f) < 0.01f);
+    }
+    { // MIDI CC
+        Rig            r;
+        auto           boxes = std::make_unique<Inboxes>();
+        const uint32_t cc = r.add("midi_cc"), out = r.add("out");
+        r.e.set_midi(boxes.get());
+        g_clock_ns = kStart;
+        r.e.set_midi_clock(fake_clock);
+        r.param(out, "level", 1);
+        CHECK(r.cable(cc, "out", out, "l") == Err::Ok && r.compile());
+        (*boxes)[0].push(aged(msg(Type::Control, 1, 127), 100));
+        r.render(256);
+        CHECK(r.L[155] == 0.0f && r.L[156] > 0.0f && r.L[255] > r.L[156]);
+    }
+}
+
+TEST(midi_timing_a_call_longer_than_a_block)
+{
+    // 1000 frames are made in blocks of PCL_MAX_BLOCK; the message lands in a later one
+    TimedRig r;
+    r.send(aged(msg(Type::NoteOn, 60, 100), 300));
+    r.send(aged(msg(Type::NoteOff, 60), 10));
+    r.call(1000);
+    CHECK(first_high(r.L) == 700);
+    CHECK(r.L[989] > 0.99f && r.L[990] == 0.0f);
+    // and the next call starts clean
+    r.send(aged(msg(Type::NoteOn, 60, 100), 1));
+    r.call(1000);
+    CHECK(first_high(r.L, 1000) == 1999);
+}
+
+TEST(midi_timing_reset_forgets_what_waits)
+{
+    TimedRig r;
+    r.send(aged(msg(Type::NoteOn, 60, 100), 300));
+    r.call(1000); // heard at 700
+    r.send(aged(msg(Type::NoteOn, 62, 100), 0));
+    r.e.reset(); // nothing held, nothing waiting from before
+    r.call();
+    CHECK(r.L[1000 + 254] == 0.0f && r.L[1000 + 255] > 0.99f);
+}
+
+// ---- a module's own device (docs/midi.md): by name, which the application turns into a slot
+TEST(midi_in_listens_to_its_own_device_only)
+{
+    MidiRig r;
+    r.e.midi_slot_of = [](const std::string &name)
+    {
+        return name == "KeyStep" ? 2 : name == "Pads" ? 5 : -1;
+    };
+    CHECK(r.e.set_device(r.in, "KeyStep") == Err::Ok);
+    CHECK(r.e.patch().find(r.in)->device == "KeyStep");
+    r.send(msg(Type::NoteOn, 60, 100, 0, 5)); // another device
+    CHECK(r.now() == 0.0f);
+    r.send(msg(Type::NoteOn, 60, 100, 0, 2));
+    CHECK(r.now() > 0.99f);
+    r.send(msg(Type::NoteOff, 60, 0, 0, 5)); // the other device's note off is not ours
+    CHECK(r.now() > 0.99f);
+    // changing the device lets go of what is held: its note off would never be heard
+    CHECK(r.e.set_device(r.in, "Pads") == Err::Ok);
+    CHECK(r.now() == 0.0f);
+    r.send(msg(Type::NoteOn, 62, 100, 0, 5));
+    CHECK(r.now() > 0.99f);
+    // a name with no slot on this machine: nothing is heard (and what was held is let go)
+    CHECK(r.e.set_device(r.in, "Not here") == Err::Ok);
+    CHECK(r.now() == 0.0f);
+    for (uint8_t slot = 0; slot < kMaxInputs; slot++)
+        r.send(msg(Type::NoteOn, 64, 100, 0, slot));
+    CHECK(r.now() == 0.0f);
+    // no name: every device again
+    CHECK(r.e.set_device(r.in, "") == Err::Ok);
+    r.send(msg(Type::NoteOn, 65, 100, 0, 7));
+    CHECK(r.now() > 0.99f);
+    CHECK(r.e.set_device(999, "KeyStep") == Err::NoSuchNode);
+}
+
+TEST(midi_a_device_set_in_the_patch_is_used_from_the_start_and_looked_up_again)
+{
+    // the patch names a device before the engine is compiled (a file being loaded)
+    Rig            r;
+    auto           boxes = std::make_unique<Inboxes>();
+    const uint32_t cc = r.add("midi_cc"), out = r.add("out");
+    r.e.set_midi(boxes.get());
+    r.e.midi_slot_of = [](const std::string &name) { return name == "Knobs" ? 1 : -1; };
+    r.e.patch().find(cc)->device = "Knobs";
+    r.param(out, "level", 1);
+    CHECK(r.cable(cc, "out", out, "l") == Err::Ok && r.compile());
+    auto now = [&]
+    {
+        r.render(4800);
+        return r.L.back();
+    };
+    (*boxes)[0].push(msg(Type::Control, 1, 127, 0, 0)); // not its device
+    CHECK(now() == 0.0f);
+    (*boxes)[1].push(msg(Type::Control, 1, 127, 0, 1));
+    CHECK(std::fabs(now() - 1.0f) < 0.01f);
+    // the names' slots change (the application's device manager started): looked up again; the
+    // value stays
+    r.e.midi_slot_of = [](const std::string &name) { return name == "Knobs" ? 4 : -1; };
+    r.e.refresh_devices();
+    (*boxes)[1].push(msg(Type::Control, 1, 0, 0, 1));
+    CHECK(std::fabs(now() - 1.0f) < 0.01f);
+    (*boxes)[4].push(msg(Type::Control, 1, 0, 0, 4));
+    CHECK(std::fabs(now()) < 0.01f);
+    // with nothing to turn names into slots, a named device is not heard; a module with none is
+    r.e.midi_slot_of = nullptr;
+    r.e.refresh_devices();
+    (*boxes)[4].push(msg(Type::Control, 1, 127, 0, 4));
+    CHECK(std::fabs(now()) < 0.01f);
+    CHECK(r.e.set_device(cc, "") == Err::Ok);
+    (*boxes)[4].push(msg(Type::Control, 1, 127, 0, 4));
+    CHECK(std::fabs(now() - 1.0f) < 0.01f);
+    // a module that takes no MIDI keeps no device
+    CHECK(r.e.set_device(out, "Knobs") == Err::NoSuchParam);
+    CHECK(r.e.patch().find(out)->device.empty());
+}
+
 TEST(settings_round_trip_and_unknown_lines)
 {
     Settings s;

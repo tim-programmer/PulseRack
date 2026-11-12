@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <chrono>
 
 namespace rack::midi
 {
@@ -66,6 +67,17 @@ struct Inputs::Impl
         return -1;
     }
 
+    // The name's slot, giving it a free one if it has none; -1 when every slot is taken.
+    int slot_for(const std::string &name)
+    {
+        int slot = slot_of(name);
+        if (slot < 0 && !name.empty())
+            for (size_t i = 0; i < kMaxInputs && slot < 0; i++)
+                if (slot_name[i].empty())
+                    slot_name[i] = name, slot = int(i);
+        return slot;
+    }
+
     // Closing stops the device's thread, so the UI thread may then push into its inbox.
     void close(Open &o)
     {
@@ -109,11 +121,7 @@ struct Inputs::Impl
                 || std::any_of(
                     open.begin(), open.end(), [&](const Open &o) { return o.name == n; }))
                 continue;
-            int slot = slot_of(n);
-            if (slot < 0)
-                for (size_t i = 0; i < kMaxInputs && slot < 0; i++)
-                    if (slot_name[i].empty())
-                        slot_name[i] = n, slot = int(i);
+            const int slot = slot_for(n);
             if (slot < 0)
             {
                 if (errors)
@@ -129,7 +137,11 @@ struct Inputs::Impl
                 if (!decode(std::span<const uint8_t>(m.bytes.data(), m.bytes.size()), &x))
                     return;
                 x.slot = uint8_t(slot);
-                x.time_ns = m.timestamp;
+                // when it arrived, on the clock the engine reads (libremidi's own timestamp may be
+                // on another: its "monotonic" is the raw clock where there is one)
+                x.time_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                    std::chrono::steady_clock::now().time_since_epoch())
+                                .count();
                 box->push(x);
             };
             conf.ignore_sysex = true;
@@ -255,6 +267,8 @@ bool Inputs::is_open(const std::string &name) const
 }
 
 int Inputs::slot_of(const std::string &name) const { return impl_->slot_of(name); }
+
+int Inputs::slot_for(const std::string &name) { return impl_->slot_for(name); }
 
 std::string Inputs::name_of(int slot) const
 {

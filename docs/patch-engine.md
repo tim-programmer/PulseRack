@@ -207,6 +207,9 @@ cable 3.out   -> 4.l
   warning and the node/cable is skipped (a patch from a newer rack still opens).
 * Names are the descriptors' `id`s and never change; positions are rack units.
 * Parameter values are natural units, `printf("%.9g")` so that a round trip is exact.
+* `device <node> <name>` (after a MIDI In or MIDI CC node's parameters, and only if it has one): the MIDI input the
+  module listens to, by name. The name is the rest of the line, so it may hold spaces and a `#` (`nanoKONTROL2 #2`): this
+  record is recognised before a comment is cut off. See *midi.md*.
 * A file is rejected, not partly applied, if it has a syntax error. Limits are enforced while reading (maximum
   nodes, cables and line length) so a hostile file cannot make the loader allocate without bound.
 

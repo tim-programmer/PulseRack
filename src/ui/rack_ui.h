@@ -60,6 +60,15 @@ struct Editor
     std::vector<std::string> midi_menu_names() const;
     bool                     midi_input_open(const std::string &name) const;
 
+    // A MIDI In or MIDI CC module's own input (docs/midi.md): by name, kept in the patch; empty is
+    // every input that is switched on. Choosing one switches it on in the settings if it is not.
+    // One undo step.
+    void set_midi_device(gpuic::Ctx cx, uint32_t node, const std::string &name);
+    // What a module's device menu lists under "Any device": midi_menu_names(), then the module's
+    // own device if it is none of those.
+    std::vector<std::string> device_menu_names(uint32_t node) const;
+    void refresh_midi_panels(gpuic::Ctx cx); // their Device boxes show what is plugged in and on
+
     // MIDI learn (docs/midi.md): a right-click on a control waits for a controller to move
     // (learn_control: which control of its module, -1: not learning) and maps it to that place on
     // whichever module is selected; a mapped controller then turns that control. The mappings are
@@ -114,10 +123,11 @@ struct Editor
     // A cable is hovered as (its input's node, kHoverCable - its input's port).
     // A sequencer's step is hovered as (its node, kHoverStep - the step's index).
     static constexpr int kHoverTitle = -1, kHoverPort = -2, kHoverCable = -1000, kHoverStep = -2000,
-                         kHoverStrip = -3000; // the Keyboard panel's piano
-    uint32_t             hover_node = 0;
-    int                  hover_item = 0;
-    std::string          hover_text;
+                         kHoverStrip = -3000, // the Keyboard panel's piano
+        kHoverDevice = -4000;                 // a MIDI module's Device box
+    uint32_t    hover_node = 0;
+    int         hover_item = 0;
+    std::string hover_text;
 
     gpuic::Entity<Editor>                        self;
     gpuic::Entity<RackView>                      rack;
@@ -383,5 +393,12 @@ gp_point port_center(gpuic::Ctx cx, gpuic::Entity<Editor> ed, uint32_t node, siz
 // The middle of item `index` (from 0) of the control menu that is open (a right-click on a
 // control: "MIDI learn", "Forget its mapping" if it has one, "Cancel"); { -1, -1 } if none is.
 gp_point control_menu_item(gpuic::Ctx cx, gpuic::Entity<Editor> ed, int index);
+// Is one of the rack's menus open (a panel's, a cable's, a control's, a MIDI module's device menu)?
+bool rack_menu_open(gpuic::Ctx cx, gpuic::Entity<Editor> ed);
+// The middle of a MIDI module's Device box ({ -1, -1 } for a module that has none), and of item
+// `index` of the device menu that is open (0: "Any device", then Editor::device_menu_names);
+// { -1, -1 } if none is open or it has no such item.
+gp_point device_box_center(gpuic::Ctx cx, gpuic::Entity<Editor> ed, uint32_t node);
+gp_point device_menu_item(gpuic::Ctx cx, gpuic::Entity<Editor> ed, int index);
 
 } // namespace rack::ui

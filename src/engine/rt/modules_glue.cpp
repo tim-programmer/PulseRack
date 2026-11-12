@@ -60,19 +60,71 @@ namespace
     const PortDesc kKeyboardPorts[] = { { "notes", "NOTES", Kind::Event, true } };
 
     // ============================================================================================================
-    // MIDI In Notes and controls from MIDI devices (docs/midi.md). The engine hands it every
-    // message at the start of a block (midi_in_push, below); notes go out as events at offset 0 of
-    // that block, and pitch bend, the mod wheel and pressure are signals, smoothed over a few
-    // milliseconds so that steps of 1/127 do not click. It remembers which notes each device holds,
-    // so that a device that goes away (or a change of channel) releases them.
+    // The MIDI modules (docs/midi.md). The engine gives each one every MIDI message with the sample
+    // it belongs at (midi_in_push and midi_cc_push, below); the message waits in the module's queue
+    // and takes effect at that sample, inside the right block. A module may listen to one device
+    // only (its slot), to every device, or, when its device is not known on this machine, to none.
+    constexpr size_t kMidiTimed = 256;
+    struct TimedMsg
+    {
+        uint64_t  at; // the sample it takes effect at (engine time)
+        midi::Msg m;
+    };
+    struct MidiQueue
+    {
+        TimedMsg q[kMidiTimed];
+        uint32_t head, n; // q[head .. n) waits, sorted by `at` (stable)
+    };
+    bool timed_push(MidiQueue &k, uint64_t at, const midi::Msg &m)
+    {
+        if (k.n == kMidiTimed)
+        {
+            if (k.head == 0)
+                return false;
+            std::memmove(k.q, k.q + k.head, (k.n - k.head) * sizeof(TimedMsg));
+            k.n -= k.head;
+            k.head = 0;
+        }
+        uint32_t i = k.n;
+        while (i > k.head && k.q[i - 1].at > at)
+        {
+            k.q[i] = k.q[i - 1];
+            i--;
+        }
+        k.q[i] = TimedMsg { at, m };
+        k.n++;
+        return true;
+    }
+    // The next message due before `end`, or null.
+    const TimedMsg *timed_next(MidiQueue &k, uint64_t end)
+    {
+        if (k.head == k.n)
+        {
+            k.head = k.n = 0;
+            return nullptr;
+        }
+        return k.q[k.head].at < end ? &k.q[k.head++] : nullptr;
+    }
+    bool listens_to(int device, const midi::Msg &m)
+    {
+        return device == kMidiAnyDevice || device == (int)m.slot;
+    }
+
+    // ============================================================================================================
+    // MIDI In Notes and controls from MIDI devices. Notes go out as events at their own sample;
+    // pitch bend, the mod wheel and pressure are signals, smoothed over a few milliseconds so that
+    // steps of 1/127 do not click. It remembers which notes each device holds, so that a device
+    // that goes away (or a change of channel or of device) releases them.
     constexpr size_t kMidiQueue = 128;
     struct MidiInNode
     {
-        pcl_event_t q[kMidiQueue]; // the notes for the next block
+        MidiQueue   in;            // the messages still to come
+        pcl_event_t q[kMidiQueue]; // note offs made between blocks (a change of channel or device)
         uint32_t    n;
         uint8_t     held[midi::kMaxInputs][16]; // per device slot: a bit per note
         uint8_t     channel;                    // 0: every channel, else 1..16
         uint8_t     newest;                     // the note pressed last (key pressure follows it)
+        int         device;                     // kMidiAnyDevice, kMidiNoDevice, or a slot
         float       bend, mod, pressure, velocity; // where the signals are going
         float       bend_s, mod_s, pressure_s;     // where they are
         float       k;                             // the smoothing, per sample
@@ -83,24 +135,37 @@ namespace
         MIDI_CHANNEL,
         MIDI_COUNT
     };
-    void midi_queue(MidiInNode *m, uint8_t type, uint8_t note, uint8_t vel)
+    // A note event at `offset` of the block being made (`out`), or, between blocks (`out` null),
+    // for the start of the next one.
+    void midi_emit(
+        MidiInNode *m, EventBuf *out, size_t offset, uint8_t type, uint8_t note, uint8_t vel)
     {
-        if (m->n < kMidiQueue)
-            m->q[m->n++] = pcl_event_t { 0, type, note, vel };
+        const pcl_event_t e { (uint16_t)offset, type, note, vel };
+        if (out && out->count < out->cap)
+            out->data[out->count++] = e;
+        else if (!out && m->n < kMidiQueue)
+            m->q[m->n++] = e;
         else
             m->dropped++;
     }
-    void midi_release(MidiInNode *m, size_t slot) // a note off for every note the device holds
+    // a note off for every note the device holds
+    void midi_release(MidiInNode *m, size_t slot, EventBuf *out = nullptr, size_t offset = 0)
     {
         for (int note = 0; note < 128; note++)
             if (m->held[slot][note >> 3] & (1u << (note & 7)))
-                midi_queue(m, PCL_EVT_NOTE_OFF, (uint8_t)note, 0);
+                midi_emit(m, out, offset, PCL_EVT_NOTE_OFF, (uint8_t)note, 0);
         std::memset(m->held[slot], 0, sizeof m->held[slot]);
+    }
+    void midi_release_all(MidiInNode *m)
+    {
+        for (size_t slot = 0; slot < midi::kMaxInputs; slot++)
+            midi_release(m, slot);
     }
     bool midi_init(void *s, const NodeContext &ctx, const float *p)
     {
         auto *m = as<MidiInNode>(s);
         m->channel = (uint8_t)std::clamp(to_int(p[MIDI_CHANNEL]), 0, 16);
+        m->device = kMidiAnyDevice;
         m->k = 1.0f - std::exp(-1.0f / (0.003f * (float)ctx.sample_rate)); // 3 ms
         return true;
     }
@@ -108,16 +173,62 @@ namespace
     {
         auto *m = as<MidiInNode>(s);
         m->n = 0;
+        m->in.head = m->in.n = 0;
         std::memset(m->held, 0, sizeof m->held);
         m->bend = m->mod = m->pressure = m->velocity = 0;
         m->bend_s = m->mod_s = m->pressure_s = 0;
+    }
+    // One message taking effect at `offset` of the block.
+    void midi_apply(MidiInNode *m, const midi::Msg &msg, EventBuf &out, size_t offset)
+    {
+        using midi::Type;
+        const size_t slot = msg.slot < midi::kMaxInputs ? msg.slot : 0;
+        if (msg.type == Type::DeviceLost)
+        {
+            midi_release(m, slot, &out, offset);
+            return;
+        }
+        const uint8_t note = msg.data & 0x7F, bit = (uint8_t)(1u << (note & 7));
+        const float   v = (float)std::min<int>(msg.value, 127) / 127.0f;
+        switch (msg.type)
+        {
+        case Type::NoteOn:
+            midi_emit(
+                m, &out, offset, PCL_EVT_NOTE_ON, note, (uint8_t)std::min<int>(msg.value, 127));
+            m->held[slot][note >> 3] |= bit;
+            m->newest = note;
+            m->velocity = v;
+            break;
+        case Type::NoteOff:
+            midi_emit(m, &out, offset, PCL_EVT_NOTE_OFF, note, 0);
+            m->held[slot][note >> 3] &= (uint8_t)~bit;
+            break;
+        case Type::Control:
+            if (msg.data == 1) // the mod wheel
+                m->mod = v;
+            else if (msg.data == 120 || msg.data == 123) // all sound off, all notes off
+                midi_release(m, slot, &out, offset);
+            break;
+        case Type::PitchBend: // 0..16383 with 8192 in the middle, to -1..1
+            m->bend = std::clamp(((float)msg.value - 8192.0f) / 8191.0f, -1.0f, 1.0f);
+            break;
+        case Type::ChannelPressure:
+            m->pressure = v;
+            break;
+        case Type::KeyPressure:
+            if (note == m->newest)
+                m->pressure = v;
+            break;
+        default:
+            break;
+        }
     }
     void midi_process(void *s, NodeIo &io)
     {
         auto     *m = as<MidiInNode>(s);
         EventBuf &out = *io.evt_out[0];
         out.count = 0;
-        for (uint32_t i = 0; i < m->n; i++)
+        for (uint32_t i = 0; i < m->n; i++) // what was released between blocks
         {
             if (out.count < out.cap)
                 out.data[out.count++] = m->q[i];
@@ -125,22 +236,35 @@ namespace
                 m->dropped++;
         }
         m->n = 0;
-        // the signals, in the order of the ports: pitch bend, mod wheel, pressure, velocity
-        pcl_sample_t *bend = io.sig_out[0], *mod = io.sig_out[1], *pres = io.sig_out[2];
-        for (size_t i = 0; i < io.frames; i++)
+        // the signals, in the order of the ports: pitch bend, mod wheel, pressure, velocity. They
+        // are made in stretches, from one message to the next.
+        pcl_sample_t *bend = io.sig_out[0], *mod = io.sig_out[1], *pres = io.sig_out[2],
+                     *vel = io.sig_out[3];
+        size_t pos = 0;
+        auto   run = [&](size_t to)
         {
-            m->bend_s += m->k * (m->bend - m->bend_s);
-            m->mod_s += m->k * (m->mod - m->mod_s);
-            m->pressure_s += m->k * (m->pressure - m->pressure_s);
-            if (bend)
-                bend[i] = to_sample(m->bend_s);
-            if (mod)
-                mod[i] = to_sample(m->mod_s);
-            if (pres)
-                pres[i] = to_sample(m->pressure_s);
+            for (; pos < to; pos++)
+            {
+                m->bend_s += m->k * (m->bend - m->bend_s);
+                m->mod_s += m->k * (m->mod - m->mod_s);
+                m->pressure_s += m->k * (m->pressure - m->pressure_s);
+                if (bend)
+                    bend[pos] = to_sample(m->bend_s);
+                if (mod)
+                    mod[pos] = to_sample(m->mod_s);
+                if (pres)
+                    pres[pos] = to_sample(m->pressure_s);
+                if (vel)
+                    vel[pos] = to_sample(m->velocity);
+            }
+        };
+        while (const TimedMsg *t = timed_next(m->in, io.time + io.frames))
+        {
+            const size_t offset = t->at <= io.time ? 0 : (size_t)(t->at - io.time);
+            run(std::max(pos, offset));
+            midi_apply(m, t->m, out, offset);
         }
-        if (pcl_sample_t *vel = io.sig_out[3])
-            std::fill(vel, vel + io.frames, to_sample(m->velocity));
+        run(io.frames);
     }
     size_t         midi_cap(size_t) { return kMidiQueue; }
     const PortDesc kMidiInPorts[] = {
@@ -159,8 +283,7 @@ namespace
                 auto         *m = as<MidiInNode>(s);
                 const uint8_t c = (uint8_t)std::clamp(to_int(v), 0, 16);
                 if (c != m->channel)
-                    for (size_t slot = 0; slot < midi::kMaxInputs; slot++)
-                        midi_release(m, slot);
+                    midi_release_all(m);
                 m->channel = c;
                 return true;
             },
@@ -170,13 +293,15 @@ namespace
 
     // ============================================================================================================
     // MIDI CC One controller (a knob, a fader, a pedal) as a signal, 0 .. 1, smoothed over a few
-    // milliseconds so that its 128 steps do not click (docs/midi.md). It starts at 0 and keeps its
-    // value when the controller number or the channel changes.
+    // milliseconds so that its 128 steps do not click. It starts at 0 and keeps its value when the
+    // controller number, the channel or the device changes.
     struct MidiCcNode
     {
-        uint8_t channel; // 0: every channel, else 1..16
-        uint8_t cc;      // the controller number, 0..119
-        float   value, value_s, k;
+        MidiQueue in;
+        uint8_t   channel; // 0: every channel, else 1..16
+        uint8_t   cc;      // the controller number, 0..119
+        int       device;  // kMidiAnyDevice, kMidiNoDevice, or a slot
+        float     value, value_s, k;
     };
     enum
     {
@@ -189,6 +314,7 @@ namespace
         auto *c = as<MidiCcNode>(s);
         c->channel = (uint8_t)std::clamp(to_int(p[CC_CHANNEL]), 0, 16);
         c->cc = (uint8_t)std::clamp(to_int(p[CC_NUMBER]), 0, 119);
+        c->device = kMidiAnyDevice;
         c->k = 1.0f - std::exp(-1.0f / (0.003f * (float)ctx.sample_rate)); // 3 ms
         return true;
     }
@@ -196,17 +322,28 @@ namespace
     {
         auto *c = as<MidiCcNode>(s);
         c->value = c->value_s = 0;
+        c->in.head = c->in.n = 0;
     }
     void cc_process(void *s, NodeIo &io)
     {
         auto         *c = as<MidiCcNode>(s);
         pcl_sample_t *out = io.sig_out[0];
-        for (size_t i = 0; i < io.frames; i++)
+        size_t        pos = 0;
+        auto          run = [&](size_t to)
         {
-            c->value_s += c->k * (c->value - c->value_s);
-            if (out)
-                out[i] = to_sample(c->value_s);
+            for (; pos < to; pos++)
+            {
+                c->value_s += c->k * (c->value - c->value_s);
+                if (out)
+                    out[pos] = to_sample(c->value_s);
+            }
+        };
+        while (const TimedMsg *t = timed_next(c->in, io.time + io.frames))
+        {
+            run(std::max(pos, t->at <= io.time ? (size_t)0 : (size_t)(t->at - io.time)));
+            c->value = (float)std::min<int>(t->m.value, 127) / 127.0f;
         }
+        run(io.frames);
     }
     const PortDesc  kMidiCcPorts[] = { { "out", "OUT", Kind::Signal, true } };
     const ParamDesc kMidiCcParams[] = {
@@ -621,68 +758,54 @@ bool keyboard_push(void *state, uint64_t at, uint8_t type, uint8_t note, uint8_t
     return true;
 }
 
-void midi_in_push(void *state, const midi::Msg &msg)
+// A message for a MIDI In node: it waits in the node's queue until its sample. Filtered here by the
+// node's device and channel as they are now.
+void midi_in_push(void *state, const midi::Msg &msg, uint64_t at)
 {
     using midi::Type;
-    auto        *m = as<MidiInNode>(state);
-    const size_t slot = msg.slot < midi::kMaxInputs ? msg.slot : 0;
-    if (msg.type == Type::DeviceLost)
+    auto *m = as<MidiInNode>(state);
+    if (msg.type != Type::DeviceLost)
     {
-        midi_release(m, slot);
-        return;
+        if (msg.type >= Type::Clock) // the realtime messages: not used yet (docs/midi.md, step 9)
+            return;
+        if (!listens_to(m->device, msg) || (m->channel && msg.channel + 1 != m->channel))
+            return;
     }
-    if (msg.type >= Type::Clock) // the realtime messages: not used yet (docs/midi.md, step 9)
-        return;
-    if (m->channel && msg.channel + 1 != m->channel)
-        return;
-    const uint8_t note = msg.data & 0x7F, bit = (uint8_t)(1u << (note & 7));
-    const float   v = (float)std::min<int>(msg.value, 127) / 127.0f;
-    switch (msg.type)
-    {
-    case Type::NoteOn:
-        midi_queue(m, PCL_EVT_NOTE_ON, note, (uint8_t)std::min<int>(msg.value, 127));
-        m->held[slot][note >> 3] |= bit;
-        m->newest = note;
-        m->velocity = v;
-        break;
-    case Type::NoteOff:
-        midi_queue(m, PCL_EVT_NOTE_OFF, note, 0);
-        m->held[slot][note >> 3] &= (uint8_t)~bit;
-        break;
-    case Type::Control:
-        if (msg.data == 1) // the mod wheel
-            m->mod = v;
-        else if (msg.data == 120 || msg.data == 123) // all sound off, all notes off
-            midi_release(m, slot);
-        break;
-    case Type::PitchBend: // 0..16383 with 8192 in the middle, to -1..1
-        m->bend = std::clamp(((float)msg.value - 8192.0f) / 8191.0f, -1.0f, 1.0f);
-        break;
-    case Type::ChannelPressure:
-        m->pressure = v;
-        break;
-    case Type::KeyPressure:
-        if (note == m->newest)
-            m->pressure = v;
-        break;
-    default:
-        break;
-    }
+    if (!timed_push(m->in, at, msg))
+        m->dropped++;
 }
 
-void midi_cc_push(void *state, const midi::Msg &msg)
+void midi_cc_push(void *state, const midi::Msg &msg, uint64_t at)
 {
     auto *c = as<MidiCcNode>(state);
-    if (msg.type != midi::Type::Control || msg.data != c->cc)
+    if (msg.type != midi::Type::Control || msg.data != c->cc || !listens_to(c->device, msg))
         return;
     if (c->channel && msg.channel + 1 != c->channel)
         return;
-    c->value = (float)std::min<int>(msg.value, 127) / 127.0f;
+    timed_push(c->in, at, msg); // (full: this one change is lost; the next one is taken)
 }
 
 MidiPushFn midi_sink(const ModuleDesc &desc)
 {
     return &desc == &kMidiInDesc ? midi_in_push : &desc == &kMidiCcDesc ? midi_cc_push : nullptr;
+}
+
+// The device a MIDI module listens to: a slot, -1 for every device, -2 for none (its device is not
+// known here). The audio thread, as for a parameter. A MIDI In lets go of the notes it holds.
+bool midi_set_device(const ModuleDesc &desc, void *state, int device)
+{
+    if (&desc == &kMidiInDesc)
+    {
+        auto *m = as<MidiInNode>(state);
+        if (device != m->device)
+            midi_release_all(m);
+        m->device = device;
+    }
+    else if (&desc == &kMidiCcDesc)
+        as<MidiCcNode>(state)->device = device;
+    else
+        return false;
+    return true;
 }
 
 uint32_t midi_in_dropped(const void *state)

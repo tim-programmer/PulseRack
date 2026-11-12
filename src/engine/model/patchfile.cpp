@@ -1,6 +1,7 @@
 #include "engine/model/patchfile.h"
 
 #include "engine/model/registry.h"
+#include "engine/rt/modules_common.h"
 
 #include <algorithm>
 #include <cmath>
@@ -107,6 +108,10 @@ std::string save_patch(const Patch &patch)
                 + " note=" + std::to_string(st.note) + " vel=" + std::to_string(st.velocity)
                 + " gate=" + std::to_string(st.gate) + " tie=" + std::to_string(st.tie) + "\n";
         }
+        // a MIDI module's input, by name: the rest of the line (a name with a line break in it
+        // would break the file, and is not written)
+        if (!n->device.empty() && n->device.find_first_of("\r\n") == std::string::npos)
+            s += "device " + std::to_string(n->id) + " " + n->device + "\n";
     }
     for (const KeyScript &k : patch.keys)
         s += "key " + std::to_string(k.node) + " " + num(k.seconds) + (k.on ? " on " : " off ")
@@ -147,7 +152,25 @@ LoadResult load_patch(std::string_view text, Patch &out)
         lineno++;
         if (line.size() > kMaxLine)
             return fail("line too long");
-        const size_t hash = line.find('#');
+        // A device record is looked for before the comment is cut: its name is the rest of the
+        // line, and may hold a '#' ("nanoKONTROL2 #2").
+        std::string_view device_name;
+        bool             is_device = false;
+        if (const auto whole = split(line); header && !whole.empty() && whole[0] == "device")
+        {
+            is_device = true;
+            if (whole.size() >= 3)
+            {
+                const size_t from = (size_t)(whole[2].data() - line.data());
+                size_t       to = line.size();
+                while (to > from
+                    && (line[to - 1] == ' ' || line[to - 1] == '\t' || line[to - 1] == '\r'))
+                    to--;
+                device_name = line.substr(from, to - from);
+                line = line.substr(0, from); // "device <id>"
+            }
+        }
+        const size_t hash = is_device ? std::string_view::npos : line.find('#');
         if (hash != std::string_view::npos)
             line = line.substr(0, hash);
         const auto t = split(line);
@@ -277,6 +300,24 @@ LoadResult load_patch(std::string_view text, Patch &out)
                     return fail("unknown option '" + std::string(t[i]) + "'");
             }
             n->steps[idx] = st;
+        }
+        else if (t[0] == "device")
+        {
+            uint32_t id;
+            if (t.size() != 2 || !parse_uint(t[1], id, 1000000) || device_name.empty())
+                return fail("bad device record");
+            if (skipped.count(id))
+                continue;
+            Node *n = p.find(id);
+            if (!n)
+                return fail("device for a module that is not defined yet");
+            if (!midi_sink(*n->desc))
+            {
+                r.warnings.push_back("line " + std::to_string(lineno) + ": "
+                    + std::string(n->desc->id) + " has no MIDI device, skipped");
+                continue;
+            }
+            n->device = std::string(device_name);
         }
         else if (t[0] == "key")
         {
