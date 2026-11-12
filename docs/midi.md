@@ -1,6 +1,6 @@
 # MIDI controllers
 
-Status: **design, steps 1 to 5 built** (see the *As built* sections at the end). Where the two differ, *As built* and the code win.
+Status: **design, steps 1 to 6 built** (see the *As built* sections at the end). Where the two differ, *As built* and the code win.
 
 MIDI keyboards and controllers playing and turning the rack: notes into a patch, controls (knobs, faders, the mod wheel)
 into signals, and a controller's knobs turning the knobs on screen.
@@ -109,7 +109,7 @@ and the knob moves on screen; a sweep becomes one undo step, like a knob drag. M
    unique names, tests that need no hardware, and a `pulserack-midi` monitor. *(built)*
 4. **Engine:** drain every device ring in `render()`; lost messages per device in the telemetry. *(built)*
 5. **MIDI In module**, and the inputs in the device menu (a switch per device). *(built, without the Device parameter)*
-6. **MIDI CC module.**
+6. **MIDI CC module.** *(built, without the Device parameter)*
 7. **Global MIDI learn.**
 8. **Sample-accurate timing:** a message's timestamp turned into a sample offset with one block of fixed latency
    (a constant delay instead of up to a block of jitter: 5.3 ms at 256 frames and 48 kHz).
@@ -207,3 +207,20 @@ two semitones and the mod wheel opening the filter.
 
 **Not yet checked:** the real controller playing through the speakers, the device menu's switches by hand, and how the
 latency feels (a block of the device plus up to a block of jitter).
+
+## As built (step 6)
+
+**MIDI CC** (`midi_cc`, 6 HP, in `modules_glue.cpp`): a **Channel** selector (Omni, 1 to 16) and a **Controller** knob
+(0 to 119, 1 at first: the mod wheel); one output, 0 .. 1, smoothed over 3 ms. It starts at 0 (a controller's position is
+not known until it moves) and keeps its value when the controller number or the channel is changed. Like MIDI In it has no
+Device parameter yet: it hears every input that is switched on. No 14-bit pairs.
+
+To find a control's number, run `pulserack-midi` and move the control: the second figure of its `control` line is the
+number. (MIDI learn, step 7, will make this unnecessary for knobs on screen.)
+
+**Engine.** The feed is no longer tied to one module type: `midi_sink(desc)` gives the function that takes MIDI for a
+module type (MIDI In, MIDI CC) or null, and a plan lists every such module (`Snapshot::midi_ins`) with its function.
+
+**Checked** (`rack_tests`): the default controller from any channel and device, the smoothing, other controllers and notes
+ignored, a change of controller number keeping the value, the channel filter, a MIDI In beside it getting the same
+messages, `reset()`. The panel was looked at in a screenshot. **Not yet checked:** a real controller's knob through it.

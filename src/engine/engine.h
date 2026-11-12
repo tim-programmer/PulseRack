@@ -141,9 +141,10 @@ private:
         bool                     restart = false; // time back to 0 when adopted
         Plan                     plan;
         std::vector<ScriptEvent> script;
-        std::vector<void *>      midi_ins; // the MIDI In modules' states
-        std::vector<Probe>       probes;   // in plan order
-        std::vector<float>       activity; // per step, written by Plan::run
+        // the modules that take MIDI: each one's function (modules_common.h, midi_sink) and state
+        std::vector<std::pair<void (*)(void *, const midi::Msg &), void *>> midi_ins;
+        std::vector<Probe>                                                  probes; // in plan order
+        std::vector<float> activity; // per step, written by Plan::run
     };
     struct Cmd
     {

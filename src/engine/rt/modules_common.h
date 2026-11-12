@@ -29,8 +29,13 @@ namespace midi
 {
     struct Msg;
 }
-void     midi_in_push(void *state, const midi::Msg &m);
-uint32_t midi_in_dropped(const void *state); // notes it had no room for
+void midi_in_push(void *state, const midi::Msg &m);
+void midi_cc_push(void *state, const midi::Msg &m); // the same for a MIDI CC node
+// The function that takes MIDI messages for a module of this type (the engine gives every message
+// to every such module), or null for a module that takes none.
+using MidiPushFn = void (*)(void *state, const midi::Msg &m);
+MidiPushFn midi_sink(const ModuleDesc &desc);
+uint32_t   midi_in_dropped(const void *state); // notes it had no room for
 // How many events the sequencer, arpeggiator or clock dropped for lack of room (telemetry for the
 // panel's LED).
 uint32_t dropped_events(const ModuleDesc &desc, const void *state);
@@ -45,6 +50,6 @@ int32_t module_position(const ModuleDesc &desc, const void *state);
 extern const ModuleDesc kOscDesc, kNoiseDesc, kSahDesc, kLfoDesc, kAdsrDesc, kVcaDesc, kSvfDesc,
     kBiquadDesc, kClockDesc, kArpDesc, kSeqDesc;
 extern const ModuleDesc kKeyboardDesc, kAudioOutDesc, kMixerDesc, kAttenuverterDesc,
-    kNoteToGateDesc, kMergeDesc, kScopeDesc, kMidiInDesc;
+    kNoteToGateDesc, kMergeDesc, kScopeDesc, kMidiInDesc, kMidiCcDesc;
 
 } // namespace rack

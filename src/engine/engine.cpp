@@ -97,8 +97,8 @@ Engine::Snapshot *Engine::build_snapshot(bool restart)
         {
             const Live &l = live_.at(id);
             s->probes.push_back(Probe { l.slot, l.desc, l.mem.get() });
-            if (l.desc == &kMidiInDesc)
-                s->midi_ins.push_back(l.mem.get());
+            if (const MidiPushFn push = midi_sink(*l.desc))
+                s->midi_ins.push_back({ push, l.mem.get() });
         }
         s->activity.assign(s->probes.size(), 0.f);
     }
@@ -353,8 +353,8 @@ void Engine::discard_midi()
         }
 }
 
-// Every message that has arrived, to every MIDI In module, device by device (the order within a
-// device is kept). With no MIDI In module they are taken and dropped, so nothing piles up.
+// Every message that has arrived, to every MIDI In and MIDI CC module, device by device (the order
+// within a device is kept). With no MIDI In module they are taken and dropped, so nothing piles up.
 void Engine::feed_midi()
 {
     if (!midi_)
@@ -363,8 +363,8 @@ void Engine::feed_midi()
     for (midi::Inbox &box : *midi_)
         while (box.ring.pop(m))
             if (cur_ && cur_->ok)
-                for (void *s : cur_->midi_ins)
-                    midi_in_push(s, m);
+                for (const auto &[push, state] : cur_->midi_ins)
+                    push(state, m);
 }
 
 namespace

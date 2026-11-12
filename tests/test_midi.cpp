@@ -275,6 +275,53 @@ TEST(midi_in_signals)
     }
 }
 
+TEST(midi_cc_follows_its_controller_on_its_channel)
+{
+    Rig            r;
+    auto           boxes = std::make_unique<Inboxes>();
+    const uint32_t cc = r.add("midi_cc"), out = r.add("out");
+    r.e.set_midi(boxes.get());
+    r.param(out, "level", 1);
+    CHECK(r.cable(cc, "out", out, "l") == Err::Ok);
+    CHECK(r.compile());
+    auto send = [&](const Msg &m) { (*boxes)[m.slot].push(m); };
+    auto now = [&](size_t frames = 4800)
+    {
+        r.render(frames);
+        return r.L.back();
+    };
+    CHECK(now() == 0.0f); // nothing yet
+    // the default controller is 1 (the mod wheel), on any channel, from any device
+    send(msg(Type::Control, 1, 127, 5, 3));
+    r.render(16); // smoothed: not there at once
+    CHECK(r.L.back() > 0.0f && r.L.back() < 0.5f);
+    CHECK(std::fabs(now() - 1.0f) < 0.01f);
+    send(msg(Type::Control, 74, 0)); // another controller: not ours
+    send(msg(Type::NoteOn, 1, 0));   // nor a note with the same number
+    CHECK(std::fabs(now() - 1.0f) < 0.01f);
+    // another controller number: the value stays until that controller moves
+    r.param(cc, "cc", 74);
+    CHECK(std::fabs(now() - 1.0f) < 0.01f);
+    send(msg(Type::Control, 1, 0));
+    CHECK(std::fabs(now() - 1.0f) < 0.01f);
+    send(msg(Type::Control, 74, 32));
+    CHECK(std::fabs(now() - 32.0f / 127) < 0.01f);
+    // one channel only
+    r.param(cc, "channel", 3);
+    send(msg(Type::Control, 74, 127, 0));
+    CHECK(std::fabs(now() - 32.0f / 127) < 0.01f);
+    send(msg(Type::Control, 74, 127, 2));
+    CHECK(std::fabs(now() - 1.0f) < 0.01f);
+    // a MIDI In beside it gets the same messages: both are fed
+    const uint32_t in = r.add("midi_in");
+    CHECK(r.e.patch().disconnect({ out, (uint16_t)r.port(out, "l") }) == Err::Ok);
+    CHECK(r.cable(in, "mod", out, "l") == Err::Ok && r.compile());
+    send(msg(Type::Control, 1, 127));
+    CHECK(std::fabs(now() - 1.0f) < 0.01f);
+    r.e.reset();
+    CHECK(now() == 0.0f);
+}
+
 TEST(midi_messages_are_taken_with_no_midi_in_module_and_can_be_discarded)
 {
     Rig  r;

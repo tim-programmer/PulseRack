@@ -169,6 +169,65 @@ namespace
     static_assert(std::size(kMidiInParams) == MIDI_COUNT);
 
     // ============================================================================================================
+    // MIDI CC One controller (a knob, a fader, a pedal) as a signal, 0 .. 1, smoothed over a few
+    // milliseconds so that its 128 steps do not click (docs/midi.md). It starts at 0 and keeps its
+    // value when the controller number or the channel changes.
+    struct MidiCcNode
+    {
+        uint8_t channel; // 0: every channel, else 1..16
+        uint8_t cc;      // the controller number, 0..119
+        float   value, value_s, k;
+    };
+    enum
+    {
+        CC_CHANNEL,
+        CC_NUMBER,
+        CC_COUNT
+    };
+    bool cc_init(void *s, const NodeContext &ctx, const float *p)
+    {
+        auto *c = as<MidiCcNode>(s);
+        c->channel = (uint8_t)std::clamp(to_int(p[CC_CHANNEL]), 0, 16);
+        c->cc = (uint8_t)std::clamp(to_int(p[CC_NUMBER]), 0, 119);
+        c->k = 1.0f - std::exp(-1.0f / (0.003f * (float)ctx.sample_rate)); // 3 ms
+        return true;
+    }
+    void cc_reset(void *s)
+    {
+        auto *c = as<MidiCcNode>(s);
+        c->value = c->value_s = 0;
+    }
+    void cc_process(void *s, NodeIo &io)
+    {
+        auto         *c = as<MidiCcNode>(s);
+        pcl_sample_t *out = io.sig_out[0];
+        for (size_t i = 0; i < io.frames; i++)
+        {
+            c->value_s += c->k * (c->value - c->value_s);
+            if (out)
+                out[i] = to_sample(c->value_s);
+        }
+    }
+    const PortDesc  kMidiCcPorts[] = { { "out", "OUT", Kind::Signal, true } };
+    const ParamDesc kMidiCcParams[] = {
+        param(
+            "channel", "Channel", "", 0, 16, 0, Scale::Enum, Control::Selector,
+            [](void *s, float v)
+            {
+                as<MidiCcNode>(s)->channel = (uint8_t)std::clamp(to_int(v), 0, 16);
+                return true;
+            },
+            kMidiChannels),
+        param("cc", "Controller", "", 0, 119, 1, Scale::Int, Control::Knob,
+            [](void *s, float v)
+            {
+                as<MidiCcNode>(s)->cc = (uint8_t)std::clamp(to_int(v), 0, 119);
+                return true;
+            }),
+    };
+    static_assert(std::size(kMidiCcParams) == CC_COUNT);
+
+    // ============================================================================================================
     // Audio Output The sink: the only module that knows the host. It adds its inputs, scaled, to
     // the engine's float master buffers; the engine clamps the sum to +-1. One input alone plays on
     // both channels.
@@ -611,6 +670,21 @@ void midi_in_push(void *state, const midi::Msg &msg)
     }
 }
 
+void midi_cc_push(void *state, const midi::Msg &msg)
+{
+    auto *c = as<MidiCcNode>(state);
+    if (msg.type != midi::Type::Control || msg.data != c->cc)
+        return;
+    if (c->channel && msg.channel + 1 != c->channel)
+        return;
+    c->value = (float)std::min<int>(msg.value, 127) / 127.0f;
+}
+
+MidiPushFn midi_sink(const ModuleDesc &desc)
+{
+    return &desc == &kMidiInDesc ? midi_in_push : &desc == &kMidiCcDesc ? midi_cc_push : nullptr;
+}
+
 uint32_t midi_in_dropped(const void *state)
 {
     return static_cast<const MidiInNode *>(state)->dropped;
@@ -626,6 +700,9 @@ RACK_GLUE(kKeyboardDesc, "keyboard", "Keyboard", kEvent, 6, KeyboardNode, kKeybo
 RACK_GLUE(kMidiInDesc, "midi_in", "MIDI In", kEvent, 8, MidiInNode, kMidiInPorts, kMidiInParams,
     midi_init, midi_reset, midi_process, midi_cap,
     "Notes, pitch bend, the mod wheel and pressure from MIDI keyboards and controllers");
+RACK_GLUE(kMidiCcDesc, "midi_cc", "MIDI CC", kEvent, 6, MidiCcNode, kMidiCcPorts, kMidiCcParams,
+    cc_init, cc_reset, cc_process, nullptr,
+    "One knob, fader or pedal of a MIDI controller as a signal");
 RACK_GLUE(kAudioOutDesc, "out", "Audio Output", kUtility, 4, AudioOutNode, kOutPorts, kOutParams,
     out_init, nullptr, out_process, nullptr,
     "Sends a signal to the speakers; L alone plays on both");
