@@ -1113,9 +1113,117 @@ struct Driver
             CHECK(near(rack_viewport(cx(), ed).x, 10, 1.f));
             CHECK(node(osc)->x == x0 && e().selected_node == 0 && !e().pdrag.active);
             drag_with(GP_MOUSE_MIDDLE, spot, { spot.x + 200, spot.y + 100 }); // and on empty rack
+            e().pan_probe = nullptr;
             CHECK(rack_viewport(cx(), ed).x == 0 && rack_viewport(cx(), ed).y == 0);
             k = control(osc, "frequency");
             CHECK(near(k.x, k0.x, 1.f) && near(k.y, k0.y, 1.f));
+        }
+
+        // ---- MIDI learn: right-click a control, move a controller; it then turns that control of
+        // whichever module is selected. (No device here: the test puts the messages in an inbox.)
+        {
+            auto cc = [&](uint8_t number, uint16_t value, uint8_t channel = 0)
+            {
+                midi::Msg m;
+                m.type = midi::Type::Control;
+                m.data = number;
+                m.value = value;
+                m.channel = channel;
+                (*e().midi_boxes)[0].push(m);
+                e().pump_controls(cx());
+                wait();
+            };
+            // a right-click on a control opens its menu; "MIDI learn" is its first item
+            auto learn = [&](gp_point at)
+            {
+                click(at, GP_MOUSE_RIGHT);
+                wait(0.1);
+                const gp_point item = control_menu_item(cx(), ed, 0);
+                CHECK(item.x >= 0 && e().learn_control == -1); // the menu is open; nothing yet
+                click(item);
+                wait(0.1);
+                CHECK(control_menu_item(cx(), ed, 0).x < 0); // and closed again
+            };
+            const int    fi = find_param(*node(osc)->desc, "frequency");
+            const size_t undo0 = e().undo_stack.size();
+            cc(74, 127); // nothing is mapped yet
+            CHECK(param(osc, "frequency") == freq.def && e().settings.learn.empty());
+            k = control(osc, "frequency");
+            learn(k);
+            CHECK(e().learn_control == fi && e().selected_node == osc);
+            CHECK(e().hint().find("MIDI learn: move a knob") != std::string::npos);
+            cc(74, 100); // the controller that moves is the one mapped; the knob has not turned yet
+            CHECK(e().learn_control == -1 && param(osc, "frequency") == freq.def);
+            CHECK((e().settings.learn == std::vector<Learn> { { 0, 74, fi, "" } }));
+            CHECK(e().hint().find("CC 74 now turns control") != std::string::npos);
+            cc(74, 127);
+            CHECK(param(osc, "frequency") == freq.max);
+            cc(74, 0);
+            CHECK(param(osc, "frequency") == freq.min);
+            cc(74, 64);
+            CHECK(near(to_travel(freq, param(osc, "frequency")), 64.f / 127, 1e-3f));
+            // the whole sweep is one undo step at most (it joins the step of the knob's last
+            // change)
+            CHECK(e().undo_stack.size() <= undo0 + 1);
+            cc(75, 127);    // another controller,
+            cc(74, 127, 3); // or the same one on another channel: not mapped
+            CHECK(near(to_travel(freq, param(osc, "frequency")), 64.f / 127, 1e-3f));
+            // the mapping is to a place, not to this knob: another module selected, its control
+            // at that place turns
+            uint32_t other = 0;
+            for (const Node &n : e().engine.patch().nodes())
+                if (n.id != osc && (int)n.desc->params.size() > fi
+                    && n.desc->params[(size_t)fi].control == Control::Knob)
+                    other = n.id;
+            CHECK(other != 0);
+            if (other)
+            {
+                const ParamDesc &op = node(other)->desc->params[(size_t)fi];
+                e().select_node(cx(), other);
+                cc(74, 127);
+                CHECK(node(other)->params[(size_t)fi] == op.max);
+                CHECK(near(to_travel(freq, param(osc, "frequency")), 64.f / 127, 1e-3f));
+                cc(74, (uint16_t)std::lround(to_travel(op, op.def) * 127));
+                e().set_param(cx(), other, (size_t)fi, op.def);
+            }
+            // with no module selected it says what to do
+            e().select_node(cx(), 0);
+            cc(74, 10);
+            CHECK(e().hint().find("click a module to select it") != std::string::npos);
+            // learning the same place again replaces the mapping; Escape cancels
+            learn(k);
+            cc(20, 1);
+            CHECK((e().settings.learn == std::vector<Learn> { { 0, 20, fi, "" } }));
+            learn(k);
+            CHECK(e().learn_control == fi);
+            gp_simulate_keystrokes(app, "escape");
+            wait();
+            CHECK(e().learn_control == -1 && e().settings.learn.size() == 1);
+            // the menu of a control with a mapping can forget it (its second item); the last item
+            // and a press elsewhere only close the menu
+            click(k, GP_MOUSE_RIGHT);
+            wait(0.1);
+            click(control_menu_item(cx(), ed, 2)); // Cancel
+            wait(0.1);
+            CHECK(control_menu_item(cx(), ed, 0).x < 0 && e().settings.learn.size() == 1);
+            click(k, GP_MOUSE_RIGHT);
+            wait(0.1);
+            click(control_menu_item(cx(), ed, 1)); // Forget its mapping
+            wait(0.1);
+            CHECK(e().settings.learn.empty() && e().learn_control == -1);
+            // a selector and a switch have the menu too
+            click(control(osc, "waveform"), GP_MOUSE_RIGHT);
+            wait(0.1);
+            CHECK(control_menu_item(cx(), ed, 0).x >= 0);
+            click({ rack_origin().x + 900, rack_origin().y + 600 }); // empty rack: it closes
+            wait(0.1);
+            CHECK(control_menu_item(cx(), ed, 0).x < 0 && param(osc, "waveform") == 2);
+            e().settings.learn = { { 0, 1, 0, "" }, { 0, 2, 1, "" } };
+            e().forget_learned(cx()); // (the device menu's item: every mapping)
+            CHECK(e().settings.learn.empty());
+            e().select_node(cx(), 0);
+            click(k, GP_MOUSE_LEFT, 2); // back to the default for what follows
+            CHECK(param(osc, "frequency") == freq.def);
         }
 
         // ---- a selector: the right half is the next choice, the left half the previous

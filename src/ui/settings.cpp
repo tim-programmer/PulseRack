@@ -2,6 +2,7 @@
 
 #include "ui/files.h"
 
+#include <cstdio>
 #include <cstdlib>
 #include <filesystem>
 #include <sstream>
@@ -33,6 +34,10 @@ std::string settings_text(const Settings &s)
     for (const std::string &m : s.midi_inputs)
         if (!m.empty() && !has_newline(m))
             t += "midi-input " + m + "\n";
+    for (const Learn &l : s.learn)
+        if (!has_newline(l.device))
+            t += "learn " + std::to_string(l.channel + 1) + " " + std::to_string(l.cc) + " "
+                + std::to_string(l.control + 1) + (l.device.empty() ? "" : " " + l.device) + "\n";
     return t;
 }
 
@@ -56,6 +61,20 @@ bool parse_settings(const std::string &text, Settings *out, std::vector<std::str
             s.output = rest;
         else if (key == "midi-input" && !rest.empty())
             s.midi_inputs.push_back(rest);
+        else if (key == "learn")
+        {
+            int ch = 0, cc = 0, control = 0, used = 0;
+            if (std::sscanf(rest.c_str(), "%d %d %d%n", &ch, &cc, &control, &used) == 3 && ch >= 1
+                && ch <= 16 && cc >= 0 && cc <= 119 && control >= 1 && control <= 256)
+            {
+                std::string device = rest.substr((size_t)used);
+                if (!device.empty() && device[0] == ' ')
+                    device.erase(0, 1);
+                s.learn.push_back(Learn { ch - 1, cc, control - 1, device });
+            }
+            else if (warnings)
+                warnings->push_back("settings line " + std::to_string(n) + ": not a learn line");
+        }
         else if (warnings)
             warnings->push_back(
                 "settings line " + std::to_string(n) + ": '" + key + "' is not known");

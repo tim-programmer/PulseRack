@@ -1,6 +1,6 @@
 # MIDI controllers
 
-Status: **design, steps 1 to 6 built** (see the *As built* sections at the end). Where the two differ, *As built* and the code win.
+Status: **design, steps 1 to 7 built** (see the *As built* sections at the end). Where the two differ, *As built* and the code win.
 
 MIDI keyboards and controllers playing and turning the rack: notes into a patch, controls (knobs, faders, the mod wheel)
 into signals, and a controller's knobs turning the knobs on screen.
@@ -110,7 +110,7 @@ and the knob moves on screen; a sweep becomes one undo step, like a knob drag. M
 4. **Engine:** drain every device ring in `render()`; lost messages per device in the telemetry. *(built)*
 5. **MIDI In module**, and the inputs in the device menu (a switch per device). *(built, without the Device parameter)*
 6. **MIDI CC module.** *(built, without the Device parameter)*
-7. **Global MIDI learn.**
+7. **Global MIDI learn.** *(built)*
 8. **Sample-accurate timing:** a message's timestamp turned into a sample offset with one block of fixed latency
    (a constant delay instead of up to a block of jitter: 5.3 ms at 256 frames and 48 kHz).
 9. **Later:** per-patch mappings, MIDI clock in to the clock and sequencer (`PCL_EVT_CLOCK/START/STOP`), MIDI out.
@@ -224,3 +224,35 @@ module type (MIDI In, MIDI CC) or null, and a plan lists every such module (`Sna
 **Checked** (`rack_tests`): the default controller from any channel and device, the smoothing, other controllers and notes
 ignored, a change of controller number keeping the value, the channel filter, a MIDI In beside it getting the same
 messages, `reset()`. The panel was looked at in a screenshot. **Not yet checked:** a real controller's knob through it.
+
+## As built (step 7)
+
+**Using it.** Right-click a knob, slider, selector or switch: a small menu opens under it with **MIDI learn**, *Forget its
+mapping (CC n)* if that place has one, and *Cancel* (a press elsewhere closes it too). *MIDI learn* selects the control's
+module and the hint line asks for a controller to be moved (Escape cancels). The first control change that arrives is mapped to **that place** (control N of a module, in
+the descriptor's order), not to that one knob: from then on the controller turns control N of **whichever module is
+selected**. With no module selected, moving it says so. Learning a place again replaces its mapping, and a controller has one
+place. *Forget the MIDI learn mappings* is in the device menu while there are any.
+
+**How.** The audio thread, as it feeds the modules, also passes every control change on to the UI through a ring
+(`Engine::take_control`; 1024 messages, more are dropped). With no audio thread the call feeds the modules itself, so learn
+works with audio off. `Editor::pump_controls` takes them 60 times a second (only while MIDI is on) and `midi_control` either
+finishes a learn or looks the controller up by **device name, channel and number**. The value goes through
+`Editor::set_param`, so the model is the source of truth, the knob moves on screen and a sweep is one undo step (it has the
+knob's own merge key). A knob, slider or selector takes the controller's 0 .. 127 as its travel (`from_travel`); a switch is
+on from 64. Mappings are `learn` lines in the settings file (channel and control written from 1).
+
+The learn messages are shown in the hint line even though the pointer is still on the control that was right-clicked
+(`Editor::notice`): without that, the control's own hint hid them.
+
+**Differences from the design:** none in what it does. Not done: per-patch mappings (step 9), soft takeover (a knob jumps to
+the controller's position on its first move), and any mark on a control that has a mapping.
+
+**Checked.** `rack_tests`: the settings' `learn` lines (round trip, names with spaces, bad lines skipped with a warning); the
+engine passing control changes on, in order, with and without rendering, and dropping what the ring cannot hold. `ui_smoke`:
+an unmapped controller does nothing; a right-click opens the control's menu and *MIDI learn* in it starts a learn and
+selects the module (the menu's *Cancel*, its *Forget its mapping*, a press on empty rack, and the menu on a selector too); the controller that moves is
+mapped without turning the knob; then 127, 0 and 64 give the ends and the middle of the travel in one undo step; another
+controller or channel does nothing; with another module selected its control at that place turns and the first module's does
+not; with none selected the hint says so; learning again replaces; Escape cancels; forgetting empties the list.
+**Not yet checked:** a real controller's knob, and the menu by hand (it was not looked at in a screenshot).

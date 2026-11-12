@@ -362,9 +362,20 @@ void Engine::feed_midi()
     midi::Msg m;
     for (midi::Inbox &box : *midi_)
         while (box.ring.pop(m))
+        {
+            if (m.type == midi::Type::Control)
+                controls_.push(m); // for the UI (MIDI learn); dropped if it is not taking them
             if (cur_ && cur_->ok)
                 for (const auto &[push, state] : cur_->midi_ins)
                     push(state, m);
+        }
+}
+
+bool Engine::take_control(midi::Msg &out)
+{
+    if (!attached_)
+        feed_midi(); // no audio thread: this thread is the audio side
+    return controls_.pop(out);
 }
 
 namespace

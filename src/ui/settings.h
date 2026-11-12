@@ -4,6 +4,9 @@
 //   pulserack-settings 1
 //   output <name>         the sound card (missing: the system's default)
 //   midi-input <name>     a MIDI input that is switched on, one line each
+//   learn <channel> <controller> <control> <device name>
+//                         MIDI learn: this controller (channel 1..16, number 0..119) of this device
+//                         turns control number <control> (from 1) of the selected module
 //
 // No window here, so the headless tests use it.
 #pragma once
@@ -14,10 +17,22 @@
 namespace rack::ui
 {
 
+// One MIDI learn mapping (docs/midi.md, *MIDI learn*).
+struct Learn
+{
+    int channel = 0;    // 0..15
+    int cc = 0;         // the controller number
+    int control = 0;    // which control of the selected module, from 0, in the descriptor's order
+    std::string device; // the input's name (empty: one with no name, as in the tests)
+
+    bool operator==(const Learn &) const = default;
+};
+
 struct Settings
 {
     std::string              output;      // empty: the system's default
     std::vector<std::string> midi_inputs; // switched on, by name
+    std::vector<Learn>       learn;       // the MIDI learn mappings
 
     bool operator==(const Settings &) const = default;
 };

@@ -44,6 +44,8 @@ public:
     bool is_open(const std::string &name) const;
     // A name's slot (its inbox), -1 if it has none yet. A name keeps its slot for the whole run.
     int slot_of(const std::string &name) const;
+    // The name a slot belongs to, empty if it has none.
+    std::string name_of(int slot) const;
 
 private:
     struct Impl;

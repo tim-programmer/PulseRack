@@ -59,7 +59,21 @@ struct Editor
     // What the device menu lists: the inputs present, then those switched on but not plugged in.
     std::vector<std::string> midi_menu_names() const;
     bool                     midi_input_open(const std::string &name) const;
-    int                      midi_open_count() const;
+
+    // MIDI learn (docs/midi.md): a right-click on a control waits for a controller to move
+    // (learn_control: which control of its module, -1: not learning) and maps it to that place on
+    // whichever module is selected; a mapped controller then turns that control. The mappings are
+    // in the settings.
+    int         learn_control = -1;
+    gpuic::Task control_task; // 60 Hz while MIDI is on: takes the control changes
+    void        learn_begin(gpuic::Ctx cx, uint32_t node, size_t param);
+    void        learn_cancel(gpuic::Ctx cx);
+    void        forget_learned(gpuic::Ctx cx);                 // every mapping
+    void        forget_learned_at(gpuic::Ctx cx, int control); // the mapping of one place
+    // Takes every control change that has come in and acts on it (the task; the tests call it).
+    void pump_controls(gpuic::Ctx cx);
+    void midi_control(gpuic::Ctx cx, const midi::Msg &m);
+    int  midi_open_count() const;
     // The sound card, declared after the engine so it stops before the engine goes (and the Editor
     // is an entity, so both go before gpuic's SDL_Quit). Null until audio is first started.
     std::unique_ptr<audio::AudioOut> audio;
@@ -205,9 +219,15 @@ struct Editor
     // what is under the pointer, or the last action.
     std::string hint() const
     {
-        return drag.active || mdrag.moved || pdrag.moved || hover_text.empty() ? status
-                                                                               : hover_text;
+        return notice || drag.active || mdrag.moved || pdrag.moved || hover_text.empty()
+            ? status
+            : hover_text;
     }
+    // The status is shown even with the pointer over something (MIDI learn's messages: the pointer
+    // is still on the control that was right-clicked). Until the pointer goes somewhere else.
+    bool        notice = false;
+    uint32_t    notice_node = 0; // the control the pointer was on when the notice was given
+    int         notice_item = 0;
     std::string describe_item(uint32_t node, int item) const;
 
     // Cables: either end may be given first (a drag can start at an input). Each compiles the
@@ -360,5 +380,8 @@ RackViewport rack_viewport(gpuic::Ctx cx, gpuic::Entity<Editor> ed);
 // The window position of a node's control or jack centre, or of its title bar (param = -1).
 gp_point control_center(gpuic::Ctx cx, gpuic::Entity<Editor> ed, uint32_t node, int param);
 gp_point port_center(gpuic::Ctx cx, gpuic::Entity<Editor> ed, uint32_t node, size_t port);
+// The middle of item `index` (from 0) of the control menu that is open (a right-click on a
+// control: "MIDI learn", "Forget its mapping" if it has one, "Cancel"); { -1, -1 } if none is.
+gp_point control_menu_item(gpuic::Ctx cx, gpuic::Entity<Editor> ed, int index);
 
 } // namespace rack::ui

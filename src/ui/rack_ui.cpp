@@ -67,14 +67,14 @@ namespace
         {
         case Control::Knob:
         case Control::Slider:
-            how = "drag up or down (Shift: fine), wheel, double-click: default";
+            how = "drag up or down (Shift: fine), wheel, double-click: default, right-click: menu";
             break;
         case Control::Selector:
-            how = "click < or >, or use the wheel";
+            how = "click < or >, or use the wheel, right-click: menu";
             break;
         case Control::Switch:
         case Control::Button:
-            how = "click to switch";
+            how = "click to switch, right-click: menu";
             break;
         }
         return std::string(d.name) + "  ·  " + std::string(p.name) + ": " + format_value(p, value)
@@ -377,6 +377,7 @@ struct Browser
 };
 
 void open_menu(Ctx cx, Editor &e, uint32_t node); // the panel's right-click menu (in the rack view)
+void open_control_menu(Ctx cx, Editor &e, uint32_t node, size_t param); // a control's (MIDI learn)
 
 // =====================================================================================================
 // A panel: one module, a cached view of its own, so turning a knob rebuilds this panel only.
@@ -427,6 +428,8 @@ struct PanelView
     {
         const Node *n = find(cx);
         Editor     *e = ed.get(cx);
+        if (n && ev.button == GP_MOUSE_RIGHT)
+            open_control_menu(cx, *e, node, i);
         if (!n || ev.button != GP_MOUSE_LEFT)
             return;
         const ParamDesc &p = n->desc->params[i];
@@ -1025,7 +1028,13 @@ struct PanelView
                         .child(label(format_value(p, value), 11, st::kText))
                         .child(label(">", 12, st::kSubtext)))
                 .cursor_pointer()
-                .on_mouse_down([](PanelView &) { }) // a control's press, not the panel's
+                // a control's press, not the panel's (the right button: MIDI learn)
+                .on_mouse_down(
+                    [i](PanelView &self, Ctx cx, const gp_mouse_event &ev)
+                    {
+                        if (ev.button == GP_MOUSE_RIGHT)
+                            open_control_menu(cx, *self.ed.get(cx), self.node, i);
+                    })
                 .on_click([i, w = r.w](PanelView &self, Ctx cx, const gp_mouse_event &ev)
                     { self.click(cx, i, ev, w); })
                 .on_wheel([i](PanelView &self, Ctx cx, const gp_wheel_event &ev)
@@ -1069,7 +1078,13 @@ struct PanelView
                            .child(std::move(body)))
                 .child(std::move(name))
                 .cursor_pointer()
-                .on_mouse_down([](PanelView &) { }) // a control's press, not the panel's
+                // a control's press, not the panel's (the right button: MIDI learn)
+                .on_mouse_down(
+                    [i](PanelView &self, Ctx cx, const gp_mouse_event &ev)
+                    {
+                        if (ev.button == GP_MOUSE_RIGHT)
+                            open_control_menu(cx, *self.ed.get(cx), self.node, i);
+                    })
                 .on_click([i, w = r.w](PanelView &self, Ctx cx, const gp_mouse_event &ev)
                     { self.click(cx, i, ev, w); });
             break;
@@ -1264,6 +1279,15 @@ void open_cable_menu(Ctx cx, Editor &e, PortRef to, Pt at); // a cable's right-c
 namespace
 {
     constexpr float kRailH = 12; // a rack rail's height
+
+    // A control's right-click menu: under the control, its left edge at the control's (rack
+    // pixels).
+    constexpr float kControlMenuW = 190, kControlMenuPad = 4, kMenuItemH = 26;
+    Pt              control_menu_origin(const Node &n, size_t param)
+    {
+        const Rect &r = panel_layout(*n.desc).params[param];
+        return { n.x * kHp + kPanelBorder + r.x, n.y * kHp + kPanelBorder + r.y + r.h + 2 };
+    }
 
     Element ring(Pt c, float r, Color col, float width)
     {
@@ -1476,13 +1500,15 @@ struct RackView
     Entity<Editor>         ed;
     Scroll                 scroll;
     uint32_t               menu_node = 0; // the panel whose menu is open
+    uint32_t               ctrl_node = 0; // or the control whose menu is open: its node and which
+    size_t                 ctrl_param = 0;
     std::optional<PortRef> menu_cable; // or the cable whose menu is open, at menu_at (rack pixels)
     Pt                     menu_at;
 
     template <class F> static Element menu_item(std::string text, Color c, F &&f)
     {
         return div()
-            .h(26)
+            .h(kMenuItemH)
             .px(8)
             .rounded(3)
             .flex_row()
@@ -1523,8 +1549,9 @@ struct RackView
                   .on_mouse_down(
                       [](RackView &self, Ctx cx, const gp_mouse_event &ev)
                       {
-                          if (self.menu_node || self.menu_cable)
+                          if (self.menu_node || self.menu_cable || self.ctrl_node)
                           {
+                              self.ctrl_node = 0;
                               self.menu_node = 0;
                               self.menu_cable.reset();
                               cx.notify();
@@ -1655,6 +1682,53 @@ struct RackView
                             cx.notify();
                         })));
         }
+        // a control's menu, under the control: MIDI learn
+        if (const Node *n = ctrl_node ? patch.find(ctrl_node) : nullptr;
+            n && ctrl_param < n->desc->params.size())
+        {
+            const uint32_t id = ctrl_node;
+            const size_t   pi = ctrl_param;
+            const Pt       at = control_menu_origin(*n, pi);
+            const auto     it = std::find_if(e->settings.learn.begin(), e->settings.learn.end(),
+                [&](const Learn &l) { return l.control == (int)pi; });
+            Element        menu = div()
+                                      .absolute()
+                                      .left(at.x)
+                                      .top(at.y)
+                                      .w(kControlMenuW)
+                                      .p(kControlMenuPad)
+                                      .rounded(5)
+                                      .bg(st::kSurfaceHi)
+                                      .border(1)
+                                      .border_color(st::kBorder)
+                                      .shadow(0, 6, 16, with_alpha(rgb(0x000000), 0.5f))
+                                      .on_mouse_down([](RackView &) { });
+            menu.child(menu_item("MIDI learn", st::kText,
+                [id, pi](RackView &self, Ctx cx)
+                {
+                    self.ctrl_node = 0;
+                    cx.notify();
+                    if (Editor *ed = self.ed.get(cx))
+                        ed->learn_begin(cx, id, pi);
+                }));
+            if (it != e->settings.learn.end())
+                menu.child(menu_item("Forget its mapping  (CC " + std::to_string(it->cc) + ")",
+                    st::kDanger,
+                    [pi](RackView &self, Ctx cx)
+                    {
+                        self.ctrl_node = 0;
+                        cx.notify();
+                        if (Editor *ed = self.ed.get(cx))
+                            ed->forget_learned_at(cx, (int)pi);
+                    }));
+            menu.child(menu_item("Cancel", st::kText,
+                [](RackView &self, Ctx cx)
+                {
+                    self.ctrl_node = 0;
+                    cx.notify();
+                }));
+            content.child(std::move(menu));
+        }
         if (const Node *n = menu_node ? patch.find(menu_node) : nullptr)
         {
             const uint32_t id = menu_node;
@@ -1699,6 +1773,20 @@ void open_menu(Ctx cx, Editor &e, uint32_t node)
         [node](RackView &r, Ctx c)
         {
             r.menu_node = node;
+            r.ctrl_node = 0;
+            r.menu_cable.reset();
+            c.notify();
+        });
+}
+
+void open_control_menu(Ctx cx, Editor &e, uint32_t node, size_t param)
+{
+    e.rack.update(cx,
+        [node, param](RackView &r, Ctx c)
+        {
+            r.ctrl_node = node;
+            r.ctrl_param = param;
+            r.menu_node = 0;
             r.menu_cable.reset();
             c.notify();
         });
@@ -1711,6 +1799,7 @@ void open_cable_menu(Ctx cx, Editor &e, PortRef to, Pt at)
         [to, at](RackView &r, Ctx c)
         {
             r.menu_node = 0;
+            r.ctrl_node = 0;
             r.menu_cable = to;
             r.menu_at = at;
             c.notify();
@@ -1901,6 +1990,10 @@ struct Overlay
                             label(e->midi_error.empty() ? std::string("No MIDI input is connected.")
                                                         : e->midi_error,
                                 12, st::kSubtext)));
+            if (!e->settings.learn.empty())
+                menu.child(item("Forget the MIDI learn mappings  ("
+                        + std::to_string(e->settings.learn.size()) + ")",
+                    "", [](Overlay &self, Ctx c) { self.ed.get(c)->forget_learned(c); }));
             layer.child(std::move(menu));
             return layer;
         }
@@ -2142,6 +2235,7 @@ void Editor::start_midi(Ctx cx)
         status = "MIDI inputs are connected: switch them on in the device menu (top right, beside "
                  "Audio).";
     midi_task = cx.app().ctx(self).every(0.25, [](Editor &e, Ctx c) { e.poll_midi(c); });
+    control_task = cx.app().ctx(self).every(1.0 / 60, [](Editor &e, Ctx c) { e.pump_controls(c); });
 }
 
 void Editor::poll_midi(Ctx cx)
@@ -2210,6 +2304,121 @@ void Editor::toggle_midi_input(Ctx cx, const std::string &name)
     hint_line.update(cx, [](HintLine &, Ctx c) { c.notify(); });
     toolbar.update(cx, [](Toolbar &, Ctx c) { c.notify(); });
     overlay.update(cx, [](Overlay &, Ctx c) { c.notify(); });
+}
+
+// ---- MIDI learn
+
+void Editor::learn_begin(Ctx cx, uint32_t node, size_t param)
+{
+    const Node *n = engine.patch().find(node);
+    if (!n || param >= n->desc->params.size())
+        return;
+    select_node(cx, node);
+    learn_control = (int)param;
+    notice = true; // (the pointer is on the control: its own hint would hide this)
+    notice_node = node;
+    notice_item = (int)param;
+    say(cx,
+        "MIDI learn: move a knob or fader on your controller to map it to "
+            + std::string(n->desc->params[param].name) + " (control " + std::to_string(param + 1)
+            + " of the selected module).      Escape cancels.");
+    hint_line.update(cx, [](HintLine &, Ctx c) { c.notify(); });
+}
+
+void Editor::learn_cancel(Ctx cx)
+{
+    if (learn_control < 0)
+        return;
+    learn_control = -1;
+    notice = true;
+    say(cx, "MIDI learn cancelled.");
+    hint_line.update(cx, [](HintLine &, Ctx c) { c.notify(); });
+}
+
+void Editor::forget_learned_at(Ctx cx, int control)
+{
+    std::erase_if(settings.learn, [&](const Learn &l) { return l.control == control; });
+    if (std::string err; !save_settings(config_dir, settings, &err))
+        say(cx, err + ".");
+    else
+        say(cx, "The MIDI mapping of control " + std::to_string(control + 1) + " is forgotten.");
+    notice = true;
+    hint_line.update(cx, [](HintLine &, Ctx c) { c.notify(); });
+}
+
+void Editor::forget_learned(Ctx cx)
+{
+    settings.learn.clear();
+    if (std::string err; !save_settings(config_dir, settings, &err))
+        say(cx, err + ".");
+    else
+        say(cx, "The MIDI learn mappings are forgotten.");
+    hint_line.update(cx, [](HintLine &, Ctx c) { c.notify(); });
+    overlay.update(cx, [](Overlay &, Ctx c) { c.notify(); });
+}
+
+void Editor::pump_controls(Ctx cx)
+{
+    midi::Msg m;
+    while (engine.take_control(m))
+        midi_control(cx, m);
+}
+
+void Editor::midi_control(Ctx cx, const midi::Msg &m)
+{
+    if (m.data >= 120) // channel mode messages (all notes off...), not controls
+        return;
+    std::string device;
+#if PULSERACK_MIDI
+    if (midi)
+        device = midi->name_of(m.slot);
+#endif
+    auto same = [&](const Learn &l)
+    { return l.channel == m.channel && l.cc == m.data && l.device == device; };
+    const std::string from
+        = "CC " + std::to_string(m.data) + (device.empty() ? std::string() : " of " + device);
+    if (learn_control >= 0)
+    { // one controller per place, one place per controller
+        const int control = learn_control;
+        learn_control = -1;
+        notice = true;
+        std::erase_if(
+            settings.learn, [&](const Learn &l) { return same(l) || l.control == control; });
+        settings.learn.push_back(Learn { m.channel, m.data, control, device });
+        if (std::string err; !save_settings(config_dir, settings, &err))
+            say(cx, err + ".");
+        else
+            say(cx,
+                from + " now turns control " + std::to_string(control + 1)
+                    + " of whichever module is selected.");
+        hint_line.update(cx, [](HintLine &, Ctx c) { c.notify(); });
+        return;
+    }
+    const auto it = std::find_if(settings.learn.begin(), settings.learn.end(), same);
+    if (it == settings.learn.end())
+        return;
+    const Node *n = engine.patch().find(selected_node);
+    if (!n)
+    {
+        notice = true;
+        say(cx,
+            from + " turns control " + std::to_string(it->control + 1)
+                + " of the selected module: click a module to select it.");
+        hint_line.update(cx, [](HintLine &, Ctx c) { c.notify(); });
+        return;
+    }
+    if ((size_t)it->control >= n->desc->params.size())
+        return; // this module has fewer controls
+    const ParamDesc &p = n->desc->params[(size_t)it->control];
+    const float      t = (float)std::min<int>(m.value, 127) / 127.0f;
+    const float      v = p.control == Control::Switch || p.control == Control::Button
+        ? (t >= 0.5f ? p.max : p.min)
+        : from_travel(p, t);
+    if (v != n->params[(size_t)it->control])
+    {
+        set_param(cx, selected_node, (size_t)it->control, v); // (a sweep is one undo step)
+        hint_line.update(cx, [](HintLine &, Ctx c) { c.notify(); });
+    }
 }
 
 std::vector<std::string> Editor::midi_menu_names() const
@@ -2949,6 +3158,10 @@ void Editor::jack_release(Ctx cx, gp_point window)
 
 void Editor::hover(Ctx cx, uint32_t node, int item, bool inside)
 {
+    // the pointer has moved on to something else (the same control entered again, as happens
+    // when its panel is drawn again, is not that)
+    if (inside && (node != notice_node || item != notice_item))
+        notice = false;
     if (inside)
     {
         hover_node = node;
@@ -3188,6 +3401,7 @@ void Editor::forget_view_state(Ctx cx)
     if (RackView *rv = rack.get(cx))
     {
         rv->menu_node = 0;
+        rv->ctrl_node = 0;
         rv->menu_cable.reset();
     }
     overlay.update(cx, [](Overlay &, Ctx c) { c.notify(); });
@@ -3264,6 +3478,7 @@ bool Editor::search_focused(Ctx cx)
 
 void Editor::close_overlays(Ctx cx)
 {
+    learn_cancel(cx); // Escape
     if (!file_menu_open && !ask.shown && !device_menu_open)
         return;
     file_menu_open = false;
@@ -3479,6 +3694,7 @@ bool Editor::open_text(Ctx cx, const std::string &text, const std::string &name,
     if (RackView *rv = rack.get(cx))
     {
         rv->menu_node = 0;
+        rv->ctrl_node = 0;
         rv->menu_cable.reset();
         rv->scroll.to(cx, 0, 0);
     }
@@ -3678,6 +3894,20 @@ gp_point control_center(Ctx cx, Entity<Editor> ed, uint32_t node, int param)
     if (n->desc->params[(size_t)param].control == Control::Knob)
         return at(kPanelBorder + r.x + r.w / 2, kPanelBorder + r.y + kKnobSize / 2);
     return at(kPanelBorder + r.x + r.w / 2, kPanelBorder + r.y + r.h / 2);
+}
+
+gp_point control_menu_item(Ctx cx, Entity<Editor> ed, int index)
+{
+    Editor     *e = ed.get(cx);
+    RackView   *rv = e ? e->rack.get(cx) : nullptr;
+    const Node *n = rv && rv->ctrl_node ? e->engine.patch().find(rv->ctrl_node) : nullptr;
+    if (!n)
+        return { -1, -1 };
+    const RackViewport vp = viewport_of(cx, *e);
+    const gp_point     o = rack_origin();
+    const Pt           at = control_menu_origin(*n, rv->ctrl_param);
+    return { o.x + (at.x + kControlMenuW / 2 - vp.x) * vp.zoom,
+        o.y + (at.y + kControlMenuPad + ((float)index + 0.5f) * kMenuItemH - vp.y) * vp.zoom };
 }
 
 gp_point port_center(Ctx cx, Entity<Editor> ed, uint32_t node, size_t port)

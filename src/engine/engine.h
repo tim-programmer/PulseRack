@@ -79,6 +79,10 @@ public:
     // Throws away what waits in the inboxes (detached only): before audio starts, so that what was
     // played while it was off is not heard all at once.
     void discard_midi();
+    // The control changes (CC) that came by MIDI, for MIDI learn: one per call, in order, false
+    // when there is none. (The UI thread. The audio thread passes them on as it feeds the
+    // modules; while none is attached this call feeds the modules itself.)
+    bool take_control(midi::Msg &out);
     void reset(); // every module back to its start, time 0, the key script from the top
     // Every module made again at a new rate (the audio device's), time 0.
     void set_sample_rate(uint32_t rate);
@@ -193,6 +197,7 @@ private:
     SpscRing<Snapshot *, 256> retired_;
     std::atomic<uint64_t>     adopted_gen_ { 0 };
     SpscRing<Cmd, 4096>       cmds_;
+    SpscRing<midi::Msg, 1024> controls_; // MIDI control changes, audio thread to UI (full: dropped)
     std::atomic<uint64_t>     time_ { 0 };
     std::atomic<uint32_t>     apply_failures_ { 0 }, nonfinite_ { 0 };
     Telemetry                 telemetry_;

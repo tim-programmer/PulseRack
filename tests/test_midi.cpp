@@ -368,9 +368,9 @@ TEST(settings_round_trip_and_unknown_lines)
 
     // a newer file: unknown lines are skipped with a warning; CRLF and comments are fine
     CHECK(rack::ui::parse_settings(
-        "pulserack-settings 2\r\n# hello\r\nlearn 1 2 3\r\nmidi-input A\r\n", &back, &warnings));
+        "pulserack-settings 2\r\n# hello\r\ncolour blue\r\nmidi-input A\r\n", &back, &warnings));
     CHECK(back.output.empty() && back.midi_inputs == std::vector<std::string> { "A" });
-    CHECK(warnings.size() == 1 && warnings[0].find("'learn'") != std::string::npos);
+    CHECK(warnings.size() == 1 && warnings[0].find("'colour'") != std::string::npos);
 
     // not a settings file: refused, the result untouched
     back.output = "kept";
@@ -382,6 +382,52 @@ TEST(settings_round_trip_and_unknown_lines)
     Settings bad;
     bad.output = "a\nmidi-input b";
     CHECK(rack::ui::settings_text(bad) == "pulserack-settings 1\n");
+}
+
+TEST(settings_learn_lines)
+{
+    Settings s;
+    s.learn = { { 0, 74, 2, "Arturia KeyStep 37 MIDI 1" }, { 15, 7, 0, "" } };
+    const std::string t = rack::ui::settings_text(s);
+    // channels and controls are written from 1; a device name keeps its spaces
+    CHECK(t == "pulserack-settings 1\nlearn 1 74 3 Arturia KeyStep 37 MIDI 1\nlearn 16 7 1\n");
+    Settings                 back;
+    std::vector<std::string> warnings;
+    CHECK(rack::ui::parse_settings(t, &back, &warnings) && back == s && warnings.empty());
+    // lines that are not mappings are skipped with a warning
+    CHECK(rack::ui::parse_settings("pulserack-settings 1\nlearn 0 74 1 x\nlearn 1 200 1 x\nlearn 1 "
+                                   "74 0 x\nlearn a b c\nlearn 2 "
+                                   "3 4 ok\n",
+        &back, &warnings));
+    CHECK(warnings.size() == 4);
+    CHECK((back.learn == std::vector<rack::ui::Learn> { { 1, 3, 3, "ok" } }));
+}
+
+TEST(midi_control_changes_are_passed_on_for_midi_learn)
+{
+    MidiRig r("mod");
+    Msg     m;
+    CHECK(!r.e.take_control(m));
+    r.send(msg(Type::NoteOn, 60, 100)); // not a control
+    r.send(msg(Type::Control, 74, 99, 2, 4));
+    r.send(msg(Type::Control, 1, 127));
+    // with no audio thread, taking them also feeds the modules: the mod wheel has moved
+    CHECK(r.e.take_control(m) && m.type == Type::Control && m.data == 1 && m.value == 127);
+    CHECK(r.e.take_control(m) && m.data == 74 && m.value == 99 && m.channel == 2 && m.slot == 4);
+    CHECK(!r.e.take_control(m));
+    CHECK(std::fabs(r.now(4800) - 1.0f) < 0.01f);
+    // rendering passes them on too, and more than the ring holds are dropped, not blocked on
+    for (int i = 0; i < 1500; i++)
+    {
+        r.send(msg(Type::Control, 20, (uint16_t)(i % 128)));
+        if (i % 100 == 99)
+            r.render(64);
+    }
+    r.render(64);
+    int n = 0;
+    while (r.e.take_control(m))
+        n++;
+    CHECK(n == 1024);
 }
 
 TEST(settings_on_disk)

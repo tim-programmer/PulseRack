@@ -256,4 +256,9 @@ bool Inputs::is_open(const std::string &name) const
 
 int Inputs::slot_of(const std::string &name) const { return impl_->slot_of(name); }
 
+std::string Inputs::name_of(int slot) const
+{
+    return slot >= 0 && (size_t)slot < kMaxInputs ? impl_->slot_name[(size_t)slot] : std::string();
+}
+
 } // namespace rack::midi
