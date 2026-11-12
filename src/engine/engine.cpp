@@ -97,6 +97,8 @@ Engine::Snapshot *Engine::build_snapshot(bool restart)
         {
             const Live &l = live_.at(id);
             s->probes.push_back(Probe { l.slot, l.desc, l.mem.get() });
+            if (l.desc == &kMidiInDesc)
+                s->midi_ins.push_back(l.mem.get());
         }
         s->activity.assign(s->probes.size(), 0.f);
     }
@@ -338,6 +340,33 @@ void Engine::feed_script(uint64_t upto)
     }
 }
 
+void Engine::set_midi(midi::Inboxes *inboxes) { midi_ = inboxes; }
+
+void Engine::discard_midi()
+{
+    if (!midi_ || attached_)
+        return;
+    midi::Msg m;
+    for (midi::Inbox &box : *midi_)
+        while (box.ring.pop(m))
+        {
+        }
+}
+
+// Every message that has arrived, to every MIDI In module, device by device (the order within a
+// device is kept). With no MIDI In module they are taken and dropped, so nothing piles up.
+void Engine::feed_midi()
+{
+    if (!midi_)
+        return;
+    midi::Msg m;
+    for (midi::Inbox &box : *midi_)
+        while (box.ring.pop(m))
+            if (cur_ && cur_->ok)
+                for (void *s : cur_->midi_ins)
+                    midi_in_push(s, m);
+}
+
 namespace
 {
     void raise_to(std::atomic<float> &a, float v)
@@ -356,6 +385,7 @@ void Engine::render(size_t frames, float *left, float *right)
         float       *l = left + done;
         float       *r = right + done;
         begin_block();
+        feed_midi();
         std::memset(l, 0, n * sizeof(float));
         std::memset(r, 0, n * sizeof(float));
         const uint64_t t = time_.load(std::memory_order_relaxed);

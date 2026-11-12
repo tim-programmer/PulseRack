@@ -23,6 +23,14 @@ inline bool                  ok(pcl_status_t s) { return s == PCL_OK; }
 // Schedules a key event for a Keyboard node at an absolute sample position (engine time). False if
 // its queue is full.
 bool keyboard_push(void *state, uint64_t at, uint8_t type, uint8_t note, uint8_t velocity);
+// A MIDI message for a MIDI In node (the audio thread): notes go out with its next block, controls
+// move its signals, DeviceLost releases what that device holds (docs/midi.md, *Modules*).
+namespace midi
+{
+    struct Msg;
+}
+void     midi_in_push(void *state, const midi::Msg &m);
+uint32_t midi_in_dropped(const void *state); // notes it had no room for
 // How many events the sequencer, arpeggiator or clock dropped for lack of room (telemetry for the
 // panel's LED).
 uint32_t dropped_events(const ModuleDesc &desc, const void *state);
@@ -37,6 +45,6 @@ int32_t module_position(const ModuleDesc &desc, const void *state);
 extern const ModuleDesc kOscDesc, kNoiseDesc, kSahDesc, kLfoDesc, kAdsrDesc, kVcaDesc, kSvfDesc,
     kBiquadDesc, kClockDesc, kArpDesc, kSeqDesc;
 extern const ModuleDesc kKeyboardDesc, kAudioOutDesc, kMixerDesc, kAttenuverterDesc,
-    kNoteToGateDesc, kMergeDesc, kScopeDesc;
+    kNoteToGateDesc, kMergeDesc, kScopeDesc, kMidiInDesc;
 
 } // namespace rack

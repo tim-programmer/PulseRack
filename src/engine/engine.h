@@ -19,6 +19,7 @@
 #include "engine/model/plan.h"
 #include "engine/model/scope.h"
 #include "engine/rt/spsc.h"
+#include "midi/inbox.h"
 
 #include <array>
 #include <atomic>
@@ -70,7 +71,14 @@ public:
     Err set_step(uint32_t node, size_t index, const StepData &step);
     // A live key press for a Keyboard node, heard at the start of the next block (or at `at`, an
     // absolute sample).
-    Err  key(uint32_t node, bool on, uint8_t note, uint8_t velocity = 100, int64_t at = -1);
+    Err key(uint32_t node, bool on, uint8_t note, uint8_t velocity = 100, int64_t at = -1);
+    // Where MIDI messages arrive (docs/midi.md, *Threads*): render() takes every message out of
+    // every inbox at the start of a block and gives it to each MIDI In module. The inboxes must
+    // outlive the engine's last render(). Set it (or null) only while no audio thread is attached.
+    void set_midi(midi::Inboxes *inboxes);
+    // Throws away what waits in the inboxes (detached only): before audio starts, so that what was
+    // played while it was off is not heard all at once.
+    void discard_midi();
     void reset(); // every module back to its start, time 0, the key script from the top
     // Every module made again at a new rate (the audio device's), time 0.
     void set_sample_rate(uint32_t rate);
@@ -133,6 +141,7 @@ private:
         bool                     restart = false; // time back to 0 when adopted
         Plan                     plan;
         std::vector<ScriptEvent> script;
+        std::vector<void *>      midi_ins; // the MIDI In modules' states
         std::vector<Probe>       probes;   // in plan order
         std::vector<float>       activity; // per step, written by Plan::run
     };
@@ -165,6 +174,7 @@ private:
     void begin_block();
     void apply(const Cmd &c);
     void feed_script(uint64_t upto);
+    void feed_midi();
 
     // UI-owned
     uint32_t                                   sample_rate_;
@@ -187,8 +197,9 @@ private:
     Telemetry                 telemetry_;
 
     // audio-owned
-    Snapshot *cur_ = nullptr;
-    size_t    script_pos_ = 0;
+    midi::Inboxes *midi_ = nullptr; // (set while detached)
+    Snapshot      *cur_ = nullptr;
+    size_t         script_pos_ = 0;
 };
 
 } // namespace rack

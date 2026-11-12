@@ -192,7 +192,8 @@ struct Toolbar
                     .rounded(4)
                     .cursor_pointer()
                     .hover_bg(st::kSurfaceHi)
-                    .child(label((e ? e->audio_status() : std::string()) + "  v", 12, st::kDim))
+                    .child(label((e ? e->audio_status() + e->midi_status() : std::string()) + "  v",
+                        12, st::kDim))
                     .on_click([](Toolbar &self, Ctx cx) { self.ed.get(cx)->open_device_menu(cx); }))
             .child(div()
                     .w(st::kAudioW)
@@ -1862,6 +1863,46 @@ struct Overlay
                                 .size()) // (a copy: the list is read again on the next opening)
                             ed2->choose_device(c, std::string(ed2->devices[k].name));
                     }));
+            // the MIDI inputs: each is switched on or off (several may be on); the menu stays open
+            menu.child(div()
+                    .h(st::kFileHeaderH)
+                    .flex_shrink_0()
+                    .px(10)
+                    .flex_row()
+                    .items_end()
+                    .pb(3)
+                    .child(label("MIDI inputs  (click to switch on or off)", 10, st::kDim)));
+            const std::vector<std::string> names = e->midi_menu_names();
+            for (size_t k = 0; k < names.size(); k++)
+            {
+                const std::string &n = names[k];
+                const bool         on
+                    = std::find(e->settings.midi_inputs.begin(), e->settings.midi_inputs.end(), n)
+                    != e->settings.midi_inputs.end();
+                const bool here = std::find(e->midi_available.begin(), e->midi_available.end(), n)
+                    != e->midi_available.end();
+                menu.child(item(std::string(on ? "*  " : "   ") + n
+                        + (here ? (on && !e->midi_input_open(n) ? "   (could not be opened)" : "")
+                                : "   (not connected)"),
+                    "",
+                    [k](Overlay &self, Ctx c)
+                    { // (a handler keeps no string: the name is looked up again by its place)
+                        Editor                        *ed2 = self.ed.get(c);
+                        const std::vector<std::string> now = ed2->midi_menu_names();
+                        if (k < now.size())
+                            ed2->toggle_midi_input(c, now[k]);
+                    }));
+            }
+            if (names.empty())
+                menu.child(div()
+                        .h(st::kFileItemH)
+                        .px(10)
+                        .flex_row()
+                        .items_center()
+                        .child(
+                            label(e->midi_error.empty() ? std::string("No MIDI input is connected.")
+                                                        : e->midi_error,
+                                12, st::kSubtext)));
             layer.child(std::move(menu));
             return layer;
         }
@@ -2066,7 +2107,8 @@ bool Editor::start_audio(Ctx cx)
     if (!audio)
         audio = std::make_unique<audio::AudioOut>(engine);
     std::string err;
-    const bool  ok = audio->start(&err, audio_device);
+    engine.discard_midi(); // what was played while audio was off is not heard all at once
+    const bool ok = audio->start(&err, audio_device);
     audio_error = ok ? std::string() : err;
     if (ok)
     {
@@ -2080,9 +2122,120 @@ bool Editor::start_audio(Ctx cx)
     return ok;
 }
 
+// ---- MIDI
+
+#if PULSERACK_MIDI
+void Editor::start_midi(Ctx cx)
+{
+    midi = std::make_unique<midi::Inputs>(*midi_boxes);
+    std::string err;
+    if (!midi->start(&err))
+    {
+        midi_error = "MIDI: " + err;
+        midi.reset();
+        return;
+    }
+    std::vector<std::string> errors;
+    midi->set_enabled(settings.midi_inputs, &errors);
+    for (const std::string &e : errors)
+        say(cx, "MIDI: " + e + ".");
+    midi_available = midi->available();
+    if (settings.midi_inputs.empty() && !midi_available.empty() && status.empty())
+        status = "MIDI inputs are connected: switch them on in the device menu (top right, beside "
+                 "Audio).";
+    midi_task = cx.app().ctx(self).every(0.25, [](Editor &e, Ctx c) { e.poll_midi(c); });
+}
+
+void Editor::poll_midi(Ctx cx)
+{
+    if (!midi)
+        return;
+    std::vector<std::string> before;
+    for (const std::string &n : midi->enabled())
+        if (midi->is_open(n))
+            before.push_back(n);
+    std::vector<std::string> errors;
+    if (!midi->poll(&errors) && errors.empty())
+        return;
+    for (const std::string &n : midi->enabled())
+    {
+        const bool was = std::find(before.begin(), before.end(), n) != before.end();
+        if (midi->is_open(n) != was)
+            say(cx, was ? "MIDI input gone: " + n + "." : "MIDI input connected: " + n + ".");
+    }
+    for (const std::string &e : errors)
+        say(cx, "MIDI: " + e + ".");
+    midi_available = midi->available();
+    hint_line.update(cx, [](HintLine &, Ctx c) { c.notify(); });
+    toolbar.update(cx, [](Toolbar &, Ctx c) { c.notify(); });
+    overlay.update(cx, [](Overlay &, Ctx c) { c.notify(); });
+}
+
+bool Editor::midi_input_open(const std::string &name) const { return midi && midi->is_open(name); }
+
+int Editor::midi_open_count() const
+{
+    int n = 0;
+    if (midi)
+        for (const std::string &name : midi->enabled())
+            n += midi->is_open(name);
+    return n;
+}
+#else
+void Editor::start_midi(Ctx) { midi_error = "This PulseRack was built without MIDI."; }
+void Editor::poll_midi(Ctx) { }
+bool Editor::midi_input_open(const std::string &) const { return false; }
+int  Editor::midi_open_count() const { return 0; }
+#endif
+
+void Editor::toggle_midi_input(Ctx cx, const std::string &name)
+{
+    auto      &on = settings.midi_inputs;
+    const auto it = std::find(on.begin(), on.end(), name);
+    const bool now = it == on.end();
+    if (now)
+        on.push_back(name);
+    else
+        on.erase(it);
+    if (std::string err; !save_settings(config_dir, settings, &err))
+        say(cx, err + ".");
+#if PULSERACK_MIDI
+    if (midi)
+    {
+        std::vector<std::string> errors;
+        midi->set_enabled(on, &errors);
+        say(cx,
+            errors.empty() ? "MIDI input " + name + (now ? ": on." : ": off.")
+                           : "MIDI: " + errors[0] + ".");
+    }
+#endif
+    hint_line.update(cx, [](HintLine &, Ctx c) { c.notify(); });
+    toolbar.update(cx, [](Toolbar &, Ctx c) { c.notify(); });
+    overlay.update(cx, [](Overlay &, Ctx c) { c.notify(); });
+}
+
+std::vector<std::string> Editor::midi_menu_names() const
+{
+    std::vector<std::string> names = midi_available;
+    for (const std::string &n : settings.midi_inputs) // switched on, but not plugged in
+        if (std::find(names.begin(), names.end(), n) == names.end())
+            names.push_back(n);
+    return names;
+}
+
+std::string Editor::midi_status() const
+{
+    const int n = midi_open_count();
+    return n ? "  ·  MIDI " + std::to_string(n) : std::string();
+}
+
 void Editor::open_device_menu(Ctx cx)
 {
     std::string err;
+#if PULSERACK_MIDI
+    if (midi)
+        midi_available = midi->available();
+#endif
     devices = audio::AudioOut::outputs(&err);
     device_menu_open = true;
     file_menu_open = false;
@@ -3444,6 +3597,9 @@ Entity<Editor> open_rack(App app, const Options &opt, std::string *error)
     w.width = (int)st::kWindowW;
     w.height = (int)st::kWindowH;
     app.open_window(w, root);
+    e->engine.set_midi(e->midi_boxes.get()); // (no audio thread yet)
+    if (opt.midi)
+        e->start_midi(app.ctx(ed));
     if (opt.audio) // a failure is shown in the toolbar and the hint line; the window works without
         e->start_audio(app.ctx(ed));
     return ed;

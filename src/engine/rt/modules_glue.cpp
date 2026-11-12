@@ -4,7 +4,9 @@
 #include "engine/rt/modules_common.h"
 
 #include "engine/model/scope.h"
+#include "midi/inbox.h"
 
+#include <algorithm>
 #include <cmath>
 
 #include <cstring>
@@ -56,6 +58,115 @@ namespace
     }
     size_t         kb_cap(size_t) { return 64; }
     const PortDesc kKeyboardPorts[] = { { "notes", "NOTES", Kind::Event, true } };
+
+    // ============================================================================================================
+    // MIDI In Notes and controls from MIDI devices (docs/midi.md). The engine hands it every
+    // message at the start of a block (midi_in_push, below); notes go out as events at offset 0 of
+    // that block, and pitch bend, the mod wheel and pressure are signals, smoothed over a few
+    // milliseconds so that steps of 1/127 do not click. It remembers which notes each device holds,
+    // so that a device that goes away (or a change of channel) releases them.
+    constexpr size_t kMidiQueue = 128;
+    struct MidiInNode
+    {
+        pcl_event_t q[kMidiQueue]; // the notes for the next block
+        uint32_t    n;
+        uint8_t     held[midi::kMaxInputs][16]; // per device slot: a bit per note
+        uint8_t     channel;                    // 0: every channel, else 1..16
+        uint8_t     newest;                     // the note pressed last (key pressure follows it)
+        float       bend, mod, pressure, velocity; // where the signals are going
+        float       bend_s, mod_s, pressure_s;     // where they are
+        float       k;                             // the smoothing, per sample
+        uint32_t    dropped;
+    };
+    enum
+    {
+        MIDI_CHANNEL,
+        MIDI_COUNT
+    };
+    void midi_queue(MidiInNode *m, uint8_t type, uint8_t note, uint8_t vel)
+    {
+        if (m->n < kMidiQueue)
+            m->q[m->n++] = pcl_event_t { 0, type, note, vel };
+        else
+            m->dropped++;
+    }
+    void midi_release(MidiInNode *m, size_t slot) // a note off for every note the device holds
+    {
+        for (int note = 0; note < 128; note++)
+            if (m->held[slot][note >> 3] & (1u << (note & 7)))
+                midi_queue(m, PCL_EVT_NOTE_OFF, (uint8_t)note, 0);
+        std::memset(m->held[slot], 0, sizeof m->held[slot]);
+    }
+    bool midi_init(void *s, const NodeContext &ctx, const float *p)
+    {
+        auto *m = as<MidiInNode>(s);
+        m->channel = (uint8_t)std::clamp(to_int(p[MIDI_CHANNEL]), 0, 16);
+        m->k = 1.0f - std::exp(-1.0f / (0.003f * (float)ctx.sample_rate)); // 3 ms
+        return true;
+    }
+    void midi_reset(void *s)
+    {
+        auto *m = as<MidiInNode>(s);
+        m->n = 0;
+        std::memset(m->held, 0, sizeof m->held);
+        m->bend = m->mod = m->pressure = m->velocity = 0;
+        m->bend_s = m->mod_s = m->pressure_s = 0;
+    }
+    void midi_process(void *s, NodeIo &io)
+    {
+        auto     *m = as<MidiInNode>(s);
+        EventBuf &out = *io.evt_out[0];
+        out.count = 0;
+        for (uint32_t i = 0; i < m->n; i++)
+        {
+            if (out.count < out.cap)
+                out.data[out.count++] = m->q[i];
+            else
+                m->dropped++;
+        }
+        m->n = 0;
+        // the signals, in the order of the ports: pitch bend, mod wheel, pressure, velocity
+        pcl_sample_t *bend = io.sig_out[0], *mod = io.sig_out[1], *pres = io.sig_out[2];
+        for (size_t i = 0; i < io.frames; i++)
+        {
+            m->bend_s += m->k * (m->bend - m->bend_s);
+            m->mod_s += m->k * (m->mod - m->mod_s);
+            m->pressure_s += m->k * (m->pressure - m->pressure_s);
+            if (bend)
+                bend[i] = to_sample(m->bend_s);
+            if (mod)
+                mod[i] = to_sample(m->mod_s);
+            if (pres)
+                pres[i] = to_sample(m->pressure_s);
+        }
+        if (pcl_sample_t *vel = io.sig_out[3])
+            std::fill(vel, vel + io.frames, to_sample(m->velocity));
+    }
+    size_t         midi_cap(size_t) { return kMidiQueue; }
+    const PortDesc kMidiInPorts[] = {
+        { "notes", "NOTES", Kind::Event, true },
+        { "bend", "BEND", Kind::Signal, true },
+        { "mod", "MOD", Kind::Signal, true },
+        { "pressure", "PRESS", Kind::Signal, true },
+        { "velocity", "VEL", Kind::Signal, true },
+    };
+    constexpr std::string_view kMidiChannels[] = { "Omni", "1", "2", "3", "4", "5", "6", "7", "8",
+        "9", "10", "11", "12", "13", "14", "15", "16" };
+    const ParamDesc kMidiInParams[] = {
+        param("channel", "Channel", "", 0, 16, 0, Scale::Enum, Control::Selector,
+            [](void *s, float v)
+            { // the notes held on the old channel are released: their note offs would not arrive
+                auto         *m = as<MidiInNode>(s);
+                const uint8_t c = (uint8_t)std::clamp(to_int(v), 0, 16);
+                if (c != m->channel)
+                    for (size_t slot = 0; slot < midi::kMaxInputs; slot++)
+                        midi_release(m, slot);
+                m->channel = c;
+                return true;
+            },
+            kMidiChannels),
+    };
+    static_assert(std::size(kMidiInParams) == MIDI_COUNT);
 
     // ============================================================================================================
     // Audio Output The sink: the only module that knows the host. It adds its inputs, scaled, to
@@ -273,7 +384,7 @@ namespace
         SCOPE_TIME,
         SCOPE_SCALE_A,
         SCOPE_SCALE_B,
-        SCOPE_LEVEL,   // (the four knobs first: one row, so the screen gets the room)
+        SCOPE_LEVEL, // (the four knobs first: one row, so the screen gets the room)
         SCOPE_TRIGGER,
         SCOPE_COUNT
     };
@@ -451,6 +562,60 @@ bool keyboard_push(void *state, uint64_t at, uint8_t type, uint8_t note, uint8_t
     return true;
 }
 
+void midi_in_push(void *state, const midi::Msg &msg)
+{
+    using midi::Type;
+    auto        *m = as<MidiInNode>(state);
+    const size_t slot = msg.slot < midi::kMaxInputs ? msg.slot : 0;
+    if (msg.type == Type::DeviceLost)
+    {
+        midi_release(m, slot);
+        return;
+    }
+    if (msg.type >= Type::Clock) // the realtime messages: not used yet (docs/midi.md, step 9)
+        return;
+    if (m->channel && msg.channel + 1 != m->channel)
+        return;
+    const uint8_t note = msg.data & 0x7F, bit = (uint8_t)(1u << (note & 7));
+    const float   v = (float)std::min<int>(msg.value, 127) / 127.0f;
+    switch (msg.type)
+    {
+    case Type::NoteOn:
+        midi_queue(m, PCL_EVT_NOTE_ON, note, (uint8_t)std::min<int>(msg.value, 127));
+        m->held[slot][note >> 3] |= bit;
+        m->newest = note;
+        m->velocity = v;
+        break;
+    case Type::NoteOff:
+        midi_queue(m, PCL_EVT_NOTE_OFF, note, 0);
+        m->held[slot][note >> 3] &= (uint8_t)~bit;
+        break;
+    case Type::Control:
+        if (msg.data == 1) // the mod wheel
+            m->mod = v;
+        else if (msg.data == 120 || msg.data == 123) // all sound off, all notes off
+            midi_release(m, slot);
+        break;
+    case Type::PitchBend: // 0..16383 with 8192 in the middle, to -1..1
+        m->bend = std::clamp(((float)msg.value - 8192.0f) / 8191.0f, -1.0f, 1.0f);
+        break;
+    case Type::ChannelPressure:
+        m->pressure = v;
+        break;
+    case Type::KeyPressure:
+        if (note == m->newest)
+            m->pressure = v;
+        break;
+    default:
+        break;
+    }
+}
+
+uint32_t midi_in_dropped(const void *state)
+{
+    return static_cast<const MidiInNode *>(state)->dropped;
+}
+
 #define RACK_GLUE(var, id, name, cat, hp, T, ports, params, init, reset, process, cap, blurb)      \
     const ModuleDesc var = { id, name, cat, hp, sizeof(T), alignof(T), ports, params, false, init, \
         reset, process, nullptr, cap, blurb }
@@ -458,6 +623,9 @@ bool keyboard_push(void *state, uint64_t at, uint8_t type, uint8_t note, uint8_t
 RACK_GLUE(kKeyboardDesc, "keyboard", "Keyboard", kEvent, 6, KeyboardNode, kKeyboardPorts, { },
     kb_init, kb_reset, kb_process, kb_cap,
     "The computer keyboard and an on-screen strip as a piano");
+RACK_GLUE(kMidiInDesc, "midi_in", "MIDI In", kEvent, 8, MidiInNode, kMidiInPorts, kMidiInParams,
+    midi_init, midi_reset, midi_process, midi_cap,
+    "Notes, pitch bend, the mod wheel and pressure from MIDI keyboards and controllers");
 RACK_GLUE(kAudioOutDesc, "out", "Audio Output", kUtility, 4, AudioOutNode, kOutPorts, kOutParams,
     out_init, nullptr, out_process, nullptr,
     "Sends a signal to the speakers; L alone plays on both");

@@ -5,11 +5,14 @@
 #include "midi/inbox.h"
 #include "midi/message.h"
 #include "midi/names.h"
+#include "engine/rt/modules_common.h"
 #include "ui/settings.h"
 
 #include <cstdlib>
 #include <filesystem>
+#include <cmath>
 #include <initializer_list>
+#include <memory>
 #include <thread>
 #include <vector>
 
@@ -128,6 +131,179 @@ TEST(midi_inbox_one_producer_thread_one_consumer)
     }
     producer.join();
     CHECK(box.lost.load() == 0);
+}
+
+// ---- the engine and the MIDI In module: messages put in an inbox, as a device's thread would
+namespace
+{
+Msg msg(Type t, uint8_t data = 0, uint16_t value = 0, uint8_t channel = 0, uint8_t slot = 0)
+{
+    Msg m;
+    m.type = t;
+    m.data = data;
+    m.value = value;
+    m.channel = channel;
+    m.slot = slot;
+    return m;
+}
+// MIDI In -> (a port) -> the output at level 1, with its own inboxes
+struct MidiRig : Rig
+{
+    std::unique_ptr<Inboxes> boxes = std::make_unique<Inboxes>();
+    uint32_t                 in = 0, gate = 0, out = 0;
+    explicit MidiRig(const char *signal = nullptr) // null: the notes, through Note to Gate
+    {
+        e.set_midi(boxes.get());
+        in = add("midi_in");
+        out = add("out");
+        param(out, "level", 1);
+        if (signal)
+            CHECK(cable(in, signal, out, "l") == Err::Ok);
+        else
+        {
+            gate = add("note_to_gate");
+            CHECK(cable(in, "notes", gate, "notes") == Err::Ok);
+            CHECK(cable(gate, "gate", out, "l") == Err::Ok);
+        }
+        CHECK(compile());
+    }
+    void  send(const Msg &m) { (*boxes)[m.slot].push(m); }
+    float now(size_t frames = 256) // the output's last sample after `frames` more
+    {
+        render(frames);
+        return L.back();
+    }
+};
+} // namespace
+
+TEST(midi_in_notes_open_and_close_a_gate)
+{
+    MidiRig r;
+    CHECK(r.now() == 0.0f);
+    r.send(msg(Type::NoteOn, 60, 100));
+    CHECK(r.now() > 0.99f);
+    CHECK(r.L[r.L.size() - 256] > 0.99f); // from the first sample of the block it arrived before
+    r.send(msg(Type::NoteOff, 60));
+    CHECK(r.now() == 0.0f);
+    // every inbox is emptied, whichever device it belongs to
+    r.send(msg(Type::NoteOn, 62, 90, 0, 5));
+    CHECK(r.now() > 0.99f);
+    r.send(msg(Type::NoteOff, 62, 0, 0, 5));
+    CHECK(r.now() == 0.0f);
+    Msg left;
+    for (Inbox &b : *r.boxes)
+        CHECK(!b.ring.pop(left) && b.lost.load() == 0);
+}
+
+TEST(midi_in_channel_filters_and_a_change_releases_held_notes)
+{
+    MidiRig r;
+    r.param(r.in, "channel", 2); // channel 2 only (a message's channel counts from 0)
+    r.send(msg(Type::NoteOn, 60, 100, 0));
+    CHECK(r.now() == 0.0f);
+    r.send(msg(Type::NoteOn, 60, 100, 1));
+    CHECK(r.now() > 0.99f);
+    r.send(msg(Type::NoteOff, 60, 0, 0)); // another channel's note off: not ours
+    CHECK(r.now() > 0.99f);
+    // changing the channel lets go of what is held: its note off would never be heard
+    r.param(r.in, "channel", 0);
+    CHECK(r.now() == 0.0f);
+    r.send(msg(Type::NoteOn, 64, 100, 9)); // omni: any channel
+    CHECK(r.now() > 0.99f);
+}
+
+TEST(midi_in_a_lost_device_releases_its_notes_only)
+{
+    MidiRig r;
+    r.send(msg(Type::NoteOn, 60, 100, 0, 0));
+    CHECK(r.now() > 0.99f);
+    r.send(msg(Type::DeviceLost, 0, 0, 0, 1)); // another device, holding nothing
+    CHECK(r.now() > 0.99f);
+    r.send(msg(Type::DeviceLost, 0, 0, 0, 0));
+    CHECK(r.now() == 0.0f);
+    // all notes off (CC 123) does the same for the device that sends it
+    r.send(msg(Type::NoteOn, 60, 100, 0, 2));
+    CHECK(r.now() > 0.99f);
+    r.send(msg(Type::Control, 123, 0, 0, 2));
+    CHECK(r.now() == 0.0f);
+    // reset() forgets held notes too
+    r.send(msg(Type::NoteOn, 60, 100));
+    CHECK(r.now() > 0.99f);
+    r.e.reset();
+    CHECK(r.now() == 0.0f);
+}
+
+TEST(midi_in_signals)
+{
+    { // pitch bend: -1 .. 1, smoothed (not there at once, there after a few milliseconds)
+        MidiRig r("bend");
+        r.send(msg(Type::PitchBend, 0, 16383));
+        r.render(16);
+        CHECK(r.L.back() > 0.0f && r.L.back() < 0.5f);
+        CHECK(std::fabs(r.now(4800) - 1.0f) < 0.01f);
+        r.send(msg(Type::PitchBend, 0, 8192));
+        CHECK(std::fabs(r.now(4800)) < 0.01f);
+        r.send(msg(Type::PitchBend, 0, 0));
+        CHECK(std::fabs(r.now(4800) + 1.0f) < 0.01f);
+    }
+    { // the mod wheel is CC 1; other controllers are not
+        MidiRig r("mod");
+        r.send(msg(Type::Control, 7, 127));
+        CHECK(std::fabs(r.now(4800)) < 0.01f);
+        r.send(msg(Type::Control, 1, 127));
+        CHECK(std::fabs(r.now(4800) - 1.0f) < 0.01f);
+        r.send(msg(Type::Control, 1, 64));
+        CHECK(std::fabs(r.now(4800) - 64.0f / 127) < 0.01f);
+    }
+    { // pressure: the channel's, or the key's for the note pressed last
+        MidiRig r("pressure");
+        r.send(msg(Type::ChannelPressure, 0, 127));
+        CHECK(std::fabs(r.now(4800) - 1.0f) < 0.01f);
+        r.send(msg(Type::NoteOn, 60, 100));
+        r.send(msg(Type::NoteOn, 64, 100));
+        r.send(msg(Type::KeyPressure, 60, 10)); // not the newest note
+        CHECK(std::fabs(r.now(4800) - 1.0f) < 0.01f);
+        r.send(msg(Type::KeyPressure, 64, 0));
+        CHECK(std::fabs(r.now(4800)) < 0.01f);
+    }
+    { // velocity: of the newest note, at once, and it stays after the note ends
+        MidiRig r("velocity");
+        r.send(msg(Type::NoteOn, 60, 64));
+        CHECK(std::fabs(r.now() - 64.0f / 127) < 0.01f);
+        r.send(msg(Type::NoteOff, 60));
+        CHECK(std::fabs(r.now() - 64.0f / 127) < 0.01f);
+    }
+}
+
+TEST(midi_messages_are_taken_with_no_midi_in_module_and_can_be_discarded)
+{
+    Rig  r;
+    auto boxes = std::make_unique<Inboxes>();
+    r.e.set_midi(boxes.get());
+    const uint32_t out = r.add("out");
+    (void)out;
+    CHECK(r.compile());
+    (*boxes)[0].push(msg(Type::NoteOn, 60, 100));
+    r.render(64);
+    Msg m;
+    CHECK(!(*boxes)[0].ring.pop(m)); // taken, though nothing wanted it
+    (*boxes)[3].push(msg(Type::NoteOn, 60, 100, 0, 3));
+    r.e.discard_midi();
+    CHECK(!(*boxes)[3].ring.pop(m));
+    r.e.set_midi(nullptr); // and none at all is fine
+    r.render(64);
+}
+
+TEST(midi_in_drops_notes_it_has_no_room_for_and_counts_them)
+{
+    MidiRig r;
+    for (int i = 0; i < 200; i++) // more than a block's worth of notes
+        r.send(msg(Type::NoteOn, (uint8_t)(i % 100), 100));
+    r.render(64);
+    CHECK(midi_in_dropped(r.e.state(r.in)) == 200 - 128);
+    r.render(64); // and it goes on working
+    r.send(msg(Type::DeviceLost));
+    CHECK(r.now() == 0.0f);
 }
 
 TEST(settings_round_trip_and_unknown_lines)

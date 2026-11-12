@@ -27,7 +27,7 @@ fs::path scratch_dir(const char *name)
 TEST(files_factory_patches_are_the_examples_and_all_load)
 {
     const auto f = factory_patches();
-    CHECK(f.size() == 4);
+    CHECK(f.size() == 5);
     for (const FactoryPatch &p : f)
     {
         CHECK(!p.name.empty() && !p.title.empty() && !p.about.empty());

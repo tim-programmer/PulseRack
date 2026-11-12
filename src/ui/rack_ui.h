@@ -6,6 +6,10 @@
 
 #include "audio/audio_out.h"
 #include "engine/engine.h"
+#include "midi/inbox.h"
+#if PULSERACK_MIDI
+#include "midi/inputs.h"
+#endif
 #include "ui/geometry.h"
 #include "ui/settings.h"
 
@@ -38,6 +42,24 @@ struct Editor
 {
     Engine engine { 48000 }; // made again at the audio device's rate when it starts
     ~Editor();               // keeps an unsaved patch (see write_recovery)
+    // MIDI (docs/midi.md): where the devices' messages wait for the engine, then the devices that
+    // put them there. Both are declared before the sound card: its thread reads the inboxes, so
+    // they are destroyed after it has stopped (and the devices before the inboxes they push into).
+    std::unique_ptr<midi::Inboxes> midi_boxes = std::make_unique<midi::Inboxes>();
+#if PULSERACK_MIDI
+    std::unique_ptr<midi::Inputs> midi; // null: MIDI is off, or the system has none (midi_error)
+#endif
+    std::string              midi_error;
+    std::vector<std::string> midi_available; // the inputs, as listed when the device menu opened
+    gpuic::Task              midi_task;      // 4 Hz: follows devices being plugged in and out
+    void                     start_midi(gpuic::Ctx cx); // opens the settings' inputs
+    void                     poll_midi(gpuic::Ctx cx);
+    // Switches an input on or off (the device menu): the settings file, then the device.
+    void toggle_midi_input(gpuic::Ctx cx, const std::string &name);
+    // What the device menu lists: the inputs present, then those switched on but not plugged in.
+    std::vector<std::string> midi_menu_names() const;
+    bool                     midi_input_open(const std::string &name) const;
+    int                      midi_open_count() const;
     // The sound card, declared after the engine so it stops before the engine goes (and the Editor
     // is an entity, so both go before gpuic's SDL_Quit). Null until audio is first started.
     std::unique_ptr<audio::AudioOut> audio;
@@ -287,6 +309,7 @@ struct Editor
     void        choose_device(gpuic::Ctx cx, const std::string &device); // and restart audio on it
     bool        audio_running() const { return audio && audio->running(); }
     std::string audio_status() const; // for the toolbar
+    std::string midi_status() const;  // "  ·  MIDI 2" while inputs are open, else empty
     void        tick(gpuic::Ctx cx);  // takes the telemetry and updates what changed
     // A key of the computer keyboard (down or up); false if it is not the piano's (it goes on).
     bool piano(gpuic::Ctx cx, const gp_key_event &ev, bool down);
@@ -304,6 +327,7 @@ struct Options
     bool audio = true;      // open the sound card at start (the tests drive the engine themselves)
     std::string state_dir;  // where an unsaved patch is kept at close; empty: nowhere (the tests)
     std::string config_dir; // where the settings file is; empty: none, the defaults (the tests)
+    bool        midi = false; // open the MIDI inputs the settings name (the tests feed the engine)
 };
 
 // Builds the views and opens the window. Returns the editor (tests drive it), or a null handle and

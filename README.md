@@ -11,7 +11,7 @@ jacks, and a toolbar for new/save/open and the audio device.
 **Status: milestones 0 to 6 are built**: the gpuic spike, the headless engine, the window, cables, sound (SDL3 output on its
 own thread, the computer keyboard as a piano, LEDs and meters), saving and loading, and the polish of milestone 6 (undo, the
 sequencer's step grid, the on-screen keyboard, the output device, dropouts). In PulseCoreLib now but not yet in the rack: delay,
-sampler, reverb, ladder filter, unison oscillator. **MIDI** (docs/midi.md): steps 1 to 3 of 9 are built. The name is a placeholder.
+sampler, reverb, ladder filter, unison oscillator. **MIDI** (docs/midi.md): steps 1 to 5 of 9 are built (a MIDI In module; inputs are switched on in the device menu). The name is a placeholder.
 
 ## Documents
 
@@ -34,7 +34,8 @@ build/src/rack-render examples/sequence.rack bass.wav 8                     # re
 build/src/pulserack-midi --list                                             # the MIDI inputs (a name as argument: print what it sends)
 ```
 
-`examples/` has four patches (a sequenced bass line, an arpeggio, a filter sweep, a voice for the computer keyboard); they are
+`examples/` has five patches (a sequenced bass line, an arpeggio, a filter sweep, a voice for the computer keyboard, a voice
+for a MIDI keyboard); they are
 built into the program too, under *Open > Examples*. PulseCoreLib and gpuic are fetched from GitHub
 (branch `main`); to build against local checkouts, add `-DFETCHCONTENT_SOURCE_DIR_PULSECORELIB=/path/to/PulseCoreLib` and
 `-DFETCHCONTENT_SOURCE_DIR_GPUIC=/path/to/gpuic`. gpuic's own dependencies (SDL3, FreeType, HarfBuzz, FriBidi) must be installed

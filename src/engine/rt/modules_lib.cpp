@@ -759,6 +759,8 @@ uint32_t dropped_events(const ModuleDesc &desc, const void *state)
         return pcl_seq_dropped(&static_cast<const SeqNode *>(state)->seq);
     if (&desc == &kClockDesc)
         return pcl_clock_dropped(&static_cast<const ClockNode *>(state)->clk);
+    if (&desc == &kMidiInDesc)
+        return midi_in_dropped(state);
     return 0;
 }
 

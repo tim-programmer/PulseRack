@@ -10,6 +10,7 @@ int main(int argc, char **argv)
 {
     rack::ui::Options opt;
     opt.state_dir = rack::ui::default_state_dir(); // an unsaved patch is kept there at close
+    opt.midi = true;
     opt.config_dir = rack::ui::default_config_dir(); // the settings file (the output device...)
     for (int i = 1; i < argc; i++)
     {

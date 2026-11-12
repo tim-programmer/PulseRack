@@ -1,6 +1,6 @@
 # MIDI controllers
 
-Status: **design, steps 1 to 3 built** (see *As built* at the end). Where the two differ, *As built* and the code win.
+Status: **design, steps 1 to 5 built** (see the *As built* sections at the end). Where the two differ, *As built* and the code win.
 
 MIDI keyboards and controllers playing and turning the rack: notes into a patch, controls (knobs, faders, the mod wheel)
 into signals, and a controller's knobs turning the knobs on screen.
@@ -107,8 +107,8 @@ and the knob moves on screen; a sweep becomes one undo step, like a knob drag. M
 2. **Settings file:** load and save it; the output device choice moves into it. *(built)*
 3. **`src/midi/`:** the device manager (list ports, hot-plug, open by name, one ring per device), `decode()`, the
    unique names, tests that need no hardware, and a `pulserack-midi` monitor. *(built)*
-4. **Engine:** drain every device ring in `render()`; lost messages per device in the telemetry.
-5. **MIDI In module**, and the inputs in the Settings menu (a switch per device).
+4. **Engine:** drain every device ring in `render()`; lost messages per device in the telemetry. *(built)*
+5. **MIDI In module**, and the inputs in the device menu (a switch per device). *(built, without the Device parameter)*
 6. **MIDI CC module.**
 7. **Global MIDI learn.**
 8. **Sample-accurate timing:** a message's timestamp turned into a sample offset with one block of fixed latency
@@ -164,3 +164,46 @@ no input or several, and prints what it is listening to.
 
 **Checked on the real controller after the fix:** notes print when it is played; unplugging gives *closed* and *device lost*,
 and plugging it back in gives *open* and notes again.
+
+## As built (steps 4 and 5)
+
+**Engine.** `Engine::set_midi(Inboxes *)` (set while no audio thread is attached; the inboxes outlive the last `render()`).
+At the start of every block, after the commands, `render()` empties every inbox and gives each message to every MIDI In
+module of the current plan (`Snapshot::midi_ins`). With no MIDI In module the messages are still taken, so nothing piles up.
+A message is heard at the first sample of the next block: up to a block late and with that much jitter until step 8.
+`Engine::discard_midi()` empties the inboxes before audio starts, so that what was played while audio was off is not heard
+all at once. Lost messages are counted in each `Inbox::lost` (the UI can read them; nothing shows them yet).
+
+**MIDI In** (`midi_in`, 8 HP, in `modules_glue.cpp`): a **Channel** selector (Omni, 1 to 16); outputs NOTES (events),
+BEND (-1 .. 1), MOD (CC 1, 0 .. 1), PRESS (channel pressure, or key pressure of the newest note) and VEL (the newest
+note's velocity, held after the note ends). Bend, mod and pressure are smoothed over 3 ms. It keeps a bit per note per
+device slot, and sends the note offs itself when a device is lost, on CC 120 or 123 from that device, and when its channel
+changes. Up to 128 notes per block; more are dropped and counted (the panel's LED turns red, as for the sequencer).
+
+**Differences from the design:**
+* **No Device parameter yet.** A MIDI In module hears every input that is switched on. Choosing one device per module needs
+  a parameter that holds a name, which the patch file and the descriptors do not have (parameters are numbers); a slot
+  number would not do, because slots are given per run. Several devices at once work; telling them apart in a patch does not.
+* No sustain pedal (CC 64), and the realtime messages (clock, start, stop) are ignored until step 9.
+
+**The application.** `Editor` owns the inboxes and (with `PULSERACK_MIDI`) a `midi::Inputs`, both declared before the sound
+card so that they outlive its thread. At start it opens the settings' `midi-input` names and polls for hot-plugging four
+times a second; the hint line says when an input connects or goes. The **device menu** (the audio status in the toolbar)
+lists the MIDI inputs under the outputs: a click switches one on or off (several may be on), saves the settings and opens or
+closes the device; one that is switched on but not plugged in is listed as *not connected*. The toolbar shows `MIDI n` while
+n inputs are open. `Options::midi` is off in the tests, which feed the engine's inboxes themselves. A build without
+`PULSERACK_MIDI` still has the module and the menu, which then says MIDI is not built in.
+
+`examples/midi_voice.rack` (also under *Open > Examples*): MIDI In to an oscillator and an envelope, pitch bend bending
+two semitones and the mod wheel opening the filter.
+
+**Checked.**
+* `rack_tests`: notes through MIDI In and Note to Gate open and close a gate from the first sample of the next block, from
+  any slot; the channel filter, and a channel change releasing held notes; *DeviceLost* releasing only that device's notes;
+  CC 123; `reset()`; bend, mod, pressure and velocity values and the smoothing; messages taken with no MIDI In module;
+  `discard_midi()`; 200 notes in one block (72 dropped and counted).
+* By hand: the application with a settings file naming a virtual ALSA device that plays notes, `midi_voice.rack` and SDL's
+  dummy sound driver: the toolbar showed `MIDI 1` and the output meter moved.
+
+**Not yet checked:** the real controller playing through the speakers, the device menu's switches by hand, and how the
+latency feels (a block of the device plus up to a block of jitter).

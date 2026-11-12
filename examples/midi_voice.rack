@@ -1,0 +1,27 @@
+# A voice for a MIDI keyboard: MIDI In -> oscillator and envelope -> filter -> VCA -> output. Pitch bend bends two semitones, the mod wheel opens the filter.
+# Switch your keyboard on in the device menu (top right, beside Audio). It is silent until you play.
+pulserack 1
+node 1 midi_in x=0 y=0
+param 1 channel Omni
+node 2 osc x=8 y=0
+param 2 waveform saw
+param 2 pitch_depth 0.1667
+node 3 adsr x=16 y=0
+param 3 attack 5
+param 3 decay 300
+param 3 sustain 0.5
+param 3 release 400
+node 4 svf x=24 y=0
+param 4 cutoff 900
+param 4 resonance 0.4
+param 4 mod_depth 3
+node 5 vca x=32 y=0
+node 6 out x=36 y=0
+cable 1.notes -> 2.note
+cable 1.notes -> 3.note
+cable 1.bend -> 2.pitch
+cable 1.mod -> 4.cutoff
+cable 2.out -> 4.in
+cable 4.lp -> 5.in
+cable 3.out -> 5.gain
+cable 5.out -> 6.l
