@@ -229,7 +229,19 @@ struct Editor
     float                  zoom = 1;
     static constexpr float kZoomMin = 0.4f, kZoomMax = 2.5f;
     void set_zoom(gpuic::Ctx cx, float z, gp_point about_window); // keeps that point where it is
-    void select_node(gpuic::Ctx cx, uint32_t node);               // 0: none
+    // Dragging the rack about: any button on empty rack, the middle button over a panel too. gpuic
+    // sends moves and the release for the left button only, so for the others the pointer is asked
+    // for (pan_probe) 120 times a second until the button is up.
+    bool        pan_active = false;
+    int         pan_button = 0;           // GP_MOUSE_*
+    gp_point    pan_p0 { }, pan_off0 { }; // the pointer and the scroll offset at the press
+    gpuic::Task pan_task;
+    // Is this button down, and where is the pointer (window pixels)? SDL's answer; a test's own.
+    std::function<bool(int button, gp_point *at)> pan_probe;
+    void pan_begin(gpuic::Ctx cx, gp_point window, int button);
+    void pan_move(gpuic::Ctx cx, gp_point window);
+    void pan_end();
+    void select_node(gpuic::Ctx cx, uint32_t node); // 0: none
     // The arrow keys turn the control under the pointer, else the last one touched.
     uint32_t last_ctrl_node = 0;
     int      last_ctrl_param = -1;

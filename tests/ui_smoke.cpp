@@ -1071,6 +1071,51 @@ struct Driver
             CHECK(rack_viewport(cx(), ed).x == 0 && rack_viewport(cx(), ed).y == 0);
             k = control(osc, "frequency");
             CHECK(near(k.x, k0.x, 1.f) && near(k.y, k0.y, 1.f));
+
+            // the right button drags the rack as the left one does... (gpuic sends moves for the
+            // left button only: for the others the editor asks where the pointer is, here the
+            // test's answer in place of SDL's)
+            static int      held;
+            static gp_point pointer;
+            held = 0;
+            e().pan_probe = [](int button, gp_point *at)
+            {
+                *at = pointer;
+                return held == button;
+            };
+            auto drag_with = [&](int button, gp_point a, gp_point b)
+            {
+                pointer = a;
+                held = button;
+                press(a, button);
+                for (int i = 1; i <= 6; i++)
+                {
+                    pointer = { a.x + (b.x - a.x) * i / 6, a.y + (b.y - a.y) * i / 6 };
+                    move(pointer);
+                    wait(0.03);
+                }
+                held = 0;
+                release(b, button);
+                wait(0.1);
+                CHECK(!e().pan_active);
+            };
+            drag_with(GP_MOUSE_RIGHT, spot, { spot.x - 40, spot.y }); // (the titles stay in view)
+            CHECK(near(rack_viewport(cx(), ed).x, 40, 1.f) && rack_viewport(cx(), ed).y == 0);
+            drag_with(GP_MOUSE_RIGHT, spot, { spot.x, spot.y - 60 });
+            CHECK(near(rack_viewport(cx(), ed).y, 60, 1.f));
+            drag_with(GP_MOUSE_RIGHT, spot, { spot.x, spot.y + 60 });
+            CHECK(rack_viewport(cx(), ed).y == 0);
+            // ...and so does the middle one, over a panel too: the panel does not move and is not
+            // selected
+            const float    x0 = node(osc)->x;
+            const gp_point title = control_center(cx(), ed, osc, -1);
+            drag_with(GP_MOUSE_MIDDLE, title, { title.x + 30, title.y + 5 });
+            CHECK(near(rack_viewport(cx(), ed).x, 10, 1.f));
+            CHECK(node(osc)->x == x0 && e().selected_node == 0 && !e().pdrag.active);
+            drag_with(GP_MOUSE_MIDDLE, spot, { spot.x + 200, spot.y + 100 }); // and on empty rack
+            CHECK(rack_viewport(cx(), ed).x == 0 && rack_viewport(cx(), ed).y == 0);
+            k = control(osc, "frequency");
+            CHECK(near(k.x, k0.x, 1.f) && near(k.y, k0.y, 1.f));
         }
 
         // ---- a selector: the right half is the next choice, the left half the previous

@@ -537,3 +537,13 @@ and exactly where `control_center` says (the wheel there turns it without zoomin
 at 100 % with everything back in place; further out and Ctrl+0 give 100 % again. The test that scrolled the rack with the plain
 wheel now uses Ctrl+wheel. **Not checked by eye:** zoom levels other than a screenshot at 100 %, and the hover, pressed, selected
 and dragging looks.
+
+**Dragging the rack with the right and middle buttons (asked for later).** Empty rack is dragged about with any button; the
+middle button also drags it from a panel's face or title (the right button there is still the panel's menu, and the left one
+moves the panel). gpuic captures the pointer for the **left button only** (`gp_window_on_mouse_button`: other buttons get
+`on_mouse_down` and nothing after it), so for the right and middle buttons `Editor::pan_begin` starts a 120 Hz task that asks
+where the pointer is and whether the button is still down (`pan_probe`: `SDL_GetMouseState`, whose coordinates are the ones
+gpuic passes on) until it is up. *Possible request for gpuic:* capture for every button, with the button in the drag and
+release events; the task and the probe could then go. Checked in `ui_smoke` with the test's own probe (right button on empty
+rack, middle button on a title and on empty rack; the panel neither moves nor is selected). **Not checked:** the real mouse,
+which the simulated one cannot stand in for here: the probe asks SDL itself.

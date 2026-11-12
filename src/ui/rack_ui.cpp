@@ -11,6 +11,8 @@
 #include <cctype>
 #include <cmath>
 #include <cstdio>
+
+#include <SDL3/SDL_mouse.h>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
@@ -409,6 +411,9 @@ struct PanelView
             open_menu(cx, *e, node);
         else if (ev.button == GP_MOUSE_LEFT)
             e->panel_drag_begin(cx, node, ev.position);
+        else if (ev.button == GP_MOUSE_MIDDLE) // the middle button drags the rack, over a panel too
+            e->pan_begin(
+                cx, ev.position, ev.button); // (the panel's drag handlers pass the moves on)
     }
 
     const Node *find(Ctx cx) const
@@ -1470,8 +1475,6 @@ struct RackView
 {
     Entity<Editor>         ed;
     Scroll                 scroll;
-    bool                   panning = false;
-    gp_point               pan_p0 { }, pan_off0 { };
     uint32_t               menu_node = 0; // the panel whose menu is open
     std::optional<PortRef> menu_cable; // or the cable whose menu is open, at menu_at (rack pixels)
     Pt                     menu_at;
@@ -1532,18 +1535,13 @@ struct RackView
                               e->select_cable(cx, std::nullopt);
                           if (Editor *e = self.ed.get(cx); e && e->selected_node)
                               e->select_node(cx, 0);
-                          self.panning = ev.button == GP_MOUSE_LEFT;
-                          self.pan_p0 = ev.position;
-                          self.pan_off0 = self.scroll.offset(cx);
+                          // any button drags the rack about (left, middle or right)
+                          if (Editor *e = self.ed.get(cx))
+                              e->pan_begin(cx, ev.position, ev.button);
                       })
-                  .on_drag(
-                      [](RackView &self, Ctx cx, const gp_mouse_event &ev)
-                      {
-                          if (self.panning)
-                              self.scroll.to(cx, self.pan_off0.x - (ev.position.x - self.pan_p0.x),
-                                  self.pan_off0.y - (ev.position.y - self.pan_p0.y));
-                      })
-                  .on_mouse_up([](RackView &self) { self.panning = false; })
+                  .on_drag([](RackView &self, Ctx cx, const gp_mouse_event &ev)
+                      { self.ed.get(cx)->pan_move(cx, ev.position); })
+                  .on_mouse_up([](RackView &self, Ctx cx) { self.ed.get(cx)->pan_end(); })
                   // The wheel over the rack zooms about the pointer (a control under the pointer
                   // takes the wheel first, as before). Ctrl+wheel and Shift+wheel are passed on to
                   // the scroller: up and down, and sideways.
@@ -2477,6 +2475,53 @@ void Editor::panel_drag_begin(Ctx cx, uint32_t node, gp_point window)
     const Pt q = to_rack(cx, window);
     pdrag.grab = { q.x - n->x * kHp, q.y - n->y * kHp };
     edge_scroll_start(cx, window);
+}
+
+// ---- dragging the rack about: any button on empty rack, the middle button on a panel too
+
+void Editor::pan_begin(Ctx cx, gp_point window, int button)
+{
+    RackView *rv = rack.get(cx);
+    if (!rv)
+        return;
+    pan_end();
+    pan_active = true;
+    pan_button = button;
+    pan_p0 = window;
+    pan_off0 = rv->scroll.offset(cx);
+    if (button == GP_MOUSE_LEFT)
+        return; // gpuic sends the moves and the release to the element that was pressed
+    if (!pan_probe)
+        pan_probe = [](int b, gp_point *at)
+        {
+            float        x = 0, y = 0;
+            const Uint32 held = SDL_GetMouseState(&x, &y);
+            *at = { x, y };
+            return (held & (b == GP_MOUSE_MIDDLE ? SDL_BUTTON_MMASK : SDL_BUTTON_RMASK)) != 0;
+        };
+    pan_task = cx.app().ctx(self).every(1.0 / 120,
+        [](Editor &e, Ctx c)
+        {
+            gp_point at { };
+            if (e.pan_active && e.pan_probe(e.pan_button, &at))
+                e.pan_move(c, at);
+            else
+                e.pan_end();
+        });
+}
+
+void Editor::pan_move(Ctx cx, gp_point window)
+{
+    if (!pan_active)
+        return;
+    if (RackView *rv = rack.get(cx))
+        rv->scroll.to(cx, pan_off0.x - (window.x - pan_p0.x), pan_off0.y - (window.y - pan_p0.y));
+}
+
+void Editor::pan_end()
+{
+    pan_active = false;
+    pan_task.cancel();
 }
 
 void Editor::panel_drag_move(Ctx cx, gp_point window)
