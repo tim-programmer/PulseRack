@@ -47,6 +47,24 @@ if(PULSERACK_BUILD_GUI)
     message(STATUS "gpuic: ${gpuic_SOURCE_DIR} @ ${gpuic_rev}")
 endif()
 
+# --- libremidi (MIDI input, docs/midi.md), fetched and pinned to a release tag: a third-party library does not change
+#     under us between builds. FETCHCONTENT_SOURCE_DIR_LIBREMIDI points at a local checkout. Only the platform's own
+#     back-end is built (ALSA on Linux, which PipeWire also serves); the PipeWire, JACK, network and computer-keyboard
+#     back-ends are off, so no further downloads (Boost, readerwriterqueue) are made.
+option(PULSERACK_MIDI "MIDI input (libremidi)" ON)
+if(PULSERACK_MIDI)
+    set(LIBREMIDI_EXAMPLES OFF CACHE BOOL "" FORCE)
+    set(LIBREMIDI_TESTS OFF CACHE BOOL "" FORCE)
+    set(LIBREMIDI_NO_PIPEWIRE ON CACHE BOOL "" FORCE)
+    set(LIBREMIDI_NO_JACK ON CACHE BOOL "" FORCE)
+    set(LIBREMIDI_NO_NETWORK ON CACHE BOOL "" FORCE)
+    set(LIBREMIDI_NO_KEYBOARD ON CACHE BOOL "" FORCE)
+    set(LIBREMIDI_NO_BOOST ON CACHE BOOL "" FORCE)
+    FetchContent_Declare(libremidi GIT_REPOSITORY https://github.com/celtera/libremidi.git GIT_TAG v5.4.3 GIT_SHALLOW TRUE)
+    FetchContent_MakeAvailable(libremidi)
+    message(STATUS "libremidi: ${libremidi_SOURCE_DIR} @ v5.4.3")
+endif()
+
 add_library(rack_warnings INTERFACE)
 if(MSVC)
     target_compile_options(rack_warnings INTERFACE /W4 /WX)

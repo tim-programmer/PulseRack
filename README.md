@@ -10,7 +10,8 @@ jacks, and a toolbar for new/save/open and the audio device.
 
 **Status: milestones 0 to 6 are built**: the gpuic spike, the headless engine, the window, cables, sound (SDL3 output on its
 own thread, the computer keyboard as a piano, LEDs and meters), saving and loading, and the polish of milestone 6 (undo, the
-sequencer's step grid, the on-screen keyboard, the output device, dropouts). Waiting on PulseCoreLib: delay, sampler, reverb. The name is a placeholder.
+sequencer's step grid, the on-screen keyboard, the output device, dropouts). In PulseCoreLib now but not yet in the rack: delay,
+sampler, reverb, ladder filter, unison oscillator. **MIDI** (docs/midi.md): steps 1 to 3 of 9 are built. The name is a placeholder.
 
 ## Documents
 
@@ -19,6 +20,7 @@ sequencer's step grid, the on-screen keyboard, the output device, dropouts). Wai
 | [docs/architecture.md](docs/architecture.md) | repository layout, how the two libraries are pulled in, audio, threads, sample types, testing |
 | [docs/patch-engine.md](docs/patch-engine.md) | the headless part: module descriptors, ports, cables, processing order, the patch file |
 | [docs/gui.md](docs/gui.md) | the window: browser, panels, knobs, cable drawing, what gpuic gives us and what is unverified |
+| [docs/midi.md](docs/midi.md) | MIDI controllers: libremidi, devices and threads, the MIDI In and MIDI CC modules, MIDI learn, the settings file |
 | [docs/gpuic-prompt.md](docs/gpuic-prompt.md) | a self-contained prompt for a gpuic session: a stroked-curve element for cables (done) |
 | [docs/gpuic-prompt-2.md](docs/gpuic-prompt-2.md) | the second one: drag modifiers, drags that keep their element, a hover callback (done) |
 | [docs/gpuic-prompt-3.md](docs/gpuic-prompt-3.md) | the third: an empty cached view stopped UBSan runs (done) |
@@ -29,6 +31,7 @@ sequencer's step grid, the on-screen keyboard, the output device, dropouts). Wai
 cmake -S . -B build && cmake --build build && ctest --test-dir build        # float; add -DPULSERACK_SAMPLE_TYPE=Q15 or Q31
 build/src/pulserack examples/sequence.rack                                  # the window, with sound (--no-audio: without)
 build/src/rack-render examples/sequence.rack bass.wav 8                     # render a patch to a WAV file
+build/src/pulserack-midi --list                                             # the MIDI inputs (a name as argument: print what it sends)
 ```
 
 `examples/` has four patches (a sequenced bass line, an arpeggio, a filter sweep, a voice for the computer keyboard); they are
@@ -36,6 +39,8 @@ built into the program too, under *Open > Examples*. PulseCoreLib and gpuic are 
 (branch `main`); to build against local checkouts, add `-DFETCHCONTENT_SOURCE_DIR_PULSECORELIB=/path/to/PulseCoreLib` and
 `-DFETCHCONTENT_SOURCE_DIR_GPUIC=/path/to/gpuic`. gpuic's own dependencies (SDL3, FreeType, HarfBuzz, FriBidi) must be installed
 (`-DPULSERACK_GPUIC_DEPENDENCIES=AUTO` lets gpuic download what is missing); `-DPULSERACK_BUILD_GUI=OFF` builds the engine alone.
+libremidi is fetched at its release tag `v5.4.3` (`-DFETCHCONTENT_SOURCE_DIR_LIBREMIDI` for a local checkout; `-DPULSERACK_MIDI=OFF`
+builds without MIDI). Machine settings (the output device, the MIDI inputs) are kept in `~/.config/pulserack/settings`.
 The window tests need a display and are skipped without one.
 
 ## Decided

@@ -1,7 +1,7 @@
 file(GLOB TEST_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/test_*.cpp)
 add_executable(rack_tests ${TEST_SOURCES})
 find_package(Threads REQUIRED)
-target_link_libraries(rack_tests PRIVATE rack_engine rack_geometry rack_warnings Threads::Threads)
+target_link_libraries(rack_tests PRIVATE rack_engine rack_geometry rack_midi_core rack_warnings Threads::Threads)
 target_compile_definitions(rack_tests PRIVATE RACK_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 target_include_directories(rack_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 add_test(NAME rack_tests COMMAND rack_tests)

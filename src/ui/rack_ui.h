@@ -7,6 +7,7 @@
 #include "audio/audio_out.h"
 #include "engine/engine.h"
 #include "ui/geometry.h"
+#include "ui/settings.h"
 
 #include <gpuic/gpuic.hpp>
 
@@ -67,6 +68,8 @@ struct Editor
     std::string file_path;     // where Save writes; empty: untitled (Save asks)
     bool        dirty = false; // changed since it was opened or saved
     std::string state_dir;     // where an unsaved patch is kept at close; empty: nowhere
+    std::string config_dir;    // where the settings file is; empty: none (the tests)
+    Settings    settings;      // this machine's (ui/settings.h); saved whenever one changes
     std::string
         status; // what the last action did; the hint line shows it when the pointer is over nothing
     // What the pointer is over: a node's control (item >= 0), its title bar (kHoverTitle) or a jack
@@ -295,6 +298,7 @@ struct Options
     std::string patch_path; // empty: an empty rack
     bool audio = true;      // open the sound card at start (the tests drive the engine themselves)
     std::string state_dir;  // where an unsaved patch is kept at close; empty: nowhere (the tests)
+    std::string config_dir; // where the settings file is; empty: none, the defaults (the tests)
 };
 
 // Builds the views and opens the window. Returns the editor (tests drive it), or a null handle and

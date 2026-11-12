@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
@@ -1885,6 +1886,9 @@ void Editor::choose_device(Ctx cx, const std::string &device)
     device_menu_open = false;
     overlay.update(cx, [](Overlay &, Ctx c) { c.notify(); });
     audio_device = device;
+    settings.output = device;
+    if (std::string err; !save_settings(config_dir, settings, &err))
+        say(cx, err + ".");
     if (audio_running())
         stop_audio(cx);
     start_audio(cx);
@@ -3137,6 +3141,17 @@ Entity<Editor> open_rack(App app, const Options &opt, std::string *error)
     e->overlay = app.new_view<Overlay>();
     app.get(e->overlay)->ed = ed;
     e->state_dir = opt.state_dir;
+    e->config_dir = opt.config_dir;
+    {
+        std::vector<std::string> warnings;
+        std::string              err;
+        e->settings = load_settings(opt.config_dir, &warnings, &err);
+        e->audio_device = e->settings.output;
+        for (const std::string &w : warnings)
+            std::fprintf(stderr, "pulserack: %s\n", w.c_str());
+        if (!err.empty())
+            std::fprintf(stderr, "pulserack: %s\n", err.c_str());
+    }
     e->chooser = [ed](Ctx cx, bool save, const std::string &suggested)
     { native_file_dialog(cx, ed, save, suggested); };
     // the file commands' keys, and Escape for the menu and the question

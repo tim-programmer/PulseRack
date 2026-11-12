@@ -43,8 +43,21 @@ std::span<const FactoryPatch> factory_patches() { return kFactory; }
 ")
 configure_file(${CMAKE_CURRENT_BINARY_DIR}/factory_patches.cpp.in ${CMAKE_CURRENT_BINARY_DIR}/factory_patches.cpp COPYONLY)
 
-add_library(rack_geometry STATIC ui/geometry.cpp ui/files.cpp ${CMAKE_CURRENT_BINARY_DIR}/factory_patches.cpp)
+add_library(rack_geometry STATIC ui/geometry.cpp ui/files.cpp ui/settings.cpp ${CMAKE_CURRENT_BINARY_DIR}/factory_patches.cpp)
 target_link_libraries(rack_geometry PUBLIC rack_engine PRIVATE rack_warnings)
+
+# MIDI (docs/midi.md): the messages, the inboxes and the device names need no libremidi, so the tests always build
+# them; the devices themselves (inputs.cpp, the only file that includes libremidi) and the pulserack-midi monitor
+# only with PULSERACK_MIDI.
+add_library(rack_midi_core STATIC midi/message.cpp midi/names.cpp)
+target_include_directories(rack_midi_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(rack_midi_core PRIVATE rack_warnings)
+if(PULSERACK_MIDI)
+    add_library(rack_midi STATIC midi/inputs.cpp)
+    target_link_libraries(rack_midi PUBLIC rack_midi_core PRIVATE libremidi rack_warnings)
+    add_executable(pulserack-midi midi_monitor.cpp)
+    target_link_libraries(pulserack-midi PRIVATE rack_midi rack_warnings)
+endif()
 
 # The application: the window, cables and sound.
 if(PULSERACK_BUILD_GUI)
