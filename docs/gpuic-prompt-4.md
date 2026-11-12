@@ -1,6 +1,7 @@
 # Prompt for a gpuic session: sharp text under a scale, and drags with any button
 
-Status: **not sent yet.** Written to be pasted into a Claude Code session whose working directory is the gpuic repository,
+Status: **done**: both parts are in gpuic `67b6c7f` (`213bc5a` the buttons, `67b6c7f` the text) and PulseRack is adapted to
+them (`gui.md`, *As built: gpuic `67b6c7f`*). The original text follows, as sent. Written to be pasted into a Claude Code session whose working directory is the gpuic repository,
 against gpuic `0e0e23a`. It is self-contained: that session has not seen PulseRack. Everything inside the fence is the prompt;
 the notes after it are for you.
 

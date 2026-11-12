@@ -13,7 +13,6 @@
 #include <cmath>
 #include <cstdio>
 
-#include <SDL3/SDL_mouse.h>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
@@ -302,10 +301,19 @@ struct Browser
                     if (ev.button == GP_MOUSE_LEFT)
                         self.ed.get(cx)->module_drag_begin(cx, *d, ev.position);
                 })
-            .on_drag([](Browser &self, Ctx cx, const gp_mouse_event &ev)
-                { self.ed.get(cx)->module_drag_move(cx, ev.position); })
-            .on_mouse_up([](Browser &self, Ctx cx, const gp_mouse_event &ev)
-                { self.ed.get(cx)->module_drag_end(cx, ev.position); })
+            // (gpuic sends drags and releases for every button: these are the left one's)
+            .on_drag(
+                [](Browser &self, Ctx cx, const gp_mouse_event &ev)
+                {
+                    if (ev.button == GP_MOUSE_LEFT)
+                        self.ed.get(cx)->module_drag_move(cx, ev.position);
+                })
+            .on_mouse_up(
+                [](Browser &self, Ctx cx, const gp_mouse_event &ev)
+                {
+                    if (ev.button == GP_MOUSE_LEFT)
+                        self.ed.get(cx)->module_drag_end(cx, ev.position);
+                })
             .child(div()
                     .flex_row()
                     .items_center()
@@ -422,8 +430,25 @@ struct PanelView
         else if (ev.button == GP_MOUSE_LEFT)
             e->panel_drag_begin(cx, node, ev.position);
         else if (ev.button == GP_MOUSE_MIDDLE) // the middle button drags the rack, over a panel too
-            e->pan_begin(
-                cx, ev.position, ev.button); // (the panel's drag handlers pass the moves on)
+            e->pan_begin(cx, ev.position, ev.button);
+    }
+    // the moves and the release after it: the left button's move the panel, the middle one's the
+    // rack (gpuic sends them for every button, each with its own capture)
+    void drag_face(Ctx cx, const gp_mouse_event &ev)
+    {
+        Editor *e = ed.get(cx);
+        if (e && ev.button == GP_MOUSE_LEFT)
+            e->panel_drag_move(cx, ev.position);
+        else if (e)
+            e->pan_move(cx, ev.position, ev.button);
+    }
+    void release_face(Ctx cx, const gp_mouse_event &ev)
+    {
+        Editor *e = ed.get(cx);
+        if (e && ev.button == GP_MOUSE_LEFT)
+            e->panel_drag_end(cx, ev.position);
+        else if (e)
+            e->pan_end(ev.button);
     }
 
     const Node *find(Ctx cx) const
@@ -457,7 +482,7 @@ struct PanelView
     void drag(Ctx cx, size_t i, const gp_mouse_event &ev)
     {
         const Node *n = find(cx);
-        if (!n || active != (int)i)
+        if (!n || active != (int)i || ev.button != GP_MOUSE_LEFT)
             return;
         const ParamDesc &p = n->desc->params[i];
         const float      v
@@ -466,8 +491,10 @@ struct PanelView
         if (v != n->params[i])
             ed.get(cx)->set_param(cx, node, i, v);
     }
-    void release(Ctx cx)
+    void release(Ctx cx, const gp_mouse_event &ev)
     {
+        if (ev.button != GP_MOUSE_LEFT)
+            return;
         active = -1;
         cx.notify();
     }
@@ -620,7 +647,7 @@ struct PanelView
     void strip_drag(Ctx cx, const gp_mouse_event &ev)
     { // gliding across the keys: each note is released before the next sounds
         const Node *n = find(cx);
-        if (!n)
+        if (!n || ev.button != GP_MOUSE_LEFT)
             return;
         const int now = strip_note_at(ev, panel_layout(*n->desc));
         if (now == strip_note)
@@ -632,8 +659,10 @@ struct PanelView
             ed.get(cx)->strip_key(cx, node, strip_note, true);
         cx.notify();
     }
-    void strip_release(Ctx cx)
+    void strip_release(Ctx cx, const gp_mouse_event &ev)
     {
+        if (ev.button != GP_MOUSE_LEFT)
+            return;
         if (strip_note >= 0)
             ed.get(cx)->strip_key(cx, node, strip_note, false);
         strip_note = -1;
@@ -684,7 +713,8 @@ struct PanelView
                     { self.strip_press(cx, ev); })
                 .on_drag([](PanelView &self, Ctx cx, const gp_mouse_event &ev)
                     { self.strip_drag(cx, ev); })
-                .on_mouse_up([](PanelView &self, Ctx cx) { self.strip_release(cx); })
+                .on_mouse_up([](PanelView &self, Ctx cx, const gp_mouse_event &ev)
+                    { self.strip_release(cx, ev); })
                 .on_hover([](PanelView &self, Ctx cx, bool inside)
                     { self.ed.get(cx)->hover(cx, self.node, Editor::kHoverStrip, inside); }));
         return w;
@@ -775,6 +805,8 @@ struct PanelView
                     .on_mouse_down(
                         [i](PanelView &self, Ctx cx, const gp_mouse_event &ev)
                         {
+                            if (ev.button != GP_MOUSE_LEFT)
+                                return;
                             const StepData st = self.step_of(cx, i);
                             if (ev.click_count >= 2) // double-click: on / rest
                             {
@@ -790,7 +822,7 @@ struct PanelView
                     .on_drag(
                         [i](PanelView &self, Ctx cx, const gp_mouse_event &ev)
                         {
-                            if (self.step_active != (int)i)
+                            if (self.step_active != (int)i || ev.button != GP_MOUSE_LEFT)
                                 return;
                             StepData t = self.step_of(cx, i);
                             t.note = (uint8_t)std::clamp(self.step_note0
@@ -799,7 +831,12 @@ struct PanelView
                                 0, 127);
                             self.step_set(cx, i, t);
                         })
-                    .on_mouse_up([](PanelView &self) { self.step_active = -1; })
+                    .on_mouse_up(
+                        [](PanelView &self, Ctx, const gp_mouse_event &ev)
+                        {
+                            if (ev.button == GP_MOUSE_LEFT)
+                                self.step_active = -1;
+                        })
                     .on_wheel(
                         [i](PanelView &self, Ctx cx, const gp_wheel_event &ev)
                         {
@@ -903,12 +940,8 @@ struct PanelView
                 [](PanelView &self, Ctx cx, const gp_mouse_event &ev)
                 {
                     Editor *e = self.ed.get(cx);
-                    if (!e)
-                        return;
-                    if (ev.button == GP_MOUSE_MIDDLE)
-                        e->pan_begin(cx, ev.position, ev.button);
-                    else
-                        open_device_menu_of(cx, *e, self.node);
+                    if (e && ev.button != GP_MOUSE_MIDDLE) // (the middle button: nothing, as on a
+                        open_device_menu_of(cx, *e, self.node); // control)
                 })
             .on_hover([](PanelView &self, Ctx cx, bool inside)
                 { self.ed.get(cx)->hover(cx, self.node, Editor::kHoverDevice, inside); });
@@ -1073,7 +1106,8 @@ struct PanelView
                     { self.press(cx, i, ev); })
                 .on_drag([i](PanelView &self, Ctx cx, const gp_mouse_event &ev)
                     { self.drag(cx, i, ev); })
-                .on_mouse_up([](PanelView &self, Ctx cx) { self.release(cx); })
+                .on_mouse_up(
+                    [](PanelView &self, Ctx cx, const gp_mouse_event &ev) { self.release(cx, ev); })
                 .on_wheel([i](PanelView &self, Ctx cx, const gp_wheel_event &ev)
                     { self.wheel(cx, i, ev); });
             break;
@@ -1205,10 +1239,18 @@ struct PanelView
                         self.ed.get(cx)->jack_press(
                             cx, PortRef { self.node, (uint16_t)i }, ev.position, ev.mods);
                 })
-            .on_drag([](PanelView &self, Ctx cx, const gp_mouse_event &ev)
-                { self.ed.get(cx)->jack_drag(cx, ev.position); })
-            .on_mouse_up([](PanelView &self, Ctx cx, const gp_mouse_event &ev)
-                { self.ed.get(cx)->jack_release(cx, ev.position); });
+            .on_drag(
+                [](PanelView &self, Ctx cx, const gp_mouse_event &ev)
+                {
+                    if (ev.button == GP_MOUSE_LEFT)
+                        self.ed.get(cx)->jack_drag(cx, ev.position);
+                })
+            .on_mouse_up(
+                [](PanelView &self, Ctx cx, const gp_mouse_event &ev)
+                {
+                    if (ev.button == GP_MOUSE_LEFT)
+                        self.ed.get(cx)->jack_release(cx, ev.position);
+                });
         return cell;
     }
 
@@ -1248,9 +1290,9 @@ struct PanelView
                         .on_mouse_down([](PanelView &self, Ctx cx, const gp_mouse_event &ev)
                             { self.press_face(cx, ev); })
                         .on_drag([](PanelView &self, Ctx cx, const gp_mouse_event &ev)
-                            { self.ed.get(cx)->panel_drag_move(cx, ev.position); })
+                            { self.drag_face(cx, ev); })
                         .on_mouse_up([](PanelView &self, Ctx cx, const gp_mouse_event &ev)
-                            { self.ed.get(cx)->panel_drag_end(cx, ev.position); });
+                            { self.release_face(cx, ev); });
 
         // a sheen across the face (under everything else), as light falls on a metal panel
         p.child(div()
@@ -1283,9 +1325,9 @@ struct PanelView
                 .on_mouse_down([](PanelView &self, Ctx cx, const gp_mouse_event &ev)
                     { self.press_face(cx, ev); })
                 .on_drag([](PanelView &self, Ctx cx, const gp_mouse_event &ev)
-                    { self.ed.get(cx)->panel_drag_move(cx, ev.position); })
+                    { self.drag_face(cx, ev); })
                 .on_mouse_up([](PanelView &self, Ctx cx, const gp_mouse_event &ev)
-                    { self.ed.get(cx)->panel_drag_end(cx, ev.position); })
+                    { self.release_face(cx, ev); })
                 .on_hover([](PanelView &self, Ctx cx, bool inside)
                     { self.ed.get(cx)->hover(cx, self.node, Editor::kHoverTitle, inside); }));
 
@@ -1462,15 +1504,25 @@ struct CableView
                             cx.blur();
                             if (ev.button == GP_MOUSE_RIGHT)
                                 open_cable_menu(cx, *e, self.to, q);
+                            else if (ev.button != GP_MOUSE_LEFT)
+                                return;
                             else if (auto j = jack_at(e->engine.patch(), q.x, q.y, 0))
                                 e->jack_press(cx, *j, ev.position, ev.mods);
-                            else if (ev.button == GP_MOUSE_LEFT)
+                            else
                                 e->select_cable(cx, self.to);
                         })
-                    .on_drag([](CableView &self, Ctx cx, const gp_mouse_event &ev)
-                        { self.ed.get(cx)->jack_drag(cx, ev.position); })
-                    .on_mouse_up([](CableView &self, Ctx cx, const gp_mouse_event &ev)
-                        { self.ed.get(cx)->jack_release(cx, ev.position); })
+                    .on_drag(
+                        [](CableView &self, Ctx cx, const gp_mouse_event &ev)
+                        {
+                            if (ev.button == GP_MOUSE_LEFT)
+                                self.ed.get(cx)->jack_drag(cx, ev.position);
+                        })
+                    .on_mouse_up(
+                        [](CableView &self, Ctx cx, const gp_mouse_event &ev)
+                        {
+                            if (ev.button == GP_MOUSE_LEFT)
+                                self.ed.get(cx)->jack_release(cx, ev.position);
+                        })
                     .on_hover(
                         [](CableView &self, Ctx cx, bool inside)
                         {
@@ -1650,8 +1702,9 @@ struct RackView
                               e->pan_begin(cx, ev.position, ev.button);
                       })
                   .on_drag([](RackView &self, Ctx cx, const gp_mouse_event &ev)
-                      { self.ed.get(cx)->pan_move(cx, ev.position); })
-                  .on_mouse_up([](RackView &self, Ctx cx) { self.ed.get(cx)->pan_end(); })
+                      { self.ed.get(cx)->pan_move(cx, ev.position, ev.button); })
+                  .on_mouse_up([](RackView &self, Ctx cx, const gp_mouse_event &ev)
+                      { self.ed.get(cx)->pan_end(ev.button); })
                   // The wheel over the rack zooms about the pointer (a control under the pointer
                   // takes the wheel first, as before). Ctrl+wheel and Shift+wheel are passed on to
                   // the scroller: up and down, and sideways.
@@ -2908,44 +2961,26 @@ void Editor::pan_begin(Ctx cx, gp_point window, int button)
     RackView *rv = rack.get(cx);
     if (!rv)
         return;
-    pan_end();
-    pan_active = true;
+    pan_active = true; // (a second button pressed meanwhile takes the drag over)
     pan_button = button;
     pan_p0 = window;
     pan_off0 = rv->scroll.offset(cx);
-    if (button == GP_MOUSE_LEFT)
-        return; // gpuic sends the moves and the release to the element that was pressed
-    if (!pan_probe)
-        pan_probe = [](int b, gp_point *at)
-        {
-            float        x = 0, y = 0;
-            const Uint32 held = SDL_GetMouseState(&x, &y);
-            *at = { x, y };
-            return (held & (b == GP_MOUSE_MIDDLE ? SDL_BUTTON_MMASK : SDL_BUTTON_RMASK)) != 0;
-        };
-    pan_task = cx.app().ctx(self).every(1.0 / 120,
-        [](Editor &e, Ctx c)
-        {
-            gp_point at { };
-            if (e.pan_active && e.pan_probe(e.pan_button, &at))
-                e.pan_move(c, at);
-            else
-                e.pan_end();
-        });
 }
 
-void Editor::pan_move(Ctx cx, gp_point window)
+// The moves and the release come from gpuic to the element that was pressed, for whichever button
+// that was; only those of the button that began the drag count.
+void Editor::pan_move(Ctx cx, gp_point window, int button)
 {
-    if (!pan_active)
+    if (!pan_active || button != pan_button)
         return;
     if (RackView *rv = rack.get(cx))
         rv->scroll.to(cx, pan_off0.x - (window.x - pan_p0.x), pan_off0.y - (window.y - pan_p0.y));
 }
 
-void Editor::pan_end()
+void Editor::pan_end(int button)
 {
-    pan_active = false;
-    pan_task.cancel();
+    if (button == pan_button)
+        pan_active = false;
 }
 
 void Editor::panel_drag_move(Ctx cx, gp_point window)

@@ -1072,29 +1072,16 @@ struct Driver
             k = control(osc, "frequency");
             CHECK(near(k.x, k0.x, 1.f) && near(k.y, k0.y, 1.f));
 
-            // the right button drags the rack as the left one does... (gpuic sends moves for the
-            // left button only: for the others the editor asks where the pointer is, here the
-            // test's answer in place of SDL's)
-            static int      held;
-            static gp_point pointer;
-            held = 0;
-            e().pan_probe = [](int button, gp_point *at)
-            {
-                *at = pointer;
-                return held == button;
-            };
+            // the right button drags the rack as the left one does...
             auto drag_with = [&](int button, gp_point a, gp_point b)
             {
-                pointer = a;
-                held = button;
                 press(a, button);
+                CHECK(e().pan_active);
                 for (int i = 1; i <= 6; i++)
                 {
-                    pointer = { a.x + (b.x - a.x) * i / 6, a.y + (b.y - a.y) * i / 6 };
-                    move(pointer);
+                    move({ a.x + (b.x - a.x) * i / 6, a.y + (b.y - a.y) * i / 6 });
                     wait(0.03);
                 }
-                held = 0;
                 release(b, button);
                 wait(0.1);
                 CHECK(!e().pan_active);
@@ -1113,7 +1100,47 @@ struct Driver
             CHECK(near(rack_viewport(cx(), ed).x, 10, 1.f));
             CHECK(node(osc)->x == x0 && e().selected_node == 0 && !e().pdrag.active);
             drag_with(GP_MOUSE_MIDDLE, spot, { spot.x + 200, spot.y + 100 }); // and on empty rack
-            e().pan_probe = nullptr;
+            // a second button pressed and let go during a drag does not end it, and the drag of a
+            // button that did not begin it moves nothing
+            press(spot, GP_MOUSE_RIGHT);
+            press(spot, GP_MOUSE_LEFT); // (takes the drag over)
+            release(spot, GP_MOUSE_RIGHT);
+            CHECK(e().pan_active);
+            move({ spot.x - 20, spot.y });
+            wait(0.05);
+            CHECK(near(rack_viewport(cx(), ed).x, 20, 1.f));
+            move(spot);
+            wait(0.05);
+            release(spot);
+            CHECK(!e().pan_active && rack_viewport(cx(), ed).x == 0);
+            // the other buttons' drags are not the left one's: a right press on a knob opens its
+            // menu, and moving with it held does not turn the knob; nor does the middle one
+            {
+                const float f0 = param(osc, "frequency");
+                for (int button : { GP_MOUSE_RIGHT, GP_MOUSE_MIDDLE })
+                {
+                    press(k, button);
+                    for (int i = 1; i <= 5; i++)
+                    {
+                        move({ k.x, k.y - 8.f * i });
+                        wait(0.02);
+                    }
+                    release({ k.x, k.y - 40 }, button);
+                    wait(0.05);
+                    CHECK(param(osc, "frequency") == f0);
+                }
+                // a panel is not moved by the right button on its title, nor a jack's cable begun
+                const float px = node(osc)->x;
+                press(title, GP_MOUSE_RIGHT);
+                move({ title.x + 60, title.y });
+                wait(0.05);
+                release({ title.x + 60, title.y }, GP_MOUSE_RIGHT);
+                CHECK(node(osc)->x == px && !e().pdrag.active && !e().drag.active);
+                e().close_overlays(cx()); // the menus those right presses opened
+                move(spot);
+                wait(0.1);
+                CHECK(!rack_menu_open(cx(), ed));
+            }
             CHECK(rack_viewport(cx(), ed).x == 0 && rack_viewport(cx(), ed).y == 0);
             k = control(osc, "frequency");
             CHECK(near(k.x, k0.x, 1.f) && near(k.y, k0.y, 1.f));

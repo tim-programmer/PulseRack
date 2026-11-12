@@ -23,7 +23,7 @@ switched on in the device menu). The name is a placeholder.
 | [docs/patch-engine.md](docs/patch-engine.md) | the headless part: module descriptors, ports, cables, processing order, the patch file |
 | [docs/gui.md](docs/gui.md) | the window: browser, panels, knobs, cable drawing, what gpuic gives us and what is unverified |
 | [docs/midi.md](docs/midi.md) | MIDI controllers: libremidi, devices and threads, the MIDI In and MIDI CC modules, MIDI learn, the settings file |
-| [docs/gpuic-prompt-4.md](docs/gpuic-prompt-4.md) | a self-contained prompt for a gpuic session: sharp text under a scale (the rack's zoom), drags with any button (not sent yet) |
+| [docs/gpuic-prompt-4.md](docs/gpuic-prompt-4.md) | a self-contained prompt for a gpuic session: sharp text under a scale (the rack's zoom), drags with any button (done) |
 
 ## Try it
 

@@ -543,7 +543,8 @@ middle button also drags it from a panel's face or title (the right button there
 moves the panel). gpuic captures the pointer for the **left button only** (`gp_window_on_mouse_button`: other buttons get
 `on_mouse_down` and nothing after it), so for the right and middle buttons `Editor::pan_begin` starts a 120 Hz task that asks
 where the pointer is and whether the button is still down (`pan_probe`: `SDL_GetMouseState`, whose coordinates are the ones
-gpuic passes on) until it is up. *Possible request for gpuic:* capture for every button, with the button in the drag and
+gpuic passes on) until it is up. *(No longer: gpuic `213bc5a` captures every button; see* As built: gpuic `67b6c7f` *at the
+end.)* *Possible request for gpuic:* capture for every button, with the button in the drag and
 release events; the task and the probe could then go. Checked in `ui_smoke` with the test's own probe (right button on empty
 rack, middle button on a title and on empty rack; the panel neither moves nor is selected). **Not checked:** the real mouse,
 which the simulated one cannot stand in for here: the probe asks SDL itself.
@@ -562,7 +563,7 @@ take it. **Escape** closes these menus too (`Editor::close_overlays`). At most o
 are described in *midi.md*, *As built (step 8 and the modules' Device)*. A menu item's handler keeps no string (gpuic): it
 looks the name up again by its place in the list, as the toolbar's device menu does.
 
-**Blurry text when zoomed in: found, not fixed.** gpuic draws a glyph at `font size x window scale` and lets the transform
+**Blurry text when zoomed in: found, not fixed** *(fixed since in gpuic: the next section)*. gpuic draws a glyph at `font size x window scale` and lets the transform
 it is painted under stretch it, so under the rack's `gp_scale` the text is soft above 100 %. It is gpuic's to fix:
 *gpuic-prompt-4.md* asks for it, and for drags with the middle and right buttons (so that the 120 Hz pointer polling of the
 rack's panning can go).
@@ -571,3 +572,28 @@ rack's panning can go).
 a right press on the knob only closes it (no control menu); a press on a jack starts no cable; the middle button does not
 start dragging the rack; afterwards the knob turns again; a control's menu closes on a press on a title without starting a
 learn; Escape; the wheel over empty rack zooms with the menu still open. **Not checked by hand.**
+
+## As built: gpuic `67b6c7f` (sharp text when zoomed, drags with any button)
+
+Both requests of *gpuic-prompt-4.md* are in gpuic, and PulseRack builds against it (`main`, as before).
+
+**Text under the rack's zoom is sharp.** gpuic rasterizes glyphs for the size they have on the screen under a transform;
+the layout is untouched, so nothing in PulseRack changed for it. The panels are cached views and are repainted on a zoom
+step (the matrix is in their painted copy's signature). Looked at in screenshots at 40 % and 250 %.
+
+**Every button drags.** gpuic now sends `on_drag` and `on_mouse_up` for the middle and right buttons too, each button with
+its own capture and `ev.button` saying which. Two consequences here:
+* The rack's panning no longer polls: `Editor::pan_probe`, `pan_task` and the SDL include are gone. `pan_move` and `pan_end`
+  take the button and act only for the one that began the drag; a second button pressed on the rack meanwhile takes the
+  drag over. A panel's face and title pass the middle button's moves and release to the pan, the left one's to the panel's
+  move (`PanelView::drag_face`, `release_face`).
+* **Every other drag handler is the left button's and now says so**, because it would otherwise get the other buttons'
+  moves: a knob or slider, the Keyboard's piano, a step's bar, a jack and a cable's plug, a browser card. Without the check
+  the piano would have played under a right-button drag, and a right release would have ended a left drag. A step's bar
+  and a cable's plug also took a press of any button; they are the left one's now.
+* The Device box no longer starts a pan with the middle button (it has no drag of its own): it does nothing, as on a control.
+
+**Checked** (`ui_smoke`): the right button on empty rack and the middle button on a title and on empty rack pan through
+gpuic's own events (the test's probe is gone); a second button pressed and released during a pan does not end it; a right
+or middle press and move on a knob does not turn it; a right drag on a title does not move the panel. **Not checked:** the
+real mouse.
