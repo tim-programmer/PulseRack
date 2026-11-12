@@ -171,11 +171,17 @@ bool Inputs::start(std::string *error)
         return true;
     libremidi::observer_configuration conf;
     Impl                             *impl = impl_.get();
+    // Any port coming or going raises the flag; poll() then looks at the ports itself. (Outputs
+    // too: a device's ports come and go together, and libremidi reports each by its own kind.)
     conf.input_added = [impl](const libremidi::input_port &) { impl->changed = true; };
     conf.input_removed = [impl](const libremidi::input_port &) { impl->changed = true; };
+    conf.output_added = [impl](const libremidi::output_port &) { impl->changed = true; };
+    conf.output_removed = [impl](const libremidi::output_port &) { impl->changed = true; };
     conf.track_hardware = true;
     conf.track_virtual = true; // software that sends MIDI (a sequencer, a virtual keyboard)
-    conf.notify_in_constructor = false;
+    // libremidi (ALSA) reports a port's removal only if it reported the port before: without this
+    // it never says that a device which was there at the start has gone.
+    conf.notify_in_constructor = true;
     // only while constructing: the observer outlives this call, `error` does not
     struct StartError
     {

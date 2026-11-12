@@ -152,5 +152,15 @@ write no file. The `midi-input` lines are read and written but nothing uses them
   `pulserack-midi "Midi Through Port-0"` listened printed note on, control 1 = 127 on channel 3, pitch bend 8192, clock,
   note off, and the note on with velocity 0 as a note off.
 
-**Not yet checked:** a real USB controller, and unplugging one while it is open (the *DeviceLost* path). Both need
-hardware; `pulserack-midi` with the controller's name, then unplugging and replugging it, is the test.
+**Hot-plugging, found with a real controller (Arturia KeyStep 37):** unplugging it printed no *device lost* and, plugged back
+in, it stayed silent. libremidi's ALSA observer reports a port's removal only if it reported that port before, and
+`notify_in_constructor` was off, so a device that was there at the start was never reported as gone; the stale `midi_in` then
+counted as "already open". Now `notify_in_constructor` is on and all four callbacks (inputs and outputs, added and removed) raise
+the flag. Reproduced and checked with a virtual ALSA device that sends notes, goes away and comes back while `pulserack-midi`
+listens: notes, *closed*, *device lost*, *open*, notes again.
+
+`pulserack-midi` takes a name in part and in any case (`keystep` for `Arturia KeyStep 37 MIDI 1`), says so when a name fits
+no input or several, and prints what it is listening to.
+
+**Checked on the real controller after the fix:** notes print when it is played; unplugging gives *closed* and *device lost*,
+and plugging it back in gives *open* and notes again.

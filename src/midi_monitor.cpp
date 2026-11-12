@@ -2,10 +2,13 @@
 // code the rack uses (src/midi). For checking a controller without the window.
 //
 //   pulserack-midi --list       the inputs, by the names the settings file uses
-//   pulserack-midi [name...]    print what these inputs send (none: every input); Ctrl-C stops
+//   pulserack-midi [name...]    print what these inputs send (none: every input); Ctrl-C stops.
+//                               A name may be given in part, in any case ("keystep").
 #include "midi/inputs.h"
 
+#include <algorithm>
 #include <atomic>
+#include <cctype>
 #include <chrono>
 #include <csignal>
 #include <cstdio>
@@ -88,6 +91,42 @@ int main(int argc, char **argv)
     }
     if (names.empty())
         names = avail;
+    else
+    { // a name may be given in part ("keystep"): it must then fit exactly one input
+        auto lower = [](std::string t)
+        {
+            for (char &c : t)
+                c = (char)std::tolower((unsigned char)c);
+            return t;
+        };
+        bool bad = false;
+        for (std::string &n : names)
+        {
+            if (std::find(avail.begin(), avail.end(), n) != avail.end())
+                continue;
+            std::vector<std::string> fits;
+            for (const std::string &a : avail)
+                if (lower(a).find(lower(n)) != std::string::npos)
+                    fits.push_back(a);
+            if (fits.size() == 1)
+                n = fits[0];
+            else
+            {
+                std::fprintf(stderr, "pulserack-midi: '%s' %s. The inputs are:\n", n.c_str(),
+                    fits.empty() ? "is not an input" : "fits more than one input");
+                for (const std::string &a : avail)
+                    std::fprintf(stderr, "  %s\n", a.c_str());
+                bad = true;
+            }
+        }
+        if (bad)
+            return 1;
+    }
+    if (names.empty())
+    {
+        std::fprintf(stderr, "pulserack-midi: there are no MIDI inputs\n");
+        return 1;
+    }
     if (names.size() > kMaxInputs)
         names.resize(kMaxInputs);
     std::vector<std::string> errors;
@@ -95,7 +134,8 @@ int main(int argc, char **argv)
     for (const std::string &e : errors)
         std::fprintf(stderr, "pulserack-midi: %s\n", e.c_str());
     for (const std::string &n : names)
-        std::printf("%s %s\n", in.is_open(n) ? "listening to" : "waiting for", n.c_str());
+        std::printf("%s %s\n", in.is_open(n) ? "listening to" : "could not open", n.c_str());
+    std::printf("Play a key or move a control: each message is printed. Ctrl-C stops.\n");
     std::fflush(stdout);
 
     std::signal(SIGINT, [](int) { g_stop = true; });
