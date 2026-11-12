@@ -1419,26 +1419,30 @@ struct DragView
             return div();
         Element           w = div().absolute().left(0).top(0);
         const ModuleDesc *od = nullptr; // where a module dragged in, or a panel moved, would land
-        int               ox = 0, oy = 0;
+        float             ox = 0, oy = 0; // in HP
         bool              ofits = false;
         if (const auto &m = e->mdrag; m.active && m.moved && m.over_rack)
         {
             od = m.desc;
-            ox = m.x;
-            oy = m.y;
+            ox = (float)m.x;
+            oy = (float)m.y;
             ofits = m.fits;
         }
         else if (const auto &pd = e->pdrag; pd.active && pd.moved)
             if (const Node *n = e->engine.patch().find(pd.node))
             {
+                // A panel being moved follows the pointer exactly, and its rectangle (green: it
+                // fits where it would land, red: it does not) is drawn around the panel itself.
+                // Drawn at the grid place it would land on, it stepped a whole HP at a time while
+                // the panel moved smoothly, and so seemed to lag behind it.
                 od = n->desc;
-                ox = pd.x;
-                oy = pd.y;
+                ox = n->x;
+                oy = n->y;
                 ofits = pd.fits;
             }
         if (od)
         {
-            const Rect  r = node_rect(*od, (float)ox, (float)oy);
+            const Rect  r = node_rect(*od, ox, oy);
             const Color c = ofits ? st::kLedOn : st::kDanger;
             w.child(div()
                     .absolute()
