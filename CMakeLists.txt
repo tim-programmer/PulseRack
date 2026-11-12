@@ -30,12 +30,9 @@ message(STATUS "PulseCoreLib: ${pulsecorelib_SOURCE_DIR} @ ${pcl_rev} (sample ty
 #     dependencies (SDL3, FreeType, HarfBuzz, FriBidi) come from the system unless PULSERACK_GPUIC_DEPENDENCIES=AUTO,
 #     so a build never downloads them unasked. SDL3 is found first so gpuic and the rack share one target.
 option(PULSERACK_BUILD_GUI "Build the application (needs gpuic and SDL3)" ON)
-set(PULSERACK_GPUIC_DEPENDENCIES "SYSTEM" CACHE STRING "gpuic's dependency policy: SYSTEM or AUTO")
-set_property(CACHE PULSERACK_GPUIC_DEPENDENCIES PROPERTY STRINGS SYSTEM AUTO)
+set(PULSERACK_GPUIC_DEPENDENCIES "FETCH" CACHE STRING "gpuic's dependency policy: SYSTEM, AUTO or FETCH")
+set_property(CACHE PULSERACK_GPUIC_DEPENDENCIES PROPERTY STRINGS SYSTEM AUTO FETCH)
 if(PULSERACK_BUILD_GUI)
-    if(PULSERACK_GPUIC_DEPENDENCIES STREQUAL "SYSTEM")
-        find_package(SDL3 REQUIRED CONFIG)
-    endif()
     set(GPUIC_DEPENDENCIES "${PULSERACK_GPUIC_DEPENDENCIES}" CACHE STRING "" FORCE)
     set(GPUIC_BUILD_TESTS OFF CACHE BOOL "" FORCE)
     set(GPUIC_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
