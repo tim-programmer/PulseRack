@@ -30,6 +30,7 @@ patch model and sends parameter commands.
   a new module goes to the first free spot near the visible area). Pan by dragging empty space or with
   the wheel. **No zoom in the first version** (decided); every coordinate in the model is then a plain pixel
   offset, which keeps cables and hit tests simple. A later zoom would need the pointer to follow `gp_scale`.
+  *(Zoom was added later: see* As built: zoom and the look *at the end.)*
 * **Panel colour by category**, as in the reference: sources green, modulators red, filters blue, event modules teal, utilities
   grey. A title bar (drag to move; right-click for *Delete*), controls above, jacks along the bottom.
   Dark theme first, since that is how the reference looks and it shows the cables best. **The look is the
@@ -510,3 +511,29 @@ The trigger test first failed in **Q31**: there the sine's sample at the zero cr
 the next sample (0.131) rather than on 0.000 as in float. Both are right (the first sample at or above the level); the test now
 checks exactly that rather than a tolerance that float happened to meet.
 
+## As built: zoom and the look (asked for after the oscilloscope)
+
+**Zoom.** The wheel over the rack zooms about the pointer, 10 % per notch, from 40 % to 250 %; passing 100 % stops there, and
+**Ctrl+0** goes back to 100 %. A control under the pointer still takes the wheel first (a knob turns, a selector steps), as before.
+The plain wheel no longer scrolls the rack: **Ctrl+wheel** scrolls up and down, **Shift+wheel** sideways, and dragging empty rack
+pans. The hint line shows the zoom and these keys after each step.
+
+How: `Editor::zoom`. The model and every panel, jack and cable stay in rack pixels; `RackView` puts its content in a box of
+`size * zoom` and scales the content about its top left corner (`gp_scale`, which the pointer follows, so no hit test changed).
+`RackViewport` is now in rack pixels with the zoom beside it; `to_rack()`, `control_center()`, `port_center()`, edge scrolling and
+the drop test of a dragged module go through it. Knob and step drags are still in window pixels: a knob feels the same at any
+zoom. Zoomed out, the surface is made large enough to fill the view. The zoom is not saved, and a new or opened patch keeps it.
+
+**The look** (no size or position changed, so the tests' geometry holds): knobs have a ring with the value as an arc in the
+category's colour (from the middle for a knob that goes both ways); lights that are on glow; cables cast a shadow and fade at
+their ends so that the name under a plugged jack can be read; plugs have a highlight; the rack has rails with a mounting slot per
+HP, and an empty rack says how to begin; the output meter is two columns of segments (green, amber, red); panels have a sheen
+and the selected one an accent glow; the toolbar has a mark, shaded buttons, and a dot before the name of a patch with unsaved
+changes (it was a `*` after it). Lost: a cable no longer brightens under the pointer (the hover colour does not apply to a
+stroke with a gradient).
+
+**Checked** (`ui_smoke`): a notch over empty rack gives 110 % and the hint says so; a knob is then 10 % further from the pointer
+and exactly where `control_center` says (the wheel there turns it without zooming, a double-click finds it); zooming out stops
+at 100 % with everything back in place; further out and Ctrl+0 give 100 % again. The test that scrolled the rack with the plain
+wheel now uses Ctrl+wheel. **Not checked by eye:** zoom levels other than a screenshot at 100 %, and the hover, pressed, selected
+and dragging looks.

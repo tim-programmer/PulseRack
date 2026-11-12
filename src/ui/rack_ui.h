@@ -202,7 +202,12 @@ struct Editor
     void        edge_scroll_start(gpuic::Ctx cx, gp_point window);
     void        edge_tick(gpuic::Ctx cx);
     uint32_t    selected_node = 0;
-    void        select_node(gpuic::Ctx cx, uint32_t node); // 0: none
+    // The rack's magnification (the wheel over the rack; Ctrl+0 puts it back to 1). The model stays
+    // in rack pixels: only RackView scales, and to_rack() and the viewport divide by it.
+    float                  zoom = 1;
+    static constexpr float kZoomMin = 0.4f, kZoomMax = 2.5f;
+    void set_zoom(gpuic::Ctx cx, float z, gp_point about_window); // keeps that point where it is
+    void select_node(gpuic::Ctx cx, uint32_t node);               // 0: none
     // The arrow keys turn the control under the pointer, else the last one touched.
     uint32_t last_ctrl_node = 0;
     int      last_ctrl_param = -1;
@@ -308,10 +313,12 @@ gpuic::Entity<Editor> open_rack(gpuic::App app, const Options &opt, std::string 
 // Where things are, in window pixels, for tests and for the browser's placement of new modules.
 // The rack's top-left corner in the window.
 gp_point rack_origin();
-// The visible rack area: scroll offset (pixels) and size.
+// The visible rack area, in rack pixels (what the model uses): its top left corner and size. On the
+// screen it is w * zoom by h * zoom window pixels.
 struct RackViewport
 {
     float x = 0, y = 0, w = 0, h = 0;
+    float zoom = 1;
 };
 RackViewport rack_viewport(gpuic::Ctx cx, gpuic::Entity<Editor> ed);
 // The window position of a node's control or jack centre, or of its title bar (param = -1).

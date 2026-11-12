@@ -1024,6 +1024,55 @@ struct Driver
         CHECK(e().hint().find(format_value(freq, param(osc, "frequency"))) != std::string::npos);
         click(k, GP_MOUSE_LEFT, 2); // back to the default for what follows
 
+        // ---- the wheel over the rack zooms about the pointer; a control still takes the wheel
+        {
+            const gp_point k0 = control(osc, "frequency");
+            const gp_point spot { k0.x + 100,
+                rack_origin().y + 600 }; // empty rack, below the panels
+            move(spot);
+            wait(0.1);
+            CHECK(e().hover_text.empty());
+            gp_simulate_wheel(app, spot.x, spot.y, 0, 1, 0); // a notch up: 10 % closer
+            wait(0.15);
+            CHECK(near(e().zoom, 1.1f, 1e-3f));
+            CHECK(e().hint().find("Zoom 110 %") != std::string::npos);
+            // what was under the pointer still is: everything else is 10 % further from it
+            const gp_point k1 = control(osc, "frequency");
+            CHECK(near(k1.x - spot.x, (k0.x - spot.x) * 1.1f, 1.f));
+            CHECK(near(k1.y - spot.y, (k0.y - spot.y) * 1.1f, 1.f));
+            // the knob is where control_center says: the wheel there turns it and does not zoom,
+            // and a double-click finds it
+            move(k1);
+            wait(0.1);
+            gp_simulate_wheel(app, k1.x, k1.y, 0, 1, 0);
+            wait();
+            CHECK(param(osc, "frequency") == step_value(freq, freq.def, 1, false));
+            CHECK(near(e().zoom, 1.1f, 1e-3f));
+            click(k1, GP_MOUSE_LEFT, 2);
+            CHECK(param(osc, "frequency") == freq.def);
+            // zooming out stops at 100 % on the way past it, and everything is back in its place
+            move(spot);
+            gp_simulate_wheel(app, spot.x, spot.y, 0, -2, 0);
+            wait(0.15);
+            CHECK(e().zoom == 1);
+            const gp_point k2 = control(osc, "frequency");
+            CHECK(near(k2.x, k0.x, 1.f) && near(k2.y, k0.y, 1.f));
+            // further out, then Ctrl+0: 100 % again
+            gp_simulate_wheel(app, spot.x, spot.y, 0, -1, 0);
+            wait(0.15);
+            CHECK(near(e().zoom, 1 / 1.1f, 1e-3f));
+            gp_simulate_keystrokes(app, "ctrl-0");
+            wait(0.15);
+            CHECK(e().zoom == 1);
+            // (that was about the middle of the view, so the rack has moved a little: dragging
+            // empty rack pans it back to its corner for what follows)
+            drag(spot, { spot.x + 300, spot.y + 150 });
+            wait(0.1);
+            CHECK(rack_viewport(cx(), ed).x == 0 && rack_viewport(cx(), ed).y == 0);
+            k = control(osc, "frequency");
+            CHECK(near(k.x, k0.x, 1.f) && near(k.y, k0.y, 1.f));
+        }
+
         // ---- a selector: the right half is the next choice, the left half the previous
         gp_point sel = control(osc, "waveform");
         CHECK(param(osc, "waveform") == 2); // saw
@@ -1093,11 +1142,11 @@ struct Driver
         gp_simulate_keystrokes(
             app, "ctrl-a backspace"); // every card again: the first is the oscillator
         wait(0.15);
-        // the two visible rows are full by now: scroll down to the empty third (the wheel over a
+        // the two visible rows are full by now: scroll down to the empty third (Ctrl+wheel over a
         // title)
         const gp_point over_title = control_center(cx(), ed, newest(), -1);
         move(over_title);
-        gp_simulate_wheel(app, over_title.x, over_title.y, 0, -20, 0);
+        gp_simulate_wheel(app, over_title.x, over_title.y, 0, -20, GP_MOD_CTRL);
         wait(0.15);
         const ModuleDesc  &oscd = *find_module("osc");
         const RackViewport v = rack_viewport(cx(), ed);

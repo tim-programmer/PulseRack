@@ -35,6 +35,14 @@ namespace
         return c;
     }
 
+    const Color kBlack = rgb(0x000000), kWhite = rgb(0xffffff);
+
+    // A light that is on glows: a soft halo of its own colour.
+    Element glow(Element e, Color c, float blur = 6, float alpha = 0.75f)
+    {
+        return std::move(e).shadow(0, 0, blur, with_alpha(c, alpha));
+    }
+
     std::string note_name(int n)
     {
         static const char *names[12]
@@ -108,8 +116,9 @@ struct Toolbar
             .items_center()
             .justify_center()
             .cursor_pointer()
-            .bg(st::kSurfaceHi)
+            .bg_gradient(180, { stop(rgb(0x343846), 0), stop(st::kSurfaceHi, 1) })
             .hover_bg(st::kBorder)
+            .active_bg(st::kWell)
             .border(1)
             .border_color(st::kBorder)
             .child(label(text, 12, enabled ? st::kText : st::kDim))
@@ -127,12 +136,20 @@ struct Toolbar
             .items_center()
             .gap(st::kToolGap)
             .px(12)
-            .bg(st::kSurface)
+            .bg_gradient(180, { stop(rgb(0x282b35), 0), stop(st::kSurface, 1) })
             .border_bottom(1)
             .border_color(st::kBorder)
+            // the mark: three bars of a pulse, then the name (together kAppNameW wide)
             .child(div()
                     .w(st::kAppNameW)
                     .flex_shrink_0()
+                    .flex_row()
+                    .items_center()
+                    .gap(1.5f)
+                    .child(div().w(2).h(6).rounded(1).bg(st::kAccent))
+                    .child(div().w(2).h(13).rounded(1).bg(st::kAccentHi))
+                    .child(div().w(2).h(8).rounded(1).bg(st::kAccent))
+                    .child(div().w(2))
                     .child(label("PulseRack", 13, st::kText).font_bold()))
             .child(button("New", st::kNewW,
                 [](Toolbar &self, Ctx cx) { self.ed.get(cx)->request(cx, Editor::Then::New); }))
@@ -156,8 +173,10 @@ struct Toolbar
                 e && !e->redo_stack.empty()))
             .child(div().w(8))
             // the name, with a mark while there are unsaved changes
-            .child(label((e ? e->patch_name : std::string()) + (dirty ? "  *" : ""), 13,
-                dirty ? st::kText : st::kSubtext))
+            .child(dirty
+                    ? glow(div().w(6).h(6).rounded_full().bg(st::kAccent), st::kAccent, 5, 0.6f)
+                    : div())
+            .child(label(e ? e->patch_name : std::string(), 13, dirty ? st::kText : st::kSubtext))
             .child(label(std::to_string(n) + (n == 1 ? " module" : " modules"), 12, st::kDim))
             .child(div().flex_1())
             .child(e && e->shown_dropouts
@@ -184,12 +203,21 @@ struct Toolbar
                     .flex_row()
                     .items_center()
                     .cursor_pointer()
-                    .bg(st::kSurfaceHi)
+                    .bg_gradient(180, { stop(rgb(0x343846), 0), stop(st::kSurfaceHi, 1) })
                     .hover_bg(st::kBorder)
+                    .active_bg(st::kWell)
                     .border(1)
-                    .border_color(st::kBorder)
-                    .child(div().w(8).h(8).rounded_full().bg(
-                        e && e->audio_running() ? st::kLedOn : st::kLedOff))
+                    .border_color(
+                        e && e->audio_running() ? with_alpha(st::kLedOn, 0.45f) : st::kBorder)
+                    .child(e && e->audio_running()
+                            ? glow(div().w(8).h(8).rounded_full().bg(st::kLedOn), st::kLedOn)
+                            : div()
+                                  .w(8)
+                                  .h(8)
+                                  .rounded_full()
+                                  .bg(st::kLedOff)
+                                  .border(1)
+                                  .border_color(st::kBorder))
                     .child(label("Audio", 12, st::kText))
                     .on_click(
                         [](Toolbar &self, Ctx cx)
@@ -250,10 +278,11 @@ struct Browser
             .gap(3)
             .flex_col()
             .rounded(5)
-            .bg(st::kSurfaceHi)
-            .hover_bg(st::kSurface)
+            .bg_gradient(90, { stop(with_alpha(cc.chip, 0.10f), 0), stop(st::kSurfaceHi, 0.45f) })
+            .hover_bg(rgb(0x343846))
             .border_left(3)
             .border_color(cc.chip)
+            .shadow(0, 1, 3, with_alpha(kBlack, 0.3f))
             // drag the card onto the rack to add the module there (the Add button adds it near the
             // view)
             .on_mouse_down(
@@ -286,8 +315,10 @@ struct Browser
                             .items_center()
                             .justify_center()
                             .cursor_pointer()
-                            .bg(st::kAccent)
+                            .bg_gradient(180, { stop(st::kAccentHi, 0), stop(st::kAccent, 1) })
                             .hover_bg(st::kAccentHi)
+                            .active_bg(rgb(0x6f9be6))
+                            .shadow(0, 1, 2, with_alpha(kBlack, 0.35f))
                             .child(label("Add", 12, st::kBase).font_bold())
                             .on_click(
                                 [d](Browser &self, Ctx cx)
@@ -465,6 +496,9 @@ struct PanelView
             .rounded_full()
             .border(1)
             .border_color(st::kKnobEdge)
+            .shadow(0, 0, 5,
+                led_.dropped ? with_alpha(st::kDanger, 0.8f)
+                             : with_alpha(st::kLedOn, 0.7f * kAlpha[led_.level]))
             .bg(led_.dropped     ? st::kDanger
                     : led_.level ? with_alpha(st::kLedOn, kAlpha[led_.level])
                                  : st::kLedOff);
@@ -807,61 +841,89 @@ struct PanelView
         return w;
     }
 
+    // The output level as two columns of segments: green, amber near the top, red at the top.
     Element meters(const PanelLayout &L) const
     {
-        const float top = L.controls_bottom + 12, h = std::max(20.f, L.jacks_top - top - 12);
-        const float bw = 8, x0 = L.width / 2 - bw - 2;
-        Element     m = div().absolute().left(x0).top(top).w(2 * bw + 4).h(h);
+        constexpr int kSegs = 20;
+        const float   top = L.controls_bottom + 12, h = std::max(20.f, L.jacks_top - top - 12);
+        const float   bw = 8, x0 = L.width / 2 - bw - 2;
+        const float   pitch = h / kSegs, sh = std::max(1.f, pitch - 1.5f);
+        Element       m = div().absolute().left(x0).top(top).w(2 * bw + 4).h(h);
         for (int ch = 0; ch < 2; ch++)
         {
             const float frac = (float)meter_[(size_t)ch] / 40.f;
-            const Color c = frac >= 1.f ? st::kDanger : frac > 0.9f ? rgb(0xf9e2af) : st::kLedOn;
-            m.child(div()
-                    .absolute()
-                    .left((float)ch * (bw + 4))
-                    .top(0)
-                    .w(bw)
-                    .h(h)
-                    .rounded(2)
-                    .bg(st::kWell)
-                    .child(div()
-                            .absolute()
-                            .left(0)
-                            .top(h * (1 - frac))
-                            .w(bw)
-                            .h(h * frac)
-                            .rounded(2)
-                            .bg(c)));
+            const int   lit = (int)std::lround(frac * kSegs);
+            Element     col = div()
+                                  .absolute()
+                                  .left((float)ch * (bw + 4) - 1)
+                                  .top(-1)
+                                  .w(bw + 2)
+                                  .h(h + 1)
+                                  .rounded(2)
+                                  .bg(st::kWell);
+            for (int k = 0; k < kSegs; k++) // k = 0 is the lowest segment
+            {
+                const Color c = k >= kSegs - 1 ? st::kDanger
+                    : k >= kSegs - 4           ? rgb(0xf9e2af)
+                                               : st::kLedOn;
+                col.child(div()
+                        .absolute()
+                        .left(1)
+                        .top(1 + h - (float)(k + 1) * pitch)
+                        .w(bw)
+                        .h(sh)
+                        .rounded(1)
+                        .bg(k < lit ? c : with_alpha(c, 0.10f)));
+            }
+            m.child(std::move(col));
         }
         return m;
     }
 
-    Element knob(float t) const
+    // A knob: a ring that shows the value as an arc (from `t0`, the travel of zero for a knob that
+    // goes both ways, else from the start), a face inside it, and a pointer turned about the
+    // centre.
+    Element knob(float t, float t0, Color accent) const
     {
+        constexpr float kRing = 3; // the arc's width
+        const Color     track = with_alpha(kBlack, 0.45f), none = with_alpha(kBlack, 0);
+        // the conic gradient starts at 7 o'clock and the knob's travel is three quarters of a turn
+        const float a = 0.75f * std::min(t, t0), b = std::max(0.75f * std::max(t, t0), a + 0.004f);
+        const float face = kKnobSize - 2 * kRing;
         return div()
             .w(kKnobSize)
             .h(kKnobSize)
             .flex_shrink_0()
             .rounded_full()
-            .bg_gradient(180, { stop(rgb(0x343743), 0), stop(st::kKnobFace, 1) })
-            .border(2)
-            .border_color(st::kKnobEdge)
-            .shadow(0, 2, 4, with_alpha(rgb(0x000000), 0.35f))
+            .bg_conic(0.5f, 0.5f, 225,
+                { stop(track, 0), stop(track, a), stop(accent, a), stop(accent, b), stop(track, b),
+                    stop(track, 0.75f), stop(none, 0.75f), stop(none, 1) })
+            .child(div()
+                    .absolute()
+                    .left(kRing)
+                    .top(kRing)
+                    .w(face)
+                    .h(face)
+                    .rounded_full()
+                    .bg_gradient(180, { stop(rgb(0x4a4e5e), 0), stop(st::kKnobFace, 0.75f) })
+                    .border(1)
+                    .border_color(st::kKnobEdge)
+                    .shadow(0, 2, 4, with_alpha(kBlack, 0.45f)))
             // a full-size overlay turned about the face's centre carries the pointer
             .child(div()
                     .absolute()
-                    .left(-2)
-                    .top(-2)
+                    .left(0)
+                    .top(0)
                     .w(kKnobSize)
                     .h(kKnobSize)
                     .rotate(-135 + 270 * t)
                     .child(div()
                             .absolute()
-                            .left(kKnobSize / 2 - 1.5f)
-                            .top(4)
-                            .w(3)
-                            .h(9)
-                            .rounded(1.5f)
+                            .left(kKnobSize / 2 - 1.25f)
+                            .top(kRing + 2)
+                            .w(2.5f)
+                            .h(8)
+                            .rounded(1.25f)
                             .bg(st::kKnobPointer)));
     }
     Element slider(float t, Color accent) const
@@ -894,20 +956,26 @@ struct PanelView
                     .w(kW)
                     .h(kThumb)
                     .rounded(2)
-                    .bg(st::kKnobPointer)
+                    .bg_gradient(180, { stop(kWhite, 0), stop(rgb(0xb9bcc9), 1) })
                     .border(1)
-                    .border_color(st::kKnobEdge));
+                    .border_color(st::kKnobEdge)
+                    .shadow(0, 1, 3, with_alpha(kBlack, 0.5f))
+                    .flex_row()
+                    .items_center()
+                    .justify_center()
+                    .child(div().w(kW - 8).h(1).bg(with_alpha(kBlack, 0.45f))));
     }
     Element led(bool on, Color accent) const
     {
-        return div()
-            .w(8)
-            .h(8)
-            .flex_shrink_0()
-            .rounded_full()
-            .bg(on ? accent : st::kLedOff)
-            .border(1)
-            .border_color(st::kKnobEdge);
+        Element e = div()
+                        .w(8)
+                        .h(8)
+                        .flex_shrink_0()
+                        .rounded_full()
+                        .bg(on ? accent : st::kLedOff)
+                        .border(1)
+                        .border_color(st::kKnobEdge);
+        return on ? glow(std::move(e), accent) : e;
     }
 
     Element control(const ModuleDesc &d, size_t i, float value, const Rect &r, Color accent) const
@@ -923,7 +991,9 @@ struct PanelView
         {
         case Control::Knob:
         case Control::Slider:
-            cell.child(p.control == Control::Knob ? knob(t) : slider(t, accent))
+            cell.child(p.control == Control::Knob
+                        ? knob(t, p.min < 0 && p.max > 0 ? to_travel(p, 0) : 0, accent)
+                        : slider(t, accent))
                 .child(std::move(name))
                 .child(std::move(val))
                 .on_mouse_down([i](PanelView &self, Ctx cx, const gp_mouse_event &ev)
@@ -974,7 +1044,8 @@ struct PanelView
                               .w(12)
                               .h(12)
                               .rounded_full()
-                              .bg(st::kKnobPointer))
+                              .bg_gradient(180, { stop(kWhite, 0), stop(rgb(0xc4c7d3), 1) })
+                              .shadow(0, 1, 2, with_alpha(kBlack, 0.5f)))
                 : div()
                       .w(24)
                       .h(16)
@@ -1009,21 +1080,28 @@ struct PanelView
         const bool      event = p.kind == Kind::Event;
         Element         cell = div().absolute().left(c.x).top(c.y).w(c.w).h(c.h).rounded(3);
         if (p.is_output)
-            cell.bg(with_alpha(rgb(0x000000), 0.3f));
-        cell.child(div()
-                       .absolute()
-                       .left(j.x - c.x)
-                       .top(j.y - c.y)
-                       .w(j.w)
-                       .h(j.h)
-                       .rounded(event ? 3 : j.w / 2)
-                       .bg_gradient(180, { stop(rgb(0xd5d8e2), 0), stop(rgb(0x9a9eab), 1) })
-                       .border(1)
-                       .border_color(st::kKnobEdge)
-                       .flex_row()
-                       .items_center()
-                       .justify_center()
-                       .child(div().w(8).h(8).rounded(event ? 1 : 4).bg(st::kWell)))
+            cell.bg(with_alpha(kBlack, 0.3f));
+        cell.hover_bg(p.is_output ? with_alpha(kBlack, 0.45f) : with_alpha(kWhite, 0.07f));
+        cell.child(
+                div()
+                    .absolute()
+                    .left(j.x - c.x)
+                    .top(j.y - c.y)
+                    .w(j.w)
+                    .h(j.h)
+                    .rounded(event ? 3 : j.w / 2)
+                    .bg_gradient(180, { stop(rgb(0xe3e5ee), 0), stop(rgb(0x8b8f9d), 1) })
+                    .border(1)
+                    .border_color(st::kKnobEdge)
+                    .shadow(0, 1, 2, with_alpha(kBlack, 0.4f))
+                    .flex_row()
+                    .items_center()
+                    .justify_center()
+                    .child(div()
+                            .w(8)
+                            .h(8)
+                            .rounded(event ? 1 : 4)
+                            .bg_gradient(180, { stop(rgb(0x050506), 0), stop(rgb(0x1d1f26), 1) })))
             .child(div()
                     .absolute()
                     .left(0)
@@ -1078,7 +1156,8 @@ struct PanelView
                         .bg_gradient(180, { stop(cc.top, 0), stop(cc.bottom, 1) })
                         .border(kPanelBorder)
                         .border_color(selected_ ? st::kAccent : st::kKnobEdge)
-                        .shadow(0, 3, 8, with_alpha(rgb(0x000000), 0.4f))
+                        .shadow(0, selected_ ? 0 : 3, selected_ ? 12 : 8,
+                            selected_ ? with_alpha(st::kAccent, 0.55f) : with_alpha(kBlack, 0.4f))
                         // the face moves the panel (a press on it does not pan the rack); controls,
                         // jacks and cables take their own presses first
                         .on_mouse_down([](PanelView &self, Ctx cx, const gp_mouse_event &ev)
@@ -1088,6 +1167,17 @@ struct PanelView
                         .on_mouse_up([](PanelView &self, Ctx cx, const gp_mouse_event &ev)
                             { self.ed.get(cx)->panel_drag_end(cx, ev.position); });
 
+        // a sheen across the face (under everything else), as light falls on a metal panel
+        p.child(div()
+                .absolute()
+                .left(0)
+                .top(kTitleHeight)
+                .w(L.width - 2 * kPanelBorder)
+                .h(L.height - 2 * kPanelBorder - kTitleHeight)
+                .rounded_bottom(3)
+                .bg_gradient(115,
+                    { stop(with_alpha(kWhite, 0.07f), 0), stop(with_alpha(kWhite, 0), 0.45f),
+                        stop(with_alpha(kBlack, 0.10f), 1) }));
         // the title bar moves the panel; a right-click opens its menu
         p.child(div()
                 .absolute()
@@ -1096,7 +1186,9 @@ struct PanelView
                 .w(L.width - 2 * kPanelBorder)
                 .h(kTitleHeight)
                 .rounded_top(3)
-                .bg(cc.title)
+                .bg_gradient(180, { stop(cc.top, 0), stop(cc.title, 0.6f) })
+                .border_bottom(1)
+                .border_color(with_alpha(kBlack, 0.35f))
                 .flex_row()
                 .items_center()
                 .justify_center()
@@ -1142,7 +1234,10 @@ struct PanelView
                     .w(bw)
                     .h(18)
                     .rounded(9)
-                    .bg(with_alpha(rgb(0x000000), 0.85f))
+                    .bg(with_alpha(kBlack, 0.88f))
+                    .border(1)
+                    .border_color(with_alpha(cc.chip, 0.7f))
+                    .shadow(0, 2, 6, with_alpha(kBlack, 0.5f))
                     .flex_row()
                     .items_center()
                     .justify_center()
@@ -1162,6 +1257,8 @@ void open_cable_menu(Ctx cx, Editor &e, PortRef to, Pt at); // a cable's right-c
 
 namespace
 {
+    constexpr float kRailH = 12; // a rack rail's height
+
     Element ring(Pt c, float r, Color col, float width)
     {
         return div()
@@ -1183,15 +1280,43 @@ namespace
             .w(14)
             .h(14)
             .rounded_full()
-            .bg(col)
+            .bg_radial(0.4f, 0.35f, { stop(kWhite, 0), stop(col, 0.45f) })
             .border(2)
-            .border_color(st::kKnobEdge);
+            .border_color(st::kKnobEdge)
+            .shadow(0, 2, 4, with_alpha(kBlack, 0.5f))
+            .flex_row()
+            .items_center()
+            .justify_center()
+            .child(div().w(4).h(4).rounded_full().bg(with_alpha(kBlack, 0.55f)));
+    }
+    // The cable is see-through for its first and last stretch (about as far as a jack's name
+    // reaches), so the name under a plugged jack can still be read.
+    Element faded_ends(Element stroke, const std::array<Pt, 4> &p, Color col)
+    {
+        const float len = 1.15f * std::hypot(p[3].x - p[0].x, p[3].y - p[0].y);
+        const float f = std::clamp(30.f / std::max(len, 1.f), 0.02f, 0.3f);
+        const Color thin = with_alpha(col, col.a * 0.3f);
+        return std::move(stroke).stroke_gradient({ stop(thin, 0), stop(thin, 0.6f * f),
+            stop(col, f), stop(col, 1 - f), stop(thin, 1 - 0.6f * f), stop(thin, 1) });
     }
     Element cable_curve_element(const std::array<Pt, 4> &p, Color col, float width)
     {
-        return curve(xy(p[0].x, p[0].y), xy(p[1].x, p[1].y), xy(p[2].x, p[2].y), xy(p[3].x, p[3].y))
-            .stroke_width(width)
-            .stroke_color(col);
+        return faded_ends(
+            curve(xy(p[0].x, p[0].y), xy(p[1].x, p[1].y), xy(p[2].x, p[2].y), xy(p[3].x, p[3].y))
+                .stroke_width(width)
+                .stroke_color(col),
+            p, col);
+    }
+    // What a cable casts on the panels under it: the same curve, lower, dark and soft. Drawn before
+    // the cable, with no handlers of its own.
+    Element cable_shadow_element(const std::array<Pt, 4> &p, float width)
+    {
+        const Color col = with_alpha(kBlack, 0.28f);
+        return faded_ends(curve(xy(p[0].x, p[0].y + 3), xy(p[1].x, p[1].y + 5),
+                              xy(p[2].x, p[2].y + 5), xy(p[3].x, p[3].y + 3))
+                              .stroke_width(width + 1.5f)
+                              .stroke_color(col),
+            p, col);
     }
 } // namespace
 
@@ -1220,10 +1345,10 @@ struct CableView
             .absolute()
             .left(0)
             .top(0)
+            .child(cable_shadow_element(cable_curve(a, b), sel ? 7.f : 4.5f))
             .child(cable_curve_element(
-                cable_curve(a, b), with_alpha(col, sel ? 1.f : 0.85f), sel ? 7.f : 4.5f)
+                cable_curve(a, b), with_alpha(col, sel ? 1.f : 0.9f), sel ? 7.f : 4.5f)
                     .hit_tolerance(4)
-                    .hover_bg(with_alpha(col, 1.f))
                     .cursor_pointer()
                     .on_mouse_down(
                         [](CableView &self, Ctx cx, const gp_mouse_event &ev)
@@ -1329,7 +1454,8 @@ struct DragView
         }
         const Color col = st::cable_colour(colour);
         const Pt    a = jack_center(*fn, d.fixed.port);
-        w.child(cable_curve_element(cable_curve(a, d.loose), with_alpha(col, 0.9f), 4.5f))
+        w.child(cable_shadow_element(cable_curve(a, d.loose), 4.5f))
+            .child(cable_curve_element(cable_curve(a, d.loose), with_alpha(col, 0.95f), 4.5f))
             .child(plug(a, col))
             .child(plug(d.loose, col));
         return w;
@@ -1377,8 +1503,13 @@ struct RackView
             bottom = std::max(bottom, r.bottom());
         }
         // room to move panels into: a screen beyond the last one, never less than three of them
-        const float cw = std::max(right + st::kWindowW, 3 * st::kWindowW);
-        const float ch = std::max(bottom + kPanelHeight, 3 * kPanelHeight);
+        // (zoomed out, the view shows more than that: the surface always fills it)
+        const float   z = e->zoom;
+        const gp_size view = scroll.viewport(cx);
+        const float   cw
+            = std::max({ right + st::kWindowW, 3 * st::kWindowW, view.w / z + st::kWindowW / 2 });
+        const float ch = std::max({ bottom + kPanelHeight, 3 * kPanelHeight,
+            (std::floor(view.h / z / kPanelHeight) + 1) * kPanelHeight });
 
         Element content
             = div()
@@ -1411,10 +1542,63 @@ struct RackView
                               self.scroll.to(cx, self.pan_off0.x - (ev.position.x - self.pan_p0.x),
                                   self.pan_off0.y - (ev.position.y - self.pan_p0.y));
                       })
-                  .on_mouse_up([](RackView &self) { self.panning = false; });
-        for (float y = kPanelHeight; y < ch;
-            y += kPanelHeight) // a faint line between rows of panels
-            content.child(div().absolute().left(0).top(y).w(cw).h(1).bg(st::kRackLine));
+                  .on_mouse_up([](RackView &self) { self.panning = false; })
+                  // The wheel over the rack zooms about the pointer (a control under the pointer
+                  // takes the wheel first, as before). Ctrl+wheel and Shift+wheel are passed on to
+                  // the scroller: up and down, and sideways.
+                  .on_wheel(
+                      [](RackView &self, Ctx cx, const gp_wheel_event &ev)
+                      {
+                          Editor *e = self.ed.get(cx);
+                          if (!e || ev.dy == 0 || (ev.mods & GP_MOD_CTRL))
+                          {
+                              cx.propagate();
+                              return;
+                          }
+                          e->set_zoom(cx, e->zoom * std::pow(1.1f, -ev.dy / 40.f), ev.position);
+                      });
+        // Each row of the rack has a rail along its top and its bottom, with a mounting slot per HP
+        // (the slots are one repeating gradient: a period is one HP of the content's width).
+        const float hp = kHp / cw;
+        auto        rail = [&](float y)
+        {
+            const Color slot = rgb(0x0c0d10), none = with_alpha(slot, 0);
+            content.child(div()
+                    .absolute()
+                    .left(0)
+                    .top(y)
+                    .w(cw)
+                    .h(kRailH)
+                    .bg_gradient(180, { stop(rgb(0x2b2d37), 0), stop(rgb(0x1f2027), 1) })
+                    .border_y(1)
+                    .border_color(rgb(0x121317))
+                    .child(div()
+                            .absolute()
+                            .left(0)
+                            .top(kRailH / 2 - 3)
+                            .w(cw)
+                            .h(4)
+                            .bg_repeating(90,
+                                { stop(none, 0), stop(none, 0.3f * hp), stop(slot, 0.3f * hp),
+                                    stop(slot, 0.7f * hp), stop(none, 0.7f * hp),
+                                    stop(none, hp) })));
+        };
+        for (float y = 0; y < ch; y += kPanelHeight)
+        {
+            rail(y);
+            rail(y + kPanelHeight - kRailH);
+        }
+        if (patch.nodes().empty()) // an empty rack says how to begin
+            content.child(div()
+                    .absolute()
+                    .left(48)
+                    .top(kPanelHeight / 2 - 40)
+                    .flex_col()
+                    .gap(6)
+                    .child(label("An empty rack", 22, st::kSubtext).font_bold())
+                    .child(label(
+                        "Add a module from the list on the left, or drag one here.", 13, st::kDim))
+                    .child(label("Open > Examples has patches to start from.", 13, st::kDim)));
 
         const uint32_t lifted = e->pdrag.active && e->pdrag.moved ? e->pdrag.node : 0;
         auto           place = [&](uint32_t id, Entity<PanelView> &view)
@@ -1502,8 +1686,11 @@ struct RackView
                             cx.notify();
                         })));
         }
+        // the content is scaled about its top left corner inside a box of its size on the screen
+        // (a transform does not change what an element takes up in the layout)
         return div().size_full().overflow_scroll().track_scroll(scroll).bg(st::kRack).child(
-            std::move(content));
+            div().w(cw * z).h(ch * z).child(
+                std::move(content).absolute().left(0).top(0).transform_origin(0, 0).scale(z)));
     }
 };
 
@@ -1776,7 +1963,8 @@ namespace
         gp_size        vp = r->scroll.viewport(cx);
         if (vp.w <= 0 || vp.h <= 0) // before the first layout: the window minus the chrome
             vp = { st::kWindowW - st::kBrowserW, st::kWindowH - st::kToolbarH - st::kHintH };
-        return { off.x, off.y, vp.w, vp.h };
+        const float z = e.zoom;
+        return { off.x / z, off.y / z, vp.w / z, vp.h / z, z };
     }
 } // namespace
 
@@ -1846,7 +2034,29 @@ Pt Editor::to_rack(Ctx cx, gp_point w)
 {
     const RackViewport vp = viewport_of(cx, *this);
     const gp_point     o = rack_origin();
-    return { w.x - o.x + vp.x, w.y - o.y + vp.y };
+    return { (w.x - o.x) / vp.zoom + vp.x, (w.y - o.y) / vp.zoom + vp.y };
+}
+
+void Editor::set_zoom(Ctx cx, float z, gp_point about)
+{
+    z = std::clamp(z, kZoomMin, kZoomMax);
+    if ((zoom - 1) * (z - 1) < 0)
+        z = 1; // passing 100 % stops there
+    RackView *rv = rack.get(cx);
+    if (!rv || z == zoom)
+        return;
+    // the rack point under `about` stays under it
+    const Pt       q = to_rack(cx, about);
+    const gp_point o = rack_origin();
+    zoom = z;
+    rv->scroll.to(
+        cx, std::max(0.f, q.x * z - (about.x - o.x)), std::max(0.f, q.y * z - (about.y - o.y)));
+    say(cx,
+        "Zoom " + std::to_string((int)std::lround(z * 100))
+            + " %.      Wheel: zoom, Ctrl+wheel: up and down, Shift+wheel: sideways, Ctrl+0: 100 "
+              "%");
+    hint_line.update(cx, [](HintLine &, Ctx c) { c.notify(); });
+    refresh_rack(cx);
 }
 
 // ---- sound
@@ -2079,12 +2289,13 @@ void Editor::edge_tick(Ctx cx)
         return;
     const RackViewport vp = viewport_of(cx, *this);
     const gp_point     o = rack_origin(), p = last_pointer;
-    if (p.x < o.x || p.y < o.y || p.x > o.x + vp.w || p.y > o.y + vp.h)
+    const float        ww = vp.w * vp.zoom, wh = vp.h * vp.zoom; // the view in window pixels
+    if (p.x < o.x || p.y < o.y || p.x > o.x + ww || p.y > o.y + wh)
         return; // only inside the rack (a module still over the browser does not scroll it)
     constexpr float band = 32;
     auto speed = [&](float depth) { return depth <= 0 ? 0.f : 1 + std::min(12.f, depth * 0.4f); };
-    const float sx = speed(p.x - (o.x + vp.w - band)) - speed(o.x + band - p.x);
-    const float sy = speed(p.y - (o.y + vp.h - band)) - speed(o.y + band - p.y);
+    const float sx = speed(p.x - (o.x + ww - band)) - speed(o.x + band - p.x);
+    const float sy = speed(p.y - (o.y + wh - band)) - speed(o.y + band - p.y);
     if (sx == 0 && sy == 0)
         return;
     rv->scroll.by(cx, sx, sy);
@@ -2217,8 +2428,8 @@ void Editor::module_drag_move(Ctx cx, gp_point window)
     mdrag.moved = true;
     const gp_point     o = rack_origin();
     const RackViewport vp = viewport_of(cx, *this);
-    mdrag.over_rack
-        = window.x >= o.x && window.y >= o.y && window.x < o.x + vp.w && window.y < o.y + vp.h;
+    mdrag.over_rack = window.x >= o.x && window.y >= o.y && window.x < o.x + vp.w * vp.zoom
+        && window.y < o.y + vp.h * vp.zoom;
     const std::string name(mdrag.desc->name);
     if (mdrag.over_rack)
     {
@@ -2624,7 +2835,8 @@ uint32_t Editor::add_module(Ctx cx, const ModuleDesc &d)
         const Rect r = node_rect(d, (float)s.x, (float)s.y);
         if (r.right() > vp.x + vp.w || r.bottom() > vp.y + vp.h)
             if (RackView *rv = rack.get(cx))
-                rv->scroll.to(cx, std::max(0.f, r.right() - vp.w + kHp), std::max(0.f, r.y - kHp));
+                rv->scroll.to(cx, std::max(0.f, r.right() - vp.w + kHp) * vp.zoom,
+                    std::max(0.f, r.y - kHp) * vp.zoom);
     }
     return id;
 }
@@ -3163,6 +3375,17 @@ Entity<Editor> open_rack(App app, const Options &opt, std::string *error)
     app.bind_key("ctrl-z", "edit::undo");
     app.bind_key("ctrl-shift-z", "edit::redo");
     app.bind_key("ctrl-y", "edit::redo");
+    app.bind_key("ctrl-0", "view::zoom_reset");
+    app.on_global_action("view::zoom_reset",
+        [ed](Ctx cx)
+        {
+            if (Editor *e = ed.get(cx))
+            { // about the middle of the view
+                const RackViewport vp = rack_viewport(cx, ed);
+                const gp_point     o = rack_origin();
+                e->set_zoom(cx, 1, { o.x + vp.w * vp.zoom / 2, o.y + vp.h * vp.zoom / 2 });
+            }
+        });
     app.on_global_action("edit::undo",
         [ed](Ctx cx)
         {
@@ -3242,14 +3465,18 @@ gp_point control_center(Ctx cx, Entity<Editor> ed, uint32_t node, int param)
         return { -1, -1 };
     const RackViewport vp = viewport_of(cx, *e);
     const gp_point     o = rack_origin();
-    const float        px = o.x + n->x * kHp - vp.x, py = o.y + n->y * kHp - vp.y;
+    // a point of the panel (in panel pixels) on the screen
+    auto at = [&](float x, float y) -> gp_point
+    {
+        return { o.x + (n->x * kHp + x - vp.x) * vp.zoom, o.y + (n->y * kHp + y - vp.y) * vp.zoom };
+    };
     if (param < 0)
-        return { px + n->desc->width_hp * kHp / 2, py + kTitleHeight / 2 };
+        return at(n->desc->width_hp * kHp / 2, kTitleHeight / 2);
     const PanelLayout &L = panel_layout(*n->desc);
     const Rect        &r = L.params[(size_t)param];
     if (n->desc->params[(size_t)param].control == Control::Knob)
-        return { px + kPanelBorder + r.x + r.w / 2, py + kPanelBorder + r.y + kKnobSize / 2 };
-    return { px + kPanelBorder + r.x + r.w / 2, py + kPanelBorder + r.y + r.h / 2 };
+        return at(kPanelBorder + r.x + r.w / 2, kPanelBorder + r.y + kKnobSize / 2);
+    return at(kPanelBorder + r.x + r.w / 2, kPanelBorder + r.y + r.h / 2);
 }
 
 gp_point port_center(Ctx cx, Entity<Editor> ed, uint32_t node, size_t port)
@@ -3261,8 +3488,8 @@ gp_point port_center(Ctx cx, Entity<Editor> ed, uint32_t node, size_t port)
     const RackViewport vp = viewport_of(cx, *e);
     const gp_point     o = rack_origin();
     const Rect        &j = panel_layout(*n->desc).jacks[port];
-    return { o.x + n->x * kHp - vp.x + kPanelBorder + j.x + j.w / 2,
-        o.y + n->y * kHp - vp.y + kPanelBorder + j.y + j.h / 2 };
+    return { o.x + (n->x * kHp - vp.x + kPanelBorder + j.x + j.w / 2) * vp.zoom,
+        o.y + (n->y * kHp - vp.y + kPanelBorder + j.y + j.h / 2) * vp.zoom };
 }
 
 } // namespace rack::ui
