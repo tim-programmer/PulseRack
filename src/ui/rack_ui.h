@@ -16,6 +16,7 @@
 #include <gpuic/gpuic.hpp>
 
 #include <array>
+#include <chrono>
 #include <functional>
 #include <map>
 #include <memory>
@@ -248,9 +249,15 @@ struct Editor
     // A module selected by a click on its panel (a cable or a module is selected, not both); Delete
     // removes whichever is.
     // While a cable, a panel or a module from the browser is dragged, the pointer near the rack's
-    // edge scrolls it (and the drag follows): a 60 Hz task while any drag is on.
-    gp_point    last_pointer { };
-    gpuic::Task edge_task;
+    // edge scrolls it (and the drag follows): a 60 Hz task while any drag is on. It starts once the
+    // pointer has stayed near the edge a moment (a module brought in from the browser crosses the
+    // left edge on its way), and its speed is per second, not per tick, so a slow frame rate (a
+    // software renderer) scrolls as far.
+    gp_point                              last_pointer { };
+    gpuic::Task                           edge_task;
+    bool                                  edge_near = false; // the pointer is in the edge band
+    std::chrono::steady_clock::time_point edge_since { };    // since then
+    std::chrono::steady_clock::time_point edge_last { };     // the last tick
     void        edge_scroll_start(gpuic::Ctx cx, gp_point window);
     void        edge_tick(gpuic::Ctx cx);
     uint32_t    selected_node = 0;

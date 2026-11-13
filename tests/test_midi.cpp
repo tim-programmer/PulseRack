@@ -1,5 +1,6 @@
 // MIDI without a device (docs/midi.md): decoding messages, unique device names, the inboxes, and
 // the settings file.
+#include "portable_env.h"
 #include "testutil.h"
 
 #include "midi/inbox.h"

@@ -9,6 +9,8 @@
 //   ui_smoke --pose-ask PATCH   opens PATCH, makes a change and asks New: the unsaved-changes
 //   question
 //                             GPUIC_WAIT_MS)
+#include "portable_env.h"
+
 #include "engine/model/patchfile.h"
 #include "engine/model/registry.h"
 #include "ui/files.h"
@@ -128,7 +130,7 @@ struct Driver
     gp_point add_button(int card)
     {
         const float top = style::kToolbarH + style::kBrowserPad + style::kSearchH + style::kChipsH
-            + card * (style::kCardH + style::kCardGap);
+            + (float)card * (style::kCardH + style::kCardGap);
         return { style::kBrowserW - style::kBrowserPad - 8 - style::kAddW / 2, top + 8 + 14 };
     }
     uint32_t newest()
@@ -1520,8 +1522,8 @@ struct Driver
         CHECK(node(dropped)->desc == &oscd);
 
         const float tol = 0.5f;
-        CHECK(std::abs(node(dropped)->x - spot.x) <= tol);
-        CHECK(std::abs(node(dropped)->y - spot.y) <= tol);
+        CHECK(std::abs(node(dropped)->x - (float)spot.x) <= tol);
+        CHECK(std::abs(node(dropped)->y - (float)spot.y) <= tol);
 
         CHECK(e().engine.state(dropped) != nullptr && e().panels.count(dropped));
         // onto a panel: refused, with the reason
@@ -1665,11 +1667,13 @@ int main(int argc, char **argv)
     }
     if (sound)
         setenv("SDL_AUDIO_DRIVER", "dummy", 1); // never the real sound card in a test
+#ifndef _WIN32 // (Windows always has a desktop to open a window on)
     if (!std::getenv("DISPLAY") && !std::getenv("WAYLAND_DISPLAY"))
     {
         std::printf("no display: skipped\n");
         return 77;
     }
+#endif
     setenv("GPUIC_IGNORE_REAL_MOUSE", "1", 1); // only the synthetic pointer
     gpuic::run(
         [](App app)

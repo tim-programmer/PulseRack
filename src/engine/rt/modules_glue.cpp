@@ -673,7 +673,7 @@ namespace
                 if (++n->col == kScopeColumns)
                 { // the window is full: hand it over, and wait for the next trigger
                     f.seq = ++n->seq;
-                    f.window_ms = (float)(n->pos * 1000.0 / n->sr);
+                    f.window_ms = (float)((double)n->pos * 1000.0 / n->sr);
                     f.has[0] = in[0] != nullptr;
                     f.has[1] = in[1] != nullptr;
                     f.triggered = n->triggered;

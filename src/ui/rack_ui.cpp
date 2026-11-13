@@ -1152,7 +1152,7 @@ struct PanelView
                       .border_color(st::kKnobEdge)
                       .child(div()
                               .absolute()
-                              .left(on ? 12 : 0)
+                              .left(on ? 12.f : 0.f)
                               .top(0)
                               .w(12)
                               .h(12)
@@ -1219,7 +1219,7 @@ struct PanelView
                     .child(div()
                             .w(8)
                             .h(8)
-                            .rounded(event ? 1 : 4)
+                            .rounded(event ? 1.f : 4.f)
                             .bg_gradient(180, { stop(rgb(0x050506), 0), stop(rgb(0x1d1f26), 1) })))
             .child(div()
                     .absolute()
@@ -1283,7 +1283,7 @@ struct PanelView
                         .bg_gradient(180, { stop(cc.top, 0), stop(cc.bottom, 1) })
                         .border(kPanelBorder)
                         .border_color(selected_ ? st::kAccent : st::kKnobEdge)
-                        .shadow(0, selected_ ? 0 : 3, selected_ ? 12 : 8,
+                        .shadow(0, selected_ ? 0.f : 3.f, selected_ ? 12.f : 8.f,
                             selected_ ? with_alpha(st::kAccent, 0.55f) : with_alpha(kBlack, 0.4f))
                         // the face moves the panel (a press on it does not pan the rack); controls,
                         // jacks and cables take their own presses first
@@ -1320,7 +1320,7 @@ struct PanelView
                 .items_center()
                 .justify_center()
                 .overflow_hidden()
-                .child(label(std::string(d.name), L.width < 100 ? 9 : 11, st::kText).font_bold())
+                .child(label(std::string(d.name), L.width < 100 ? 9.f : 11.f, st::kText).font_bold())
 
                 .on_mouse_down([](PanelView &self, Ctx cx, const gp_mouse_event &ev)
                     { self.press_face(cx, ev); })
@@ -1763,7 +1763,7 @@ struct RackView
                     .child(label("Open > Examples has patches to start from.", 13, st::kDim)));
 
         const uint32_t lifted = e->pdrag.active && e->pdrag.moved ? e->pdrag.node : 0;
-        auto           place = [&](uint32_t id, Entity<PanelView> &view)
+        auto           place = [&](uint32_t id, Entity<PanelView> &pv)
         {
             if (const Node *n = patch.find(id))
                 content.child(div()
@@ -1771,20 +1771,20 @@ struct RackView
                         .left(n->x * kHp)
                         .top(n->y * kHp)
                         .key_id(id)
-                        .child(view.cached()));
+                        .child(pv.cached()));
         };
-        for (auto &[id, view] : e->panels)
+        for (auto &[id, panel] : e->panels)
             if (id != lifted)
-                place(id, view);
+                place(id, panel);
         if (auto it = e->panels.find(lifted); it != e->panels.end()) // over the others
             place(lifted, it->second);
-        for (auto &[key, view] : e->cable_views) // over the panels
+        for (auto &[key, cable] : e->cable_views) // over the panels
             content.child(div()
                     .absolute()
                     .left(0)
                     .top(0)
                     .key_id((uint64_t)1 << 40 | (uint64_t)key.first << 16 | key.second)
-                    .child(view.cached()));
+                    .child(cable.cached()));
         content.child(
             div().absolute().left(0).top(0).key_id((uint64_t)1 << 41).child(e->drag_view.cached()));
 
@@ -2900,7 +2900,11 @@ void Editor::edge_scroll_start(Ctx cx, gp_point window)
 {
     last_pointer = window;
     if (!edge_task.active())
+    {
+        edge_near = false;
+        edge_last = std::chrono::steady_clock::now();
         edge_task = cx.app().ctx(self).every(1.0 / 60, [](Editor &e, Ctx c) { e.edge_tick(c); });
+    }
 }
 
 void Editor::edge_tick(Ctx cx)
@@ -2912,6 +2916,9 @@ void Editor::edge_tick(Ctx cx)
         edge_task.cancel();
         return;
     }
+    using clock = std::chrono::steady_clock;
+    const clock::time_point now = clock::now(), last = edge_last;
+    edge_last = now;
     RackView *rv = rack.get(cx);
     if (!dragging || !rv)
         return;
@@ -2925,8 +2932,25 @@ void Editor::edge_tick(Ctx cx)
     const float sx = speed(p.x - (o.x + ww - band)) - speed(o.x + band - p.x);
     const float sy = speed(p.y - (o.y + wh - band)) - speed(o.y + band - p.y);
     if (sx == 0 && sy == 0)
+    {
+        edge_near = false;
         return;
-    rv->scroll.by(cx, sx, sy);
+    }
+    if (!edge_near)
+    {
+        edge_near = true;
+        edge_since = now;
+    }
+    // the time scrolled in this tick, in 60 Hz ticks (the speeds are pixels per 1/60 s): none in the
+    // first 0.2 s near the edge, and at most a quarter second's worth, so a stall does not throw the
+    // rack far
+    constexpr auto dwell = std::chrono::milliseconds(200);
+    const float    ticks = std::clamp(
+        std::chrono::duration<float>(now - std::max(last, edge_since + dwell)).count() * 60.f, 0.f,
+        15.f);
+    if (ticks == 0)
+        return;
+    rv->scroll.by(cx, sx * ticks, sy * ticks);
     // what is dragged follows: the same pointer is now over another part of the rack
     if (drag.active)
         jack_drag(cx, p);

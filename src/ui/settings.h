@@ -42,7 +42,7 @@ std::string settings_text(const Settings &s);
 // newer PulseRack's) are skipped with a warning each.
 bool parse_settings(const std::string &text, Settings *out, std::vector<std::string> *warnings);
 
-// $XDG_CONFIG_HOME/pulserack, or ~/.config/pulserack; empty if neither can be found.
+// $XDG_CONFIG_HOME/pulserack, or ~/.config/pulserack (%APPDATA%/PulseRack on Windows); empty if neither can be found.
 std::string default_config_dir();
 std::string settings_path(const std::string &config_dir); // empty for an empty dir
 
