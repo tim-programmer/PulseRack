@@ -20,7 +20,7 @@ target_link_libraries(rack-render PRIVATE rack_engine rack_warnings)
 # The rack's geometry (panel layout, knob mapping, placement) and patch files: no window, so the headless tests use them.
 # The factory patches: examples/*.rack compiled in as text, so the application needs no path to them.
 # (A changed or new .rack file reconfigures, so the copy is never stale.)
-file(GLOB RACK_FACTORY_PATCHES CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/examples/*.rack)
+file(GLOB RACK_FACTORY_PATCHES CONFIGURE_DEPENDS ${PROJECT_SOURCE_DIR}/examples/*.rack)
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${RACK_FACTORY_PATCHES})
 set(rack_factory_body "")
 foreach(f ${RACK_FACTORY_PATCHES})
