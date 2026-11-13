@@ -1,0 +1,349 @@
+# Bright, happy pop at 120 bpm in C major (C G Am F): four-on-the-floor kick, clap on 2 and 4, offbeat hats, pumping octave bass, offbeat chord stabs and a sparkly arpeggio with echoes.
+pulserack 1
+node 1 clock x=0 y=0
+param 1 bpm 120
+param 1 ppqn 24
+param 1 run 1
+node 2 seq x=6 y=0
+param 2 length 4
+param 2 division 24
+param 2 gate 3
+step 2 0 note=36 vel=120 gate=0 tie=0
+step 2 1 note=36 vel=120 gate=0 tie=0
+step 2 2 note=36 vel=120 gate=0 tie=0
+step 2 3 note=36 vel=120 gate=0 tie=0
+node 3 kick x=22 y=0
+param 3 tune 52
+param 3 sweep 2.4
+param 3 sweep_time 30
+param 3 decay 380
+param 3 punch 0.6
+param 3 drive 0.35
+param 3 accent 0.3
+node 4 noise x=30 y=0
+param 4 colour white
+param 4 seed 11
+node 5 seq x=36 y=0
+param 5 length 4
+param 5 division 24
+param 5 gate 3
+step 5 1 note=60 vel=100 gate=0 tie=0
+step 5 3 note=60 vel=100 gate=0 tie=0
+node 6 svf x=52 y=0
+param 6 cutoff 1400
+param 6 resonance 0.4
+node 7 adsr x=60 y=0
+param 7 attack 1
+param 7 decay 160
+param 7 sustain 0
+param 7 release 100
+node 8 vca x=68 y=0
+param 8 gain 1.5
+node 9 seq x=72 y=0
+param 9 length 2
+param 9 division 12
+param 9 gate 2
+step 9 1 note=60 vel=100 gate=0 tie=0
+node 10 svf x=88 y=0
+param 10 cutoff 9000
+param 10 resonance 0.2
+node 11 adsr x=96 y=0
+param 11 attack 1
+param 11 decay 45
+param 11 sustain 0
+param 11 release 30
+node 12 vca x=104 y=0
+param 12 gain 1
+node 13 seq x=0 y=26
+param 13 length 32
+param 13 division 12
+param 13 gate 5
+step 13 0 note=36 vel=100 gate=0 tie=0
+step 13 1 note=48 vel=100 gate=0 tie=0
+step 13 2 note=36 vel=100 gate=0 tie=0
+step 13 3 note=48 vel=100 gate=0 tie=0
+step 13 4 note=36 vel=100 gate=0 tie=0
+step 13 5 note=48 vel=100 gate=0 tie=0
+step 13 6 note=36 vel=100 gate=0 tie=0
+step 13 7 note=48 vel=100 gate=0 tie=0
+step 13 8 note=31 vel=100 gate=0 tie=0
+step 13 9 note=43 vel=100 gate=0 tie=0
+step 13 10 note=31 vel=100 gate=0 tie=0
+step 13 11 note=43 vel=100 gate=0 tie=0
+step 13 12 note=31 vel=100 gate=0 tie=0
+step 13 13 note=43 vel=100 gate=0 tie=0
+step 13 14 note=31 vel=100 gate=0 tie=0
+step 13 15 note=43 vel=100 gate=0 tie=0
+step 13 16 note=33 vel=100 gate=0 tie=0
+step 13 17 note=45 vel=100 gate=0 tie=0
+step 13 18 note=33 vel=100 gate=0 tie=0
+step 13 19 note=45 vel=100 gate=0 tie=0
+step 13 20 note=33 vel=100 gate=0 tie=0
+step 13 21 note=45 vel=100 gate=0 tie=0
+step 13 22 note=33 vel=100 gate=0 tie=0
+step 13 23 note=45 vel=100 gate=0 tie=0
+step 13 24 note=29 vel=100 gate=0 tie=0
+step 13 25 note=41 vel=100 gate=0 tie=0
+step 13 26 note=29 vel=100 gate=0 tie=0
+step 13 27 note=41 vel=100 gate=0 tie=0
+step 13 28 note=29 vel=100 gate=0 tie=0
+step 13 29 note=41 vel=100 gate=0 tie=0
+step 13 30 note=29 vel=100 gate=0 tie=0
+step 13 31 note=41 vel=100 gate=0 tie=0
+node 14 osc x=16 y=26
+param 14 waveform saw
+node 15 ladder x=24 y=26
+param 15 mode LP_24
+param 15 cutoff 700
+param 15 resonance 0.35
+param 15 drive 1.5
+param 15 saturate 1
+node 16 adsr x=34 y=26
+param 16 attack 2
+param 16 decay 200
+param 16 sustain 0.5
+param 16 release 60
+node 17 vca x=42 y=26
+param 17 gain 1
+node 18 seq x=46 y=26
+param 18 length 64
+param 18 division 6
+param 18 gate 2
+step 18 0 note=72 vel=90 gate=0 tie=0
+step 18 1 note=76 vel=90 gate=0 tie=0
+step 18 2 note=79 vel=90 gate=0 tie=0
+step 18 4 note=79 vel=90 gate=0 tie=0
+step 18 5 note=76 vel=90 gate=0 tie=0
+step 18 6 note=79 vel=90 gate=0 tie=0
+step 18 7 note=84 vel=90 gate=0 tie=0
+step 18 8 note=72 vel=90 gate=0 tie=0
+step 18 9 note=76 vel=90 gate=0 tie=0
+step 18 10 note=79 vel=90 gate=0 tie=0
+step 18 12 note=79 vel=90 gate=0 tie=0
+step 18 13 note=84 vel=90 gate=0 tie=0
+step 18 14 note=79 vel=90 gate=0 tie=0
+step 18 15 note=76 vel=90 gate=0 tie=0
+step 18 16 note=71 vel=90 gate=0 tie=0
+step 18 17 note=74 vel=90 gate=0 tie=0
+step 18 18 note=79 vel=90 gate=0 tie=0
+step 18 20 note=79 vel=90 gate=0 tie=0
+step 18 21 note=74 vel=90 gate=0 tie=0
+step 18 22 note=79 vel=90 gate=0 tie=0
+step 18 23 note=83 vel=90 gate=0 tie=0
+step 18 24 note=71 vel=90 gate=0 tie=0
+step 18 25 note=74 vel=90 gate=0 tie=0
+step 18 26 note=79 vel=90 gate=0 tie=0
+step 18 28 note=79 vel=90 gate=0 tie=0
+step 18 29 note=83 vel=90 gate=0 tie=0
+step 18 30 note=79 vel=90 gate=0 tie=0
+step 18 31 note=74 vel=90 gate=0 tie=0
+step 18 32 note=72 vel=90 gate=0 tie=0
+step 18 33 note=76 vel=90 gate=0 tie=0
+step 18 34 note=81 vel=90 gate=0 tie=0
+step 18 36 note=81 vel=90 gate=0 tie=0
+step 18 37 note=76 vel=90 gate=0 tie=0
+step 18 38 note=81 vel=90 gate=0 tie=0
+step 18 39 note=84 vel=90 gate=0 tie=0
+step 18 40 note=72 vel=90 gate=0 tie=0
+step 18 41 note=76 vel=90 gate=0 tie=0
+step 18 42 note=81 vel=90 gate=0 tie=0
+step 18 44 note=81 vel=90 gate=0 tie=0
+step 18 45 note=84 vel=90 gate=0 tie=0
+step 18 46 note=81 vel=90 gate=0 tie=0
+step 18 47 note=76 vel=90 gate=0 tie=0
+step 18 48 note=72 vel=90 gate=0 tie=0
+step 18 49 note=77 vel=90 gate=0 tie=0
+step 18 50 note=81 vel=90 gate=0 tie=0
+step 18 52 note=81 vel=90 gate=0 tie=0
+step 18 53 note=77 vel=90 gate=0 tie=0
+step 18 54 note=81 vel=90 gate=0 tie=0
+step 18 55 note=84 vel=90 gate=0 tie=0
+step 18 56 note=72 vel=90 gate=0 tie=0
+step 18 57 note=77 vel=90 gate=0 tie=0
+step 18 58 note=81 vel=90 gate=0 tie=0
+step 18 60 note=81 vel=90 gate=0 tie=0
+step 18 61 note=84 vel=90 gate=0 tie=0
+step 18 62 note=81 vel=90 gate=0 tie=0
+step 18 63 note=77 vel=90 gate=0 tie=0
+node 19 osc x=62 y=26
+param 19 waveform pulse
+param 19 pulse_width 0.25
+node 20 adsr x=70 y=26
+param 20 attack 2
+param 20 decay 120
+param 20 sustain 0.2
+param 20 release 80
+node 21 vca x=78 y=26
+param 21 gain 0.9
+node 22 delay x=82 y=26
+param 22 time 375
+param 22 feedback 0.3
+param 22 tone 5000
+param 22 mix 0.25
+param 22 glide 0
+node 23 seq x=0 y=52
+param 23 length 32
+param 23 division 12
+param 23 gate 4
+step 23 1 note=60 vel=100 gate=0 tie=0
+step 23 3 note=60 vel=100 gate=0 tie=0
+step 23 5 note=60 vel=100 gate=0 tie=0
+step 23 7 note=60 vel=100 gate=0 tie=0
+step 23 9 note=59 vel=100 gate=0 tie=0
+step 23 11 note=59 vel=100 gate=0 tie=0
+step 23 13 note=59 vel=100 gate=0 tie=0
+step 23 15 note=59 vel=100 gate=0 tie=0
+step 23 17 note=57 vel=100 gate=0 tie=0
+step 23 19 note=57 vel=100 gate=0 tie=0
+step 23 21 note=57 vel=100 gate=0 tie=0
+step 23 23 note=57 vel=100 gate=0 tie=0
+step 23 25 note=57 vel=100 gate=0 tie=0
+step 23 27 note=57 vel=100 gate=0 tie=0
+step 23 29 note=57 vel=100 gate=0 tie=0
+step 23 31 note=57 vel=100 gate=0 tie=0
+node 24 unison x=16 y=52
+param 24 waveform saw
+param 24 voices 3
+param 24 detune 12
+param 24 width 0
+node 25 seq x=28 y=52
+param 25 length 32
+param 25 division 12
+param 25 gate 4
+step 25 1 note=64 vel=100 gate=0 tie=0
+step 25 3 note=64 vel=100 gate=0 tie=0
+step 25 5 note=64 vel=100 gate=0 tie=0
+step 25 7 note=64 vel=100 gate=0 tie=0
+step 25 9 note=62 vel=100 gate=0 tie=0
+step 25 11 note=62 vel=100 gate=0 tie=0
+step 25 13 note=62 vel=100 gate=0 tie=0
+step 25 15 note=62 vel=100 gate=0 tie=0
+step 25 17 note=60 vel=100 gate=0 tie=0
+step 25 19 note=60 vel=100 gate=0 tie=0
+step 25 21 note=60 vel=100 gate=0 tie=0
+step 25 23 note=60 vel=100 gate=0 tie=0
+step 25 25 note=60 vel=100 gate=0 tie=0
+step 25 27 note=60 vel=100 gate=0 tie=0
+step 25 29 note=60 vel=100 gate=0 tie=0
+step 25 31 note=60 vel=100 gate=0 tie=0
+node 26 unison x=44 y=52
+param 26 waveform saw
+param 26 voices 3
+param 26 detune 12
+param 26 width 0
+node 27 seq x=56 y=52
+param 27 length 32
+param 27 division 12
+param 27 gate 4
+step 27 1 note=67 vel=100 gate=0 tie=0
+step 27 3 note=67 vel=100 gate=0 tie=0
+step 27 5 note=67 vel=100 gate=0 tie=0
+step 27 7 note=67 vel=100 gate=0 tie=0
+step 27 9 note=67 vel=100 gate=0 tie=0
+step 27 11 note=67 vel=100 gate=0 tie=0
+step 27 13 note=67 vel=100 gate=0 tie=0
+step 27 15 note=67 vel=100 gate=0 tie=0
+step 27 17 note=64 vel=100 gate=0 tie=0
+step 27 19 note=64 vel=100 gate=0 tie=0
+step 27 21 note=64 vel=100 gate=0 tie=0
+step 27 23 note=64 vel=100 gate=0 tie=0
+step 27 25 note=65 vel=100 gate=0 tie=0
+step 27 27 note=65 vel=100 gate=0 tie=0
+step 27 29 note=65 vel=100 gate=0 tie=0
+step 27 31 note=65 vel=100 gate=0 tie=0
+node 28 unison x=72 y=52
+param 28 waveform saw
+param 28 voices 3
+param 28 detune 12
+param 28 width 0
+node 29 mixer x=84 y=52
+param 29 level1 0.4
+param 29 level2 0.4
+param 29 level3 0.4
+node 30 svf x=90 y=52
+param 30 cutoff 5000
+param 30 resonance 0.1
+node 31 adsr x=98 y=52
+param 31 attack 3
+param 31 decay 180
+param 31 sustain 0.3
+param 31 release 120
+node 32 vca x=106 y=52
+param 32 gain 1
+node 33 mixer x=92 y=26
+param 33 level1 0.7
+param 33 level2 0.4
+param 33 level3 0.8
+node 34 reverb x=98 y=26
+param 34 algorithm quality
+param 34 size 0.6
+param 34 decay 1.8
+param 34 predelay 15
+param 34 damping 0.6
+param 34 damping_hz 6000
+param 34 width 1
+param 34 mix 0.25
+param 34 modulation 0.3
+node 35 mixer x=110 y=26
+param 35 level1 0.9
+param 35 level2 0.45
+param 35 level3 0.45
+param 35 level4 0.45
+node 36 mixer x=116 y=26
+param 36 level1 0.9
+param 36 level2 0.45
+param 36 level3 0.45
+param 36 level4 0.45
+node 37 out x=122 y=26
+param 37 level 0.6
+cable 1.clock -> 2.in
+cable 1.clock -> 5.in
+cable 1.clock -> 9.in
+cable 1.clock -> 13.in
+cable 1.clock -> 18.in
+cable 1.clock -> 23.in
+cable 1.clock -> 25.in
+cable 1.clock -> 27.in
+cable 2.out -> 3.note
+cable 4.out -> 6.in
+cable 6.bp -> 8.in
+cable 5.out -> 7.note
+cable 7.out -> 8.gain
+cable 4.out -> 10.in
+cable 10.hp -> 12.in
+cable 9.out -> 11.note
+cable 11.out -> 12.gain
+cable 13.out -> 14.note
+cable 13.out -> 16.note
+cable 14.out -> 15.in
+cable 15.out -> 17.in
+cable 16.out -> 17.gain
+cable 18.out -> 19.note
+cable 18.out -> 20.note
+cable 19.out -> 21.in
+cable 20.out -> 21.gain
+cable 21.out -> 22.in
+cable 23.out -> 24.note
+cable 25.out -> 26.note
+cable 27.out -> 28.note
+cable 23.out -> 31.note
+cable 24.l -> 29.in1
+cable 26.l -> 29.in2
+cable 28.l -> 29.in3
+cable 29.out -> 30.in
+cable 30.lp -> 32.in
+cable 31.out -> 32.gain
+cable 32.out -> 33.in1
+cable 22.out -> 33.in2
+cable 8.out -> 33.in3
+cable 33.out -> 34.in
+cable 34.l -> 35.in1
+cable 3.out -> 35.in2
+cable 17.out -> 35.in3
+cable 12.out -> 35.in4
+cable 34.r -> 36.in1
+cable 3.out -> 36.in2
+cable 17.out -> 36.in3
+cable 12.out -> 36.in4
+cable 35.out -> 37.l
+cable 36.out -> 37.r

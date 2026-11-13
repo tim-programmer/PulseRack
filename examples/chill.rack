@@ -1,0 +1,145 @@
+# A slow, relaxed piece at 76 bpm: a pad of open fifths (Am F C G) through a slowly breathing ladder filter, a sparse plucked melody with echoes, a soft kick, a little air, all in a big reverb.
+pulserack 1
+node 1 clock x=0 y=0
+param 1 bpm 76
+param 1 ppqn 24
+param 1 run 1
+node 2 seq x=6 y=0
+param 2 length 4
+param 2 division 96
+param 2 gate 90
+step 2 0 note=45 vel=100 gate=0 tie=0
+step 2 1 note=41 vel=100 gate=0 tie=0
+step 2 2 note=48 vel=100 gate=0 tie=0
+step 2 3 note=43 vel=100 gate=0 tie=0
+node 3 unison x=22 y=0
+param 3 waveform saw
+param 3 voices 6
+param 3 detune 16
+param 3 width 0
+node 4 unison x=34 y=0
+param 4 waveform saw
+param 4 voices 5
+param 4 detune 22
+param 4 width 0
+param 4 pitch_depth 1
+node 5 attenuverter x=46 y=0
+param 5 scale 0
+param 5 offset 0.583333
+node 6 mixer x=50 y=0
+param 6 level1 0.6
+param 6 level2 0.45
+node 7 ladder x=56 y=0
+param 7 mode LP_24
+param 7 cutoff 900
+param 7 resonance 0.3
+param 7 drive 1.2
+param 7 mod_depth 1.2
+param 7 saturate 1
+node 8 lfo x=66 y=0
+param 8 shape sine
+param 8 frequency 0.04
+node 9 adsr x=74 y=0
+param 9 attack 900
+param 9 decay 1500
+param 9 sustain 0.7
+param 9 release 2000
+node 10 vca x=82 y=0
+param 10 gain 1
+node 11 seq x=0 y=26
+param 11 length 16
+param 11 division 12
+param 11 gate 4
+step 11 0 note=76 vel=90 gate=0 tie=0
+step 11 2 note=74 vel=70 gate=0 tie=0
+step 11 3 note=72 vel=80 gate=0 tie=0
+step 11 5 note=69 vel=75 gate=0 tie=0
+step 11 8 note=79 vel=85 gate=0 tie=0
+step 11 10 note=76 vel=70 gate=0 tie=0
+step 11 11 note=74 vel=60 gate=0 tie=0
+step 11 13 note=72 vel=70 gate=0 tie=0
+step 11 14 note=69 vel=65 gate=0 tie=0
+node 12 osc x=16 y=26
+param 12 waveform triangle
+node 13 adsr x=24 y=26
+param 13 attack 8
+param 13 decay 600
+param 13 sustain 0
+param 13 release 400
+node 14 vca x=32 y=26
+param 14 gain 0.8
+node 15 delay x=36 y=26
+param 15 time 592
+param 15 feedback 0.45
+param 15 tone 2500
+param 15 mix 0.35
+param 15 glide 0
+node 16 seq x=46 y=26
+param 16 length 8
+param 16 division 12
+param 16 gate 3
+step 16 0 note=36 vel=110 gate=0 tie=0
+step 16 3 note=36 vel=60 gate=0 tie=0
+step 16 4 note=36 vel=95 gate=0 tie=0
+node 17 kick x=62 y=26
+param 17 tune 46
+param 17 sweep 1.8
+param 17 sweep_time 45
+param 17 decay 650
+param 17 punch 0.15
+param 17 drive 0.05
+param 17 accent 0.6
+node 18 noise x=70 y=26
+param 18 colour pink
+param 18 seed 3
+node 19 mixer x=76 y=26
+param 19 level1 0.7
+param 19 level2 0.8
+param 19 level3 0.025
+node 20 reverb x=82 y=26
+param 20 algorithm quality
+param 20 size 0.9
+param 20 decay 6
+param 20 predelay 30
+param 20 damping 0.4
+param 20 damping_hz 4000
+param 20 width 1
+param 20 mix 0.4
+param 20 modulation 0.5
+node 21 mixer x=94 y=26
+param 21 level1 0.9
+param 21 level2 0.45
+node 22 mixer x=100 y=26
+param 22 level1 0.9
+param 22 level2 0.45
+node 23 out x=106 y=26
+param 23 level 0.8
+cable 1.clock -> 2.in
+cable 1.clock -> 11.in
+cable 1.clock -> 16.in
+cable 2.out -> 3.note
+cable 2.out -> 4.note
+cable 2.out -> 9.note
+cable 5.out -> 4.pitch
+cable 3.l -> 6.in1
+cable 4.l -> 6.in2
+cable 6.out -> 7.in
+cable 8.out -> 7.cutoff
+cable 7.out -> 10.in
+cable 9.out -> 10.gain
+cable 11.out -> 12.note
+cable 11.out -> 13.note
+cable 12.out -> 14.in
+cable 13.out -> 14.gain
+cable 14.out -> 15.in
+cable 16.out -> 17.note
+cable 10.out -> 19.in1
+cable 15.out -> 19.in2
+cable 18.out -> 19.in3
+cable 19.out -> 20.in
+cable 20.l -> 21.in1
+cable 17.out -> 21.in2
+cable 20.r -> 22.in1
+cable 17.out -> 22.in2
+cable 21.out -> 23.l
+cable 22.out -> 23.r
