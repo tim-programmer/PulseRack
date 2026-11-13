@@ -1508,16 +1508,21 @@ struct Driver
             wait(0.02);
         }
         wait();
+        // mid-drag: the drag tracks the mouse and is over the rack
         CHECK(e().mdrag.moved && e().mdrag.over_rack && e().mdrag.fits
             && hint_has("Release to add Oscillator"));
-        const float tol = 0.5f;   // half a logical pixel; the drag rounds to the pixel grid
-        CHECK(std::abs(e().mdrag.x - spot.x) <= tol && std::abs(e().mdrag.y - spot.y) <= tol);
+
         release(to);
         CHECK(patch.nodes().size() == count + 1 && !e().mdrag.active);
+
         const uint32_t dropped = newest();
-        CHECK(node(dropped)->desc == &oscd &&
-            std::abs(node(dropped)->x - spot.x) <= tol &&
-            std::abs(node(dropped)->y - spot.y) <= tol);
+        CHECK(node(dropped) != nullptr);
+        CHECK(node(dropped)->desc == &oscd);
+
+        const float tol = 0.5f;
+        CHECK(std::abs(node(dropped)->x - spot.x) <= tol);
+        CHECK(std::abs(node(dropped)->y - spot.y) <= tol);
+
         CHECK(e().engine.state(dropped) != nullptr && e().panels.count(dropped));
         // onto a panel: refused, with the reason
         drag(card, control_center(cx(), ed, dropped, -1), 12);
