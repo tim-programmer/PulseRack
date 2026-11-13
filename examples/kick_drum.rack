@@ -1,0 +1,36 @@
+# A kick drum pattern with accents: clock -> sequencer -> Kick (velocity is the accent) -> a small reverb -> output.
+pulserack 1
+node 1 clock x=0 y=0
+param 1 bpm 124
+param 1 ppqn 24
+param 1 run 1
+node 2 seq x=6 y=0
+param 2 length 8
+param 2 division 12
+param 2 gate 3
+step 2 0 note=36 vel=127 gate=0 tie=0
+step 2 2 note=36 vel=110 gate=0 tie=0
+step 2 3 note=36 vel=50 gate=0 tie=0
+step 2 4 note=36 vel=127 gate=0 tie=0
+step 2 6 note=36 vel=110 gate=0 tie=0
+step 2 7 note=36 vel=70 gate=0 tie=0
+node 3 kick x=22 y=0
+param 3 tune 48
+param 3 sweep 2.2
+param 3 sweep_time 28
+param 3 decay 420
+param 3 punch 0.55
+param 3 drive 0.3
+param 3 accent 0.8
+node 4 reverb x=30 y=0
+param 4 algorithm small
+param 4 size 0.4
+param 4 decay 0.8
+param 4 mix 0.12
+node 5 out x=42 y=0
+param 5 level 0.8
+cable 1.clock -> 2.in
+cable 2.out -> 3.note
+cable 3.out -> 4.in
+cable 4.l -> 5.l
+cable 4.r -> 5.r

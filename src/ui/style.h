@@ -77,7 +77,8 @@ struct CategoryColors
 {
     Color top, bottom, title, chip;
 };
-// Sources green, modulators red, filters blue, event modules teal, utilities grey.
+// Sources green, drums peach, modulators red, filters blue, effects mauve, event modules teal,
+// utilities grey.
 inline CategoryColors category(std::string_view c)
 {
     if (c == "Source")
@@ -86,6 +87,10 @@ inline CategoryColors category(std::string_view c)
         return { rgb(0x784245), rgb(0x5e3335), rgb(0x4f2a2c), rgb(0xf38ba8) };
     if (c == "Filter")
         return { rgb(0x3d5a86), rgb(0x2f476b), rgb(0x283c5b), rgb(0x89b4fa) };
+    if (c == "Drum")
+        return { rgb(0x80553a), rgb(0x66442e), rgb(0x573a27), rgb(0xfab387) };
+    if (c == "Effect")
+        return { rgb(0x5f4a80), rgb(0x4b3a66), rgb(0x403157), rgb(0xcba6f7) };
     if (c == "Event")
         return { rgb(0x346e70), rgb(0x285658), rgb(0x22494b), rgb(0x94e2d5) };
     return { rgb(0x535764), rgb(0x40434e), rgb(0x373a43), rgb(0xbac2de) };

@@ -18,6 +18,7 @@
 #include "engine/model/patch.h"
 #include "engine/model/plan.h"
 #include "engine/model/scope.h"
+#include "engine/model/wav.h"
 #include "engine/rt/spsc.h"
 #include "midi/inbox.h"
 
@@ -26,6 +27,7 @@
 #include <functional>
 #include <map>
 #include <memory>
+#include <string>
 #include <vector>
 
 namespace rack
@@ -88,6 +90,13 @@ public:
     std::function<int(const std::string &)> midi_slot_of;
     // Looks every such module's device up again (after `midi_slot_of` was set or changed).
     void refresh_devices();
+    // The WAV file a Sampler plays (kept in the patch as Node::sample): read now, and the module
+    // made again with it. NoSuchParam for a module that plays no sample; InitFailed (and `error`)
+    // if the file cannot be read, and nothing changes. An empty path: no sample.
+    Err set_sample(uint32_t node, const std::string &path, std::string *error);
+    // Why a Sampler's file did not load when the patch was compiled ("cannot be read", "not a WAV
+    // file", ...), or empty if it did (or the node has none).
+    std::string sample_error(uint32_t node) const;
     // The clock MIDI messages are stamped with (Msg::time_ns): steady_clock in nanoseconds unless a
     // test gives its own. render() turns a message's age into its place in the device's buffer.
     void set_midi_clock(int64_t (*now_ns)());
@@ -127,8 +136,13 @@ public:
 private:
     struct StateDeleter
     {
-        size_t align;
-        void   operator()(void *p) const { ::operator delete(p, std::align_val_t(align)); }
+        const ModuleDesc *desc;
+        void              operator()(void *p) const
+        {
+            if (desc->destroy)
+                desc->destroy(p);
+            ::operator delete(p, std::align_val_t(desc->state_align));
+        }
     };
     using StateMem = std::unique_ptr<void, StateDeleter>;
     struct Live
@@ -136,6 +150,7 @@ private:
         const ModuleDesc *desc;
         StateMem          mem;
         int               slot;
+        std::string       sample; // the file a Sampler was made with (compile() remakes on a change)
     };
     struct ScriptEvent
     {
@@ -195,6 +210,9 @@ private:
     void feed_script(uint64_t upto);
     void feed_midi(size_t frames); // frames: the device call's length, 0 outside one
     int  device_code(const Node &n) const;
+    // A Sampler's file, read once and kept while the patch names it (null and `error` if it does
+    // not load)
+    std::shared_ptr<const SampleData> sample_data(const std::string &path, std::string *error);
 
     // UI-owned
     uint32_t                                   sample_rate_;
@@ -205,6 +223,8 @@ private:
     int                                        next_slot_ = 0;
     uint64_t                                   gen_ = 0;
     uint32_t                                   failed_node_ = 0;
+    std::map<std::string, std::shared_ptr<const SampleData>> samples_;
+    std::map<std::string, std::string>                       sample_errors_; // path -> why
     bool                                       attached_ = false;
 
     // shared

@@ -39,8 +39,9 @@ namespace
 
     const Color kBlack = rgb(0x000000), kWhite = rgb(0xffffff);
 
-    // The Device box of a MIDI In or MIDI CC panel: under its controls, in the panel's pixels
-    // (inside its border). A click on it opens the device menu (RackView).
+    // The Device box of a MIDI In or MIDI CC panel, and the Sample box of a Sampler: under its
+    // controls, in the panel's pixels (inside its border). A click on it opens the device menu
+    // (RackView), or the file dialog.
     Rect device_box(const PanelLayout &L)
     {
         return { kPad, L.controls_bottom + 8, L.width - 2 * kPanelBorder - 2 * kPad, 32 };
@@ -947,6 +948,48 @@ struct PanelView
                 { self.ed.get(cx)->hover(cx, self.node, Editor::kHoverDevice, inside); });
     }
 
+    // A Sampler's Sample box: the file it plays; a click asks for another. Its caption says when
+    // the file did not load (moved, or not a WAV file this reader knows).
+    Element sample_element(Ctx cx, const Node &n, const PanelLayout &L, Color chip)
+    {
+        const Rect        r = device_box(L);
+        Editor           *e = ed.get(cx);
+        const std::string why = e ? e->engine.sample_error(n.id) : std::string();
+        const bool        fine = why.empty();
+        return div()
+            .absolute()
+            .left(r.x)
+            .top(r.y)
+            .w(r.w)
+            .h(r.h)
+            .rounded(3)
+            .bg(st::kWell)
+            .border(1)
+            .border_color(with_alpha(chip, 0.5f))
+            .hover_bg(rgb(0x1a1c22))
+            .px(5)
+            .flex_col()
+            .justify_center()
+            .gap(1)
+            .overflow_hidden()
+            .cursor_pointer()
+            .child(label(fine ? "SAMPLE" : "NOT LOADED", 8, fine ? st::kDim : rgb(0xf9e2af))
+                    .whitespace_pre())
+            .child(label(n.sample.empty() ? std::string("Click to load a WAV file")
+                                          : file_name(n.sample),
+                10, n.sample.empty() || !fine ? st::kSubtext : st::kText)
+                    .whitespace_pre())
+            .on_mouse_down(
+                [](PanelView &self, Ctx cx, const gp_mouse_event &ev)
+                {
+                    Editor *e = self.ed.get(cx);
+                    if (e && ev.button != GP_MOUSE_MIDDLE)
+                        e->choose_sample(cx, self.node);
+                })
+            .on_hover([](PanelView &self, Ctx cx, bool inside)
+                { self.ed.get(cx)->hover(cx, self.node, Editor::kHoverSample, inside); });
+    }
+
     // The output level as two columns of segments: green, amber near the top, red at the top.
     Element meters(const PanelLayout &L) const
     {
@@ -1351,6 +1394,8 @@ struct PanelView
             p.child(meters(L));
         if (midi_sink(d)) // the MIDI input it listens to, under its controls
             p.child(device_element(cx, *n, L, cc.chip));
+        if (takes_sample(d)) // the file it plays, there too
+            p.child(sample_element(cx, *n, L, cc.chip));
 
         if (active >= 0 && (size_t)active < d.params.size())
         { // the value while dragging
@@ -2348,6 +2393,14 @@ std::string Editor::describe_item(uint32_t node, int item) const
         return std::string(d.name) + "  ·  listens to "
             + (n->device.empty() ? std::string("every MIDI input that is switched on") : n->device)
             + "      click to choose one MIDI input, or all of them";
+    if (item == kHoverSample)
+    {
+        const std::string why = engine.sample_error(n->id);
+        return std::string(d.name) + "  ·  "
+            + (n->sample.empty() ? std::string("no sample yet")
+                                 : n->sample + (why.empty() ? "" : "  (not loaded: " + why + ")"))
+            + "      click to choose a WAV file";
+    }
     if (item == kHoverStrip)
         return std::string(d.name)
             + "  ·  press the keys to play, drag across them to glide; the computer keys "
@@ -2572,6 +2625,52 @@ void Editor::set_midi_device(Ctx cx, uint32_t node, const std::string &name)
                         + (!here         ? "  (not connected: it will be heard when it is)."
                                 : was_on ? "."
                                          : ", which is now switched on.")));
+}
+
+void Editor::choose_sample(Ctx cx, uint32_t node)
+{
+    const Node *n = engine.patch().find(node);
+    if (!n || !takes_sample(*n->desc))
+        return;
+    if (sample_chooser)
+        sample_chooser(cx, node, n->sample);
+    else
+        say(cx, "No file dialog here.");
+}
+
+void Editor::sample_chosen(
+    Ctx cx, uint32_t node, std::optional<std::string> path, const std::string &error)
+{
+    const Node *n = engine.patch().find(node);
+    if (!n || !takes_sample(*n->desc))
+        return; // (the module went while the dialog was open)
+    if (!path)
+    {
+        say(cx, error.empty() ? "Cancelled." : "No file dialog: " + error + ".");
+        return;
+    }
+    // read first, so that a file that does not load leaves no undo step behind
+    SampleData  probe;
+    std::string err;
+    if (!read_wav(*path, &probe, &err))
+    {
+        say(cx, "Not loaded: " + file_name(*path) + ": " + err + ".");
+        return;
+    }
+    checkpoint(cx, "Sampler file");
+    if (engine.set_sample(node, *path, &err) != Err::Ok)
+    {
+        undo_stack.pop_back(); // (nothing changed after all)
+        say(cx, "Not loaded: " + file_name(*path) + ": " + err + ".");
+        return;
+    }
+    touch(cx);
+    if (auto it = panels.find(node); it != panels.end())
+        it->second.update(cx, [](PanelView &, Ctx c) { c.notify(); });
+    char secs[32];
+    std::snprintf(secs, sizeof secs, "%.2f", (double)probe.frames.size() / probe.rate);
+    say(cx, "The Sampler plays " + file_name(*path) + " (" + secs + " s, "
+            + std::to_string(probe.rate) + " Hz).");
 }
 
 // ---- MIDI learn
@@ -4056,6 +4155,8 @@ Entity<Editor> open_rack(App app, const Options &opt, std::string *error)
     }
     e->chooser = [ed](Ctx cx, bool save, const std::string &suggested)
     { native_file_dialog(cx, ed, save, suggested); };
+    e->sample_chooser = [ed](Ctx cx, uint32_t node, const std::string &suggested)
+    { native_sample_dialog(cx, ed, node, suggested); };
     // the file commands' keys, and Escape for the menu and the question
     app.bind_key("ctrl-n", "file::new");
     app.bind_key("ctrl-o", "file::open");
@@ -4211,6 +4312,19 @@ gp_point device_box_center(Ctx cx, Entity<Editor> ed, uint32_t node)
     Editor     *e = ed.get(cx);
     const Node *n = e ? e->engine.patch().find(node) : nullptr;
     if (!n || !midi_sink(*n->desc))
+        return { -1, -1 };
+    const RackViewport vp = viewport_of(cx, *e);
+    const gp_point     o = rack_origin();
+    const Rect         r = device_box(panel_layout(*n->desc));
+    return { o.x + (n->x * kHp + kPanelBorder + r.x + r.w / 2 - vp.x) * vp.zoom,
+        o.y + (n->y * kHp + kPanelBorder + r.y + r.h / 2 - vp.y) * vp.zoom };
+}
+
+gp_point sample_box_center(Ctx cx, Entity<Editor> ed, uint32_t node)
+{
+    Editor     *e = ed.get(cx);
+    const Node *n = e ? e->engine.patch().find(node) : nullptr;
+    if (!n || !takes_sample(*n->desc))
         return { -1, -1 };
     const RackViewport vp = viewport_of(cx, *e);
     const gp_point     o = rack_origin();

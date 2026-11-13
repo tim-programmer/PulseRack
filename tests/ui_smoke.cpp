@@ -13,6 +13,7 @@
 
 #include "engine/model/patchfile.h"
 #include "engine/model/registry.h"
+#include "engine/model/wav.h"
 #include "ui/files.h"
 #include "ui/geometry.h"
 #include "ui/rack_ui.h"
@@ -786,6 +787,56 @@ struct Driver
         click(menu_row(1, true)); // Recover
         CHECK(patch.nodes().size() == 1 && patch.nodes()[0].desc->id == "noise" && e().dirty);
         CHECK(!e().has_recovery() && e().patch_name == "recovered patch" && e().file_path.empty());
+
+        // a Sampler's Sample box: a click asks for a WAV file (the test's own chooser), which
+        // loads as one undo step; a file that is not a WAV changes nothing; Cancel neither
+        {
+            std::string wav_next;
+            int         asked = 0;
+            e().sample_chooser = [&](Ctx c, uint32_t node, const std::string &)
+            {
+                asked++;
+                e().sample_chosen(c, node,
+                    wav_next.empty() ? std::nullopt : std::optional<std::string>(wav_next));
+            };
+            std::vector<float> tone(4800);
+            for (size_t i = 0; i < tone.size(); i++)
+                tone[i] = (float)std::sin(0.06 * (double)i) * 0.5f;
+            CHECK(write_file_atomic(dir + "/tone.wav", make_wav(tone, 48000), &err));
+            CHECK(write_file_atomic(dir + "/fake.wav", "not a wav", &err));
+            const uint32_t smp = e().add_module(cx(), *find_module("sampler"));
+            wait(0.2);
+            const gp_point box = sample_box_center(cx(), ed, smp);
+            CHECK(box.x >= 0 && sample_box_center(cx(), ed, patch.nodes()[0].id).x < 0);
+            move(box);
+            wait(0.1);
+            CHECK(hint_has("no sample yet"));
+            const size_t undo0 = e().undo_stack.size();
+            wav_next = dir + "/tone.wav";
+            click(box);
+            wait(0.1);
+            CHECK(asked == 1 && node(smp)->sample == dir + "/tone.wav");
+            CHECK(hint_has("plays tone.wav (0.10 s, 48000 Hz)") && e().undo_stack.size() == undo0 + 1);
+            CHECK(e().engine.sample_error(smp).empty());
+            wav_next = dir + "/fake.wav";
+            click(box);
+            wait(0.1);
+            CHECK(hint_has("Not loaded: fake.wav: not a WAV file"));
+            CHECK(node(smp)->sample == dir + "/tone.wav" && e().undo_stack.size() == undo0 + 1);
+            wav_next.clear();
+            click(box);
+            wait(0.1);
+            CHECK(hint_has("Cancelled") && node(smp)->sample == dir + "/tone.wav");
+            e().undo(cx());
+            wait(0.1);
+            CHECK(node(smp)->sample.empty());
+            e().redo(cx());
+            wait(0.1);
+            CHECK(node(smp)->sample == dir + "/tone.wav" && e().engine.sample_error(smp).empty());
+            e().remove_module(cx(), smp);
+            wait(0.1);
+            e().sample_chooser = nullptr;
+        }
 
         // a damaged file does not open, and changes nothing
         CHECK(write_file_atomic(dir + "/bad.rack", "pulserack 1\nnode one two\n", &err));

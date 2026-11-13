@@ -70,6 +70,14 @@ struct Editor
     std::vector<std::string> device_menu_names(uint32_t node) const;
     void refresh_midi_panels(gpuic::Ctx cx); // their Device boxes show what is plugged in and on
 
+    // A Sampler's WAV file (Node::sample): its Sample box asks for one through sample_chooser
+    // (the window's native dialog; the tests put their own here), and the answer comes back to
+    // sample_chosen, which loads it. One undo step.
+    void choose_sample(gpuic::Ctx cx, uint32_t node);
+    void sample_chosen(gpuic::Ctx cx, uint32_t node, std::optional<std::string> path,
+        const std::string &error = { });
+    std::function<void(gpuic::Ctx, uint32_t node, const std::string &suggested)> sample_chooser;
+
     // MIDI learn (docs/midi.md): a right-click on a control waits for a controller to move
     // (learn_control: which control of its module, -1: not learning) and maps it to that place on
     // whichever module is selected; a mapped controller then turns that control. The mappings are
@@ -125,7 +133,8 @@ struct Editor
     // A sequencer's step is hovered as (its node, kHoverStep - the step's index).
     static constexpr int kHoverTitle = -1, kHoverPort = -2, kHoverCable = -1000, kHoverStep = -2000,
                          kHoverStrip = -3000, // the Keyboard panel's piano
-        kHoverDevice = -4000;                 // a MIDI module's Device box
+        kHoverDevice = -4000,                 // a MIDI module's Device box
+        kHoverSample = -5000;                 // a Sampler's Sample box
     uint32_t    hover_node = 0;
     int         hover_item = 0;
     std::string hover_text;
@@ -404,5 +413,7 @@ bool rack_menu_open(gpuic::Ctx cx, gpuic::Entity<Editor> ed);
 // { -1, -1 } if none is open or it has no such item.
 gp_point device_box_center(gpuic::Ctx cx, gpuic::Entity<Editor> ed, uint32_t node);
 gp_point device_menu_item(gpuic::Ctx cx, gpuic::Entity<Editor> ed, int index);
+// The middle of a Sampler's Sample box ({ -1, -1 } for a module that has none).
+gp_point sample_box_center(gpuic::Ctx cx, gpuic::Entity<Editor> ed, uint32_t node);
 
 } // namespace rack::ui

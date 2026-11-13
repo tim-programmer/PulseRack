@@ -707,11 +707,6 @@ namespace
 
 } // namespace
 
-#define RACK_DESC(                                                                                 \
-    var, id, name, cat, hp, T, ports, params, steps, init, reset, process, apply_step, cap, blurb) \
-    const ModuleDesc var = { id, name, cat, hp, sizeof(T), alignof(T), ports, params, steps, init, \
-        reset, process, apply_step, cap, blurb }
-
 RACK_DESC(kOscDesc, "osc", "Oscillator", kSource, 8, OscNode, kOscPorts, kOscParams, false,
     osc_init, osc_reset, osc_process, nullptr, nullptr,
     "Band-limited sine, triangle, saw and pulse; plays notes, with pitch, PWM and hard sync");

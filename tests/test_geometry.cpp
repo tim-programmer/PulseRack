@@ -137,6 +137,9 @@ TEST(geometry_value_text)
     CHECK(format_value(ms, 350) == "350 ms" && format_value(ms, 2500) == "2.50 s");
     ParamDesc plain { "x", "X", "", -1, 1, 0, Scale::Linear, { }, Control::Knob, nullptr };
     CHECK(format_value(plain, 0.7f) == "0.70" && format_value(plain, -0.25f) == "-0.25");
+    ParamDesc note { "n", "N", "note", 0, 127, 60, Scale::Int, { }, Control::Knob, nullptr };
+    CHECK(format_value(note, 60) == "C4" && format_value(note, 69) == "A4"
+        && format_value(note, 0) == "C-1" && format_value(note, 127) == "G9");
     ParamDesc tog { "x", "X", "", 0, 1, 0, Scale::Toggle, { }, Control::Switch, nullptr };
     CHECK(format_value(tog, 1) == "on" && format_value(tog, 0) == "off");
     ParamDesc n { "x", "X", "bpm", 1, 300, 120, Scale::Int, { }, Control::Knob, nullptr };
