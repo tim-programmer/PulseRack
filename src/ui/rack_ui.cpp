@@ -4182,6 +4182,10 @@ bool Editor::open_text(Ctx cx, const std::string &text, const std::string &name,
         engine.compile();
         return false;
     }
+    // Every module made again from the new patch, time 0. (compile() keeps a module whose id still
+    // has the same type, which is right for an edit; but another patch numbers its modules from 1
+    // too, and its sequencer at id 2 would go on with the old one's steps and settings.)
+    engine.reset();
     // what the view held about the old patch goes
     drag = CableDrag { };
     mdrag = ModuleDrag { };

@@ -26,6 +26,7 @@
 #include <algorithm>
 #include <filesystem>
 #include <fstream>
+#include <memory>
 #include <set>
 #include <vector>
 
@@ -708,6 +709,32 @@ struct Driver
         };
         const Patch &patch = e().engine.patch();
         wait(0.3);
+        // another patch opened over one whose modules have the same ids and types: it sounds as
+        // it does on its own (every module made again from its own settings, not kept)
+        {
+            const auto f = factory_patches();
+            std::string err2;
+            CHECK(e().open_text(cx(), std::string(f[factory_index("voices")].text), "a", "", false, &err2));
+            float L[512], R[512];
+            for (int i = 0; i < 40; i++)
+                e().engine.render(512, L, R);
+            CHECK(e().open_text(cx(), std::string(f[factory_index("drum_machine")].text), "b", "", false, &err2));
+            auto fresh = std::make_unique<Engine>(e().engine.sample_rate()); // (big for a coroutine's stack)
+            CHECK(load_patch(f[factory_index("drum_machine")].text, fresh->patch()).ok
+                && fresh->compile() == Err::Ok);
+            bool same = true;
+            for (int i = 0; i < 100 && same; i++)
+            {
+                float l2[512], r2[512];
+                e().engine.render(512, L, R);
+                fresh->render(512, l2, r2);
+                same = std::memcmp(L, l2, sizeof L) == 0 && std::memcmp(R, r2, sizeof R) == 0;
+            }
+            CHECK(same);
+            e().new_patch(cx());
+            wait(0.1);
+        }
+
         CHECK(e().patch_name == "untitled" && !e().dirty && e().file_path.empty());
 
         // an edit makes the patch unsaved; Ctrl+S on an untitled patch asks where (".rack" added)
