@@ -18,18 +18,24 @@ namespace
         gp_app   *app;
         gp_entity editor;
         bool      save;
+        uint32_t  sampler = 0; // a Sampler's file, not a patch
     };
     struct Answer
     {
         bool        save = false, chosen = false;
+        uint32_t    sampler = 0;
         std::string path, error;
     };
 
     void on_main_thread(void *self, gp_ctx *cx, void *data)
     {
-        auto *a = static_cast<Answer *>(data);
-        static_cast<Editor *>(self)->file_chosen(gpuic::Ctx(cx), a->save,
-            a->chosen ? std::optional<std::string>(a->path) : std::nullopt, a->error);
+        auto      *a = static_cast<Answer *>(data);
+        auto      *e = static_cast<Editor *>(self);
+        const auto path = a->chosen ? std::optional<std::string>(a->path) : std::nullopt;
+        if (a->sampler)
+            e->sample_chosen(gpuic::Ctx(cx), a->sampler, path, a->error);
+        else
+            e->file_chosen(gpuic::Ctx(cx), a->save, path, a->error);
         delete a;
     }
 
@@ -38,6 +44,7 @@ namespace
         auto *r = static_cast<Request *>(userdata);
         auto *a = new Answer;
         a->save = r->save;
+        a->sampler = r->sampler;
         if (!files)
             a->error = SDL_GetError(); // the dialog failed
         else if (files[0])
@@ -51,6 +58,8 @@ namespace
 
     const SDL_DialogFileFilter kFilters[]
         = { { "PulseRack patches", "rack" }, { "All files", "*" } };
+    const SDL_DialogFileFilter kWavFilters[]
+        = { { "WAV files", "wav;WAV;wave" }, { "All files", "*" } };
 } // namespace
 
 void native_file_dialog(
@@ -62,6 +71,14 @@ void native_file_dialog(
         SDL_ShowSaveFileDialog(&on_any_thread, r, nullptr, kFilters, 2, where);
     else
         SDL_ShowOpenFileDialog(&on_any_thread, r, nullptr, kFilters, 2, where, false);
+}
+
+void native_sample_dialog(
+    gpuic::Ctx cx, gpuic::Entity<Editor> editor, uint32_t node, const std::string &suggested)
+{
+    auto       *r = new Request { cx.raw()->app, editor.id, false, node };
+    const char *where = suggested.empty() ? nullptr : suggested.c_str();
+    SDL_ShowOpenFileDialog(&on_any_thread, r, nullptr, kWavFilters, 2, where, false);
 }
 
 } // namespace rack::ui

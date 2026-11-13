@@ -32,6 +32,8 @@ struct Node
     std::vector<StepData> steps;        // the sequencer's steps (empty for other types)
     // A MIDI In or MIDI CC module: the input it listens to, by name (empty: every input).
     std::string device;
+    // A Sampler: the WAV file it plays, as a path (empty: none yet).
+    std::string sample;
 };
 // A scripted key press for a Keyboard node, so a patch can play itself (rack-render, tests, factory
 // patches).

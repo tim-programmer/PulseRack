@@ -194,7 +194,7 @@ real device was opened (PipeWire) but no sound was listened to in these tests.
 | 3 | Cables | **built**: jacks, dragging cables (lit targets, reasons for refusals), moving and deleting them, the engine updated live; see `gui.md`, *As built (milestone 3)* |
 | 4 | Sound | **built**: SDL3 output on its own thread, the computer keyboard as a piano, activity LEDs and level meters; see *As built (milestone 4)* above and `gui.md` |
 | 5 | Save and load | **built**: New, Open, Save, Save as, the factory patches, unsaved changes asked about and kept at close; see `gui.md`, *As built (milestone 5)* |
-| 6 | Polish and the later modules | **built**: undo and redo, the step grid, the on-screen keyboard, selection and Delete, arrow keys, cable output ends, edge scrolling, the output device, dropouts (`gui.md`, *As built (milestone 6)*, parts 1 to 5). **Waiting:** delay, sampler and reverb, until PulseCoreLib has them |
+| 6 | Polish and the later modules | **built**: undo and redo, the step grid, the on-screen keyboard, selection and Delete, arrow keys, cable output ends, edge scrolling, the output device, dropouts (`gui.md`, *As built (milestone 6)*, parts 1 to 5). Delay, sampler and reverb came later (`patch-engine.md`, As built (the later library modules)) |
 
 Milestones 1 and 0 are independent. If a spike result is bad (cables, mostly), it changes milestone 3
 and nothing earlier.

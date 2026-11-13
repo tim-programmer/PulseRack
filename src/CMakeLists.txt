@@ -3,8 +3,11 @@ add_library(rack_engine STATIC
     engine/model/patch.cpp
     engine/model/plan.cpp
     engine/model/patchfile.cpp
+    engine/model/wav.cpp
     engine/rt/modules_lib.cpp
     engine/rt/modules_glue.cpp
+    engine/rt/modules_fx.cpp
+    engine/rt/modules_drums.cpp
     engine/engine.cpp
 )
 target_include_directories(rack_engine PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})

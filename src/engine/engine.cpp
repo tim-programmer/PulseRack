@@ -60,6 +60,13 @@ bool Engine::init_state(const Node &n, void *mem)
     if (!d.init(mem, NodeContext { sample_rate_ }, n.params.data()))
         return false;
     midi_set_device(d, mem, device_code(n)); // (a MIDI module; nothing for the others)
+    if (takes_sample(d) && !n.sample.empty())
+    { // a Sampler gets its file's frames (one that does not load plays nothing: the patch still
+      // opens, and sample_error says why)
+        std::string err;
+        if (const auto data = sample_data(n.sample, &err); data && !sampler_load(mem, *data))
+            sample_errors_[n.sample] = "cannot be played";
+    }
     if (d.has_steps)
         for (size_t i = 0; i < n.steps.size(); i++)
             if (!(n.steps[i] == StepData { }) && !d.apply_step(mem, i, n.steps[i]))
@@ -71,7 +78,7 @@ Engine::StateMem Engine::make_state(const Node &n, bool *ok)
 {
     const ModuleDesc &d = *n.desc;
     StateMem          mem(::operator new(d.state_size, std::align_val_t(d.state_align)),
-        StateDeleter { d.state_align });
+        StateDeleter { &d });
     *ok = init_state(n, mem.get());
     return mem;
 }
@@ -142,7 +149,7 @@ Err Engine::compile()
     for (auto it = live_.begin(); it != live_.end();)
     {
         const Node *n = patch_.find(it->first);
-        if (n && n->desc == it->second.desc)
+        if (n && n->desc == it->second.desc && n->sample == it->second.sample)
         {
             ++it;
             continue;
@@ -178,8 +185,17 @@ Err Engine::compile()
             telemetry_.dropped[(size_t)slot].store(0);
             telemetry_.position[(size_t)slot].store(-1);
         }
-        live_[n.id] = Live { n.desc, std::move(mem), slot };
+        live_[n.id] = Live { n.desc, std::move(mem), slot, n.sample };
     }
+    // the files no Sampler names any more
+    std::erase_if(samples_,
+        [&](const auto &kv)
+        {
+            for (const Node &n : patch_.nodes())
+                if (n.sample == kv.first)
+                    return false;
+            return true;
+        });
     Snapshot  *s = build_snapshot(false);
     const bool ok = s->ok;
     publish(s);
@@ -201,7 +217,21 @@ Err Engine::set_param(uint32_t node, size_t param, float value)
     if (e != Err::Ok)
         return e;
     auto it = live_.find(node);
-    if (it != live_.end())
+    if (it != live_.end() && it->second.desc->params[param].rebuild)
+    { // made again from the patch, which has the new value; the old state goes when the audio
+      // thread has the new plan
+        bool     made = false;
+        StateMem mem = make_state(*patch_.find(node), &made);
+        if (!made)
+            apply_failures_++; // as a refused setter: the module keeps playing as it was
+        else
+        {
+            retire(std::move(it->second.mem), ++gen_);
+            it->second.mem = std::move(mem);
+            publish(build_snapshot(false));
+        }
+    }
+    else if (it != live_.end())
     {
         Cmd c { };
         c.type = Cmd::Param;
@@ -241,6 +271,62 @@ Err Engine::set_device(uint32_t node, const std::string &name)
         send(c);
     }
     return Err::Ok;
+}
+
+std::shared_ptr<const SampleData> Engine::sample_data(const std::string &path, std::string *error)
+{
+    if (auto it = samples_.find(path); it != samples_.end())
+        return it->second;
+    auto data = std::make_shared<SampleData>();
+    if (!read_wav(path, data.get(), error))
+    {
+        sample_errors_[path] = *error;
+        return nullptr;
+    }
+    sample_errors_.erase(path);
+    samples_[path] = data;
+    return data;
+}
+
+Err Engine::set_sample(uint32_t node, const std::string &path, std::string *error)
+{
+    collect();
+    Node *n = patch_.find(node);
+    if (!n)
+        return Err::NoSuchNode;
+    if (!takes_sample(*n->desc))
+        return Err::NoSuchParam;
+    if (!path.empty())
+    {
+        samples_.erase(path); // read it again: the file may have changed since
+        if (!sample_data(path, error))
+            return Err::InitFailed;
+    }
+    n->sample = path;
+    auto it = live_.find(node);
+    if (it == live_.end())
+        return Err::Ok; // (made with it at the next compile)
+    bool     made = false;
+    StateMem mem = make_state(*n, &made);
+    if (!made)
+    {
+        apply_failures_++;
+        return Err::Ok;
+    }
+    retire(std::move(it->second.mem), ++gen_);
+    it->second.mem = std::move(mem);
+    it->second.sample = path;
+    publish(build_snapshot(false));
+    return Err::Ok;
+}
+
+std::string Engine::sample_error(uint32_t node) const
+{
+    const Node *n = patch_.find(node);
+    if (!n || n->sample.empty())
+        return { };
+    auto it = sample_errors_.find(n->sample);
+    return it == sample_errors_.end() ? std::string() : it->second;
 }
 
 void Engine::refresh_devices()

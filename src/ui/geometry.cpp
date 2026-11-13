@@ -194,6 +194,13 @@ std::string format_value(const ParamDesc &p, float value)
     if (p.scale == Scale::Toggle)
         return value >= 0.5f ? "on" : "off";
     const std::string unit(p.unit);
+    if (p.scale == Scale::Int && unit == "note") // a MIDI note by name: 60 is C4
+    {
+        static const char *names[12]
+            = { "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B" };
+        const long n = std::clamp(std::lround(value), 0L, 127L);
+        return std::string(names[n % 12]) + std::to_string(n / 12 - 1);
+    }
     if (p.scale == Scale::Int)
     {
         std::snprintf(buf, sizeof buf, "%ld", std::lround(value));

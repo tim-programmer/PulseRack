@@ -51,6 +51,9 @@ struct ParamDesc
     Control control; // where it sits on the panel is computed (src/ui/geometry.h)
     bool (*apply)(void *state,
         float value); // natural units -> the library's setter; false if the library refused
+    // A setting the library fixes when the module is made (a reverb's size): a change makes the
+    // module again from the patch (its sound starts over); `apply` is not used for it.
+    bool rebuild = false;
 };
 
 struct StepData
@@ -103,6 +106,9 @@ struct ModuleDesc
     size_t (*evt_out_cap)(size_t
             total_in_cap); // event output capacity from the capacity of its event inputs; null = 64
     std::string_view description; // one line for the browser's card
+    // Frees what init allocated (a delay line), or null when init allocates nothing. Called on the
+    // UI thread when the state is let go, also after a failed init (the state was zeroed first).
+    void (*destroy)(void *state) = nullptr;
 };
 
 // Where a port sits among the ports of its kind and direction (the index a wrapper uses).

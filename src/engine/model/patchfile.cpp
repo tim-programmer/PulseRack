@@ -112,6 +112,9 @@ std::string save_patch(const Patch &patch)
         // would break the file, and is not written)
         if (!n->device.empty() && n->device.find_first_of("\r\n") == std::string::npos)
             s += "device " + std::to_string(n->id) + " " + n->device + "\n";
+        // a Sampler's file, the same way
+        if (!n->sample.empty() && n->sample.find_first_of("\r\n") == std::string::npos)
+            s += "sample " + std::to_string(n->id) + " " + n->sample + "\n";
     }
     for (const KeyScript &k : patch.keys)
         s += "key " + std::to_string(k.node) + " " + num(k.seconds) + (k.on ? " on " : " off ")
@@ -152,11 +155,12 @@ LoadResult load_patch(std::string_view text, Patch &out)
         lineno++;
         if (line.size() > kMaxLine)
             return fail("line too long");
-        // A device record is looked for before the comment is cut: its name is the rest of the
-        // line, and may hold a '#' ("nanoKONTROL2 #2").
+        // A device or sample record is looked for before the comment is cut: its name is the rest
+        // of the line, and may hold a '#' ("nanoKONTROL2 #2", "take #3.wav").
         std::string_view device_name;
         bool             is_device = false;
-        if (const auto whole = split(line); header && !whole.empty() && whole[0] == "device")
+        if (const auto whole = split(line);
+            header && !whole.empty() && (whole[0] == "device" || whole[0] == "sample"))
         {
             is_device = true;
             if (whole.size() >= 3)
@@ -318,6 +322,24 @@ LoadResult load_patch(std::string_view text, Patch &out)
                 continue;
             }
             n->device = std::string(device_name);
+        }
+        else if (t[0] == "sample")
+        {
+            uint32_t id;
+            if (t.size() != 2 || !parse_uint(t[1], id, 1000000) || device_name.empty())
+                return fail("bad sample record");
+            if (skipped.count(id))
+                continue;
+            Node *n = p.find(id);
+            if (!n)
+                return fail("sample for a module that is not defined yet");
+            if (!takes_sample(*n->desc))
+            {
+                r.warnings.push_back("line " + std::to_string(lineno) + ": "
+                    + std::string(n->desc->id) + " plays no sample, skipped");
+                continue;
+            }
+            n->sample = std::string(device_name);
         }
         else if (t[0] == "key")
         {

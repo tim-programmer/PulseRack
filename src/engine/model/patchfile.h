@@ -2,10 +2,12 @@
 //
 //   pulserack 1
 //   node 1 clock x=12 y=0
-//   param 1 bpm 120                  (a number; an enumerated choice by its name, a space written
-//   as _) step 2 0 note=48 vel=100 gate=0 tie=0 key 5 0.5 on 60 100              (a scripted key
-//   press: node, seconds, on|off, note, velocity) cable 1.clock -> 2.in            (output ->
-//   input, by the jacks' ids)
+//   param 1 bpm 120                   a number; an enumerated choice by its name, a space as _
+//   step 2 0 note=48 vel=100 gate=0 tie=0
+//   key 5 0.5 on 60 100               a scripted key press: node, seconds, on|off, note, velocity
+//   cable 1.clock -> 2.in             output -> input, by the jacks' ids
+//   device 4 KeyStep 37               a MIDI module's input: the rest of the line
+//   sample 6 /home/me/kick.wav        a Sampler's file: the rest of the line
 //
 // A file with a syntax error, an unknown version, or a cable the rules forbid is rejected whole. An
 // unknown module type, jack or control is skipped with a warning, so a patch from a newer rack

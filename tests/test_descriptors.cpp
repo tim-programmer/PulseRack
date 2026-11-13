@@ -37,7 +37,7 @@ TEST(descriptors_ids_are_unique_and_well_formed)
                 CHECK(p.min == 0 && p.max == 1);
         }
     }
-    CHECK(ids.size() == 20);
+    CHECK(ids.size() == 26);
 }
 
 // The wrappers index their jacks by slot number; the descriptors list them by name. They must
@@ -51,13 +51,19 @@ TEST(descriptors_slot_counts_match_the_wrappers)
     };
     const Expect table[] = {
         { "osc", 3, 2, 1, 0 },
+        { "unison", 3, 2, 1, 0 },
+        { "sampler", 1, 1, 1, 0 },
         { "noise", 0, 1, 0, 0 },
+        { "kick", 3, 1, 1, 0 },
         { "sah", 1, 1, 1, 0 },
         { "lfo", 1, 1, 0, 0 },
         { "adsr", 1, 1, 1, 0 },
         { "vca", 2, 1, 0, 0 },
         { "svf", 2, 3, 0, 0 },
         { "biquad", 2, 1, 0, 0 },
+        { "ladder", 2, 1, 0, 0 },
+        { "delay", 2, 1, 0, 0 },
+        { "reverb", 1, 2, 0, 0 },
         { "clock", 0, 0, 0, 1 },
         { "arp", 0, 0, 1, 1 },
         { "seq", 0, 0, 1, 1 },
@@ -101,7 +107,34 @@ TEST(descriptors_every_module_initialises_at_common_sample_rates)
             CHECK(d->state_size <= sizeof mem && d->state_align <= alignof(std::max_align_t));
             std::memset(mem, 0, sizeof mem);
             CHECK(d->init(mem, NodeContext { rate }, p.data()));
+            if (d->destroy)
+                d->destroy(mem);
         }
+}
+
+// A setting that makes the module again (a reverb's size) is checked by making it at its minimum
+// and maximum, since its setter does nothing.
+TEST(descriptors_every_rebuild_param_initialises_at_min_and_max)
+{
+    for (uint32_t rate : { 8000u, 48000u, 192000u })
+        for (const ModuleDesc *d : all_modules())
+            for (size_t i = 0; i < d->params.size(); i++)
+            {
+                if (!d->params[i].rebuild)
+                    continue;
+                for (float v : { d->params[i].min, d->params[i].max })
+                {
+                    std::vector<float> p;
+                    for (const ParamDesc &pd : d->params)
+                        p.push_back(pd.def);
+                    p[i] = v;
+                    alignas(std::max_align_t) static unsigned char mem[1 << 16];
+                    std::memset(mem, 0, sizeof mem);
+                    CHECK(d->init(mem, NodeContext { rate }, p.data()));
+                    if (d->destroy)
+                        d->destroy(mem);
+                }
+            }
 }
 
 // Every control must accept its minimum, default and maximum (applied in list order, as a patch
@@ -127,6 +160,8 @@ TEST(descriptors_every_param_applies_at_min_def_and_max)
                             std::string(pd.id).c_str(), v, rate);
                     CHECK(applied);
                 }
+                if (d->destroy)
+                    d->destroy(mem);
             }
 }
 

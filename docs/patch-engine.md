@@ -149,6 +149,11 @@ Ports come from the library headers; parameters are the setters. "Mod" inputs ar
 | Clock | | CLOCK (event) | bpm, ppqn, play/stop |
 | Arpeggiator | IN (event: keys + clock) | OUT (event) | mode, octaves, division, gate, latch |
 | Sequencer | IN (event: clock) | OUT (event) | length, division, gate, swing, direction, transpose, 64 steps |
+| Unison oscillator *(added later)* | NOTE (event), PITCH, PWM, SYNC | L, R (L alone: the mono mix) | waveform, frequency, voices (1-8), detune (cents), stereo width, pitch depth, pulse width, PWM depth |
+| Ladder filter *(added later)* | IN, CUTOFF | OUT | mode (LP 24/18/12/6, BP 12/24, HP 12/24), cutoff, resonance, drive, mod depth, saturate, keep bass |
+| Delay *(added later)* | IN, TIME | OUT | time (up to 2 s), feedback, tone, mix, mod depth, glide, saturate |
+| Reverb *(added later)* | IN | L, R (L alone: the mono sum) | algorithm and size (both remake it), decay, pre-delay, treble decay and where it starts, width, mix, modulation, freeze |
+| Sampler *(added later)* | NOTE (event), PITCH | OUT | loop mode, root note, loop start/end (these remake it), start, gain, velocity, pitch depth, reverse; and its WAV file |
 
 Notes on the table:
 
@@ -315,6 +320,49 @@ recommended answer for each and chose the rest. Each is cheap to change.
 **A flaw in my own tests, found and fixed:** several randomised tests called the random generator twice inside one function call, and
 C++ does not specify the order of evaluating arguments, so GCC and clang built different random patches. They now draw first, and every
 build agrees on the check count.
+
+## As built (the later library modules: unison, ladder, delay, reverb, sampler)
+
+* They are in `src/engine/rt/modules_fx.cpp`, one descriptor and one wrapper each, like the first set.
+* **Memory.** The delay and the reverb run on caller memory: their `init` (on the UI thread, where `Engine::make_state` runs) sizes
+  it for the sample rate with the library's `*_required_bytes` and allocates it, and the new `ModuleDesc::destroy` frees it when
+  the state is let go (`Engine::StateDeleter`, also on the UI thread, after the audio thread has adopted a plan without the state).
+  The delay's longest time is 2 s.
+* **Settings fixed at init.** The reverb's size and algorithm, and the sampler's root note, loop mode and loop points (part of the
+  library's sample description, which a sounding note reads), cannot be changed by a setter. Such a parameter has
+  `ParamDesc::rebuild`: `Engine::set_param` makes the module again from the patch and swaps it in with the next plan (its sound
+  starts over; a state that cannot be made leaves the old one playing and counts an apply failure).
+* **The Sampler's file.** `Node::sample` is a path, saved as `sample <id> <path>` (the rest of the line, like `device`).
+  `engine/model/wav.cpp` reads PCM at 8/16/24/32 bits and float at 32/64 (several channels mixed to one). The engine reads a file
+  once into a cache (UI thread), hands the frames to the module after `init` (`sampler_load`, which copies them into memory the
+  module owns), and `compile()` remakes a Sampler whose file changed (which covers undo). A file that does not load leaves the
+  module silent but the patch opens; `Engine::sample_error` says why, and the panel's Sample box shows NOT LOADED.
+* Tests: `tests/test_fx.cpp` (each module in a patch, the reverb's rebuild, WAV formats, the sampler's pitch, loop, one shot,
+  missing file and patch record), `descriptors_every_rebuild_param_initialises_at_min_and_max`, and the Sample box in
+  `ui_smoke --files`.
+
+## As built (the drum modules: Kick)
+
+The first of the "all-in-one" modules (worklist, *New modules*): each is its own module with a layout made for it, its sound made in
+the rack (`src/engine/rt/modules_drums.cpp`) from PulseCoreLib's parts, in the new **Drum** category (peach).
+
+* **Kick** (8 HP): Tune (30-150 Hz), Pitch sweep (0-4 octaves above the tune), Sweep time, Decay, Punch (the click), Drive, Accent
+  (how much a hit's accent changes it). Inputs: TRIG (a hit when it rises through 0.5, Schmitt trigger at 0.5 / 0.25), NOTE (a hit
+  per note-on; the velocity is the accent; the note number is not used), ACCENT (0..1, read at each hit, instead of the velocity),
+  DECAY (-1..1, read at each hit: a quarter to four times the Decay). Output OUT.
+* The body is a `pcl_osc` sine, **reset** at each hit (`pcl_osc_reset`: phase 0, and its one sample of latency cleared, so a hit does
+  not start with the previous hit's last sample, and every hit starts alike). Its pitch input gets an exponential envelope (1 at the
+  hit, 1/e after Sweep time) times Pitch sweep octaves. The click is `pcl_noise` through a `pcl_svf` band-pass at 3.5 kHz under a
+  4 ms envelope. Drive is tanh, normalised so full scale stays full scale; it comes before the accent's level, so a soft hit stays
+  soft (with it after, drive squashed the accents away).
+* **The envelopes are the rack's own**, per-sample exponential decays restarted on the hit's sample: `pcl_adsr` applies a gate edge
+  at its next control point and takes an off-and-on inside one control period as no edge, so it cannot retrigger a drum on the
+  sample (a possible PulseCoreLib addition: a trigger input or a one-shot AD envelope). The envelope maths is float, in every sample
+  type (the oscillator, noise and filter are the library's, in the build's type).
+* Decay and Sweep time reach the hit that is sounding; Punch, Drive and Accent apply from the next hit.
+* Tests: `tests/test_drums.cpp` (silent until hit and starting on the hit's sample, the pitch falling to the tune, decay length,
+  accent from velocity and the Accent knob, a second hit identical to the first, TRIG's edge and the DECAY input). Example:
+  `examples/kick_drum.rack` (rendered by `render_kick_drum`).
 
 **Not done** (milestone 1 stops here): the real-time protocol, any GUI, panel layout, undo, a `reset`-less "panic" for stuck notes, WAV
 comparison of the three sample types (they are each exact against the library, not against each other), MSVC `/W4 /WX`.

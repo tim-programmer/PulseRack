@@ -815,7 +815,7 @@ uint32_t midi_in_dropped(const void *state)
 
 #define RACK_GLUE(var, id, name, cat, hp, T, ports, params, init, reset, process, cap, blurb)      \
     const ModuleDesc var = { id, name, cat, hp, sizeof(T), alignof(T), ports, params, false, init, \
-        reset, process, nullptr, cap, blurb }
+        reset, process, nullptr, cap, blurb, nullptr }
 
 RACK_GLUE(kKeyboardDesc, "keyboard", "Keyboard", kEvent, 6, KeyboardNode, kKeyboardPorts, { },
     kb_init, kb_reset, kb_process, kb_cap,

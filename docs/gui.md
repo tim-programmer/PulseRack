@@ -476,7 +476,8 @@ keep pace are none, a stall of three buffers is one, a slow render is one, nothi
 it does. `ui_sound` (36 checks) opens the device menu, chooses *System default* and the device the dummy driver lists, and checks that
 the toolbar shows what the meter counted.
 
-**Milestone 6 is done** apart from the modules that wait for PulseCoreLib (delay, sampler, reverb: none has appeared). The smaller
+**Milestone 6 is done** apart from the modules that wait for PulseCoreLib (delay, sampler, reverb: none has appeared). *(They came
+later, with the ladder and the unison oscillator: `patch-engine.md`, As built (the later library modules).)* The smaller
 items left open by earlier milestones are in parts 1 to 5 above.
 
 ## As built: the oscilloscope (asked for after milestone 6)
