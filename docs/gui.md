@@ -449,8 +449,9 @@ module.
   from an output still makes a new cable, since an output feeds any number). Drop it on another output to move it (it keeps its
   colour), on empty rack to remove it. The hint over an output says so.
 * **The rack scrolls under a drag held at its edge** (a cable, a panel, or a module from the browser): within 32 px of the rack's
-  inner edge it scrolls, faster the deeper the pointer is (up to 13 px a tick at 60 Hz), and what is dragged follows; only while the
-  pointer is inside the rack.
+  inner edge it scrolls, faster the deeper the pointer is (up to 13 px per 1/60 s, by the clock rather than per tick, so a slow
+  frame rate scrolls as far), and what is dragged follows; only while the pointer is inside the rack, and only once it has stayed
+  near the edge for 0.2 s (a module brought in from the browser crosses the left edge on its way, which must not scroll).
 
 **Tests.** `ui_gaps` (27 checks): select, Delete, undo; a cable and a module never both selected; empty rack clears; Up, Shift+Up,
 Left on a selector, and the last control touched when the pointer is elsewhere; Shift+drag moving the newest of two cables to

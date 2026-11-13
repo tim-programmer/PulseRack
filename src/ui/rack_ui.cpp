@@ -2901,6 +2901,7 @@ void Editor::edge_scroll_start(Ctx cx, gp_point window)
     last_pointer = window;
     if (!edge_task.active())
     {
+        edge_near = false;
         edge_last = std::chrono::steady_clock::now();
         edge_task = cx.app().ctx(self).every(1.0 / 60, [](Editor &e, Ctx c) { e.edge_tick(c); });
     }
@@ -2915,11 +2916,8 @@ void Editor::edge_tick(Ctx cx)
         edge_task.cancel();
         return;
     }
-    // the time since the last tick, in 60 Hz ticks: the speeds below are pixels per 1/60 s (at most
-    // a quarter second's worth at once, so a stall does not throw the rack far)
-    const auto  now = std::chrono::steady_clock::now();
-    const float ticks
-        = std::clamp(std::chrono::duration<float>(now - edge_last).count() * 60.f, 0.f, 15.f);
+    using clock = std::chrono::steady_clock;
+    const clock::time_point now = clock::now(), last = edge_last;
     edge_last = now;
     RackView *rv = rack.get(cx);
     if (!dragging || !rv)
@@ -2934,6 +2932,23 @@ void Editor::edge_tick(Ctx cx)
     const float sx = speed(p.x - (o.x + ww - band)) - speed(o.x + band - p.x);
     const float sy = speed(p.y - (o.y + wh - band)) - speed(o.y + band - p.y);
     if (sx == 0 && sy == 0)
+    {
+        edge_near = false;
+        return;
+    }
+    if (!edge_near)
+    {
+        edge_near = true;
+        edge_since = now;
+    }
+    // the time scrolled in this tick, in 60 Hz ticks (the speeds are pixels per 1/60 s): none in the
+    // first 0.2 s near the edge, and at most a quarter second's worth, so a stall does not throw the
+    // rack far
+    constexpr auto dwell = std::chrono::milliseconds(200);
+    const float    ticks = std::clamp(
+        std::chrono::duration<float>(now - std::max(last, edge_since + dwell)).count() * 60.f, 0.f,
+        15.f);
+    if (ticks == 0)
         return;
     rv->scroll.by(cx, sx * ticks, sy * ticks);
     // what is dragged follows: the same pointer is now over another part of the rack
