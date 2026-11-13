@@ -130,7 +130,7 @@ struct Driver
     gp_point add_button(int card)
     {
         const float top = style::kToolbarH + style::kBrowserPad + style::kSearchH + style::kChipsH
-            + card * (style::kCardH + style::kCardGap);
+            + (float)card * (style::kCardH + style::kCardGap);
         return { style::kBrowserW - style::kBrowserPad - 8 - style::kAddW / 2, top + 8 + 14 };
     }
     uint32_t newest()
@@ -1522,8 +1522,8 @@ struct Driver
         CHECK(node(dropped)->desc == &oscd);
 
         const float tol = 0.5f;
-        CHECK(std::abs(node(dropped)->x - spot.x) <= tol);
-        CHECK(std::abs(node(dropped)->y - spot.y) <= tol);
+        CHECK(std::abs(node(dropped)->x - (float)spot.x) <= tol);
+        CHECK(std::abs(node(dropped)->y - (float)spot.y) <= tol);
 
         CHECK(e().engine.state(dropped) != nullptr && e().panels.count(dropped));
         // onto a panel: refused, with the reason

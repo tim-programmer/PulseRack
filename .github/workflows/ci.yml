@@ -79,8 +79,9 @@ jobs:
       - name: Configure
         run: cmake --preset release-msvc
 
+      # (-k 0: every file that fails is reported, not only the first)
       - name: Build
-        run: cmake --build --preset release-msvc
+        run: cmake --build --preset release-msvc -- -k 0
 
       # Windows' own software OpenGL is 1.1: Mesa's llvmpipe, installed system-wide, is the counterpart of
       # LIBGL_ALWAYS_SOFTWARE on Linux.

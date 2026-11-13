@@ -1763,7 +1763,7 @@ struct RackView
                     .child(label("Open > Examples has patches to start from.", 13, st::kDim)));
 
         const uint32_t lifted = e->pdrag.active && e->pdrag.moved ? e->pdrag.node : 0;
-        auto           place = [&](uint32_t id, Entity<PanelView> &view)
+        auto           place = [&](uint32_t id, Entity<PanelView> &pv)
         {
             if (const Node *n = patch.find(id))
                 content.child(div()
@@ -1771,20 +1771,20 @@ struct RackView
                         .left(n->x * kHp)
                         .top(n->y * kHp)
                         .key_id(id)
-                        .child(view.cached()));
+                        .child(pv.cached()));
         };
-        for (auto &[id, view] : e->panels)
+        for (auto &[id, panel] : e->panels)
             if (id != lifted)
-                place(id, view);
+                place(id, panel);
         if (auto it = e->panels.find(lifted); it != e->panels.end()) // over the others
             place(lifted, it->second);
-        for (auto &[key, view] : e->cable_views) // over the panels
+        for (auto &[key, cable] : e->cable_views) // over the panels
             content.child(div()
                     .absolute()
                     .left(0)
                     .top(0)
                     .key_id((uint64_t)1 << 40 | (uint64_t)key.first << 16 | key.second)
-                    .child(view.cached()));
+                    .child(cable.cached()));
         content.child(
             div().absolute().left(0).top(0).key_id((uint64_t)1 << 41).child(e->drag_view.cached()));
 

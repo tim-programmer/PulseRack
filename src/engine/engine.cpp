@@ -293,7 +293,7 @@ Err Engine::key(uint32_t node, bool on, uint8_t note, uint8_t velocity, int64_t 
     Cmd c { };
     c.type = Cmd::Key;
     c.state = it->second.mem.get();
-    c.key_type = on ? PCL_EVT_NOTE_ON : PCL_EVT_NOTE_OFF;
+    c.key_type = (uint8_t)(on ? PCL_EVT_NOTE_ON : PCL_EVT_NOTE_OFF);
     c.note = note;
     c.velocity = on ? velocity : (uint8_t)0;
     c.at = at; // < 0: when the audio thread takes it
