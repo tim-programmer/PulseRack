@@ -382,5 +382,43 @@ trigger, in time order) and the accent (`accent_of`, `accent_level`).
   no body); Metal's closed and open by note, a closed hit choking an open one, CHOKE, accent. Example:
   `examples/drum_machine.rack` (rendered by `render_drum_machine`).
 
+## As built (the voice modules)
+
+Six voices in a **Voice** category (yellow), each its own module with only the controls its sound needs
+(`src/engine/rt/modules_voices.cpp`). Each is a complete voice from a stream of notes: NOTE in, PITCH in (octaves), its own
+envelope and amplifier, so it sounds with nothing else patched.
+
+* **The core they share** (`VoiceCore`): monophonic, the last note held taking priority. A note played while another is held
+  glides there without starting the envelope again; letting it go falls back to the note still held; a note after all were
+  let go starts the envelope again on its own sample. The envelope is a linear attack to full, held while a note is, then an
+  exponential release. Velocity sets the level (35 % to 100 %). STOP lets go.
+* **Sync voice** (8 HP): a master `pcl_osc` at the note, never heard, hard-syncs a slave (saw or pulse; PWM in) at Ratio times
+  it; the slave's pitch sweeps down from Sweep octaves above over Sweep time at each new note. Wave, Ratio, Sweep, Sweep time,
+  Pulse width, Attack, Release.
+* **Stack voice** (12 HP): `pcl_unison` (up to 8 saws, spread in stereo) through a driven `pcl_ladder` per side, opened by the
+  envelope Contour octaves (CUTOFF in adds octaves). Voices, Detune, Spread, Cutoff, Resonance, Drive, Contour, Attack,
+  Release; L and R out (L alone: the mono mix through one filter).
+* **FM voice** (8 HP): two sine operators, the modulator at a Ratio of the note (x0.5 to x12: names, not numbers, for the
+  patch file) bending the carrier's phase by Index, plus Env amount falling over Env decay at each new note, and Feedback on
+  the modulator; INDEX in. In the rack's own float: the library's oscillators take their pitch at control rate, and phase
+  modulation needs it at audio rate. From silence both phases start at 0, so every note sounds alike.
+* **Air voice** (8 HP): `pcl_noise` (Colour) through a `pcl_svf` band-pass tuned to the note: high Resonance whistles, low is
+  wind; the band's level is made up as it narrows. Breath adds the filter's high-pass for the air around a blown note.
+* **String voice** (8 HP): Karplus-Strong, in the rack's own float. Each new note adds to a delay line a burst of noise one
+  period long, softened by Brightness and combed at Position (where along the string it was plucked); the line feeds back
+  through a low-pass blend (Damping) with the gain that rings for Decay seconds while the key is held and for Release after.
+  Its length is fractional (linear interpolation, the filter's half sample counted), so it is in tune. Its 64 KB of line and
+  burst are allocated by its init and freed by `destroy`.
+* **Grain voice** (12 HP): clouds of grains of a WAV file, chosen in its Sample box as for the Sampler (`takes_sample`, now
+  with `load_sample(desc, ...)` choosing the module's loader). Grains Size long under a raised-cosine window start Density
+  times a second around Position (POS in adds), scattered by Spread, each at the note's pitch against the Root note, up to
+  48 at once, the sum scaled by the overlap. Silent with no file. In the rack's own float: the library's sampler is one
+  playhead.
+* Tests (`tests/test_voices.cpp`): each voice silent until its note and then at the note's pitch (set up to sound plainly;
+  pitch by autocorrelation, as a bright waveform crosses zero many times a period), the release, legato gliding without a
+  restart and falling back to the held note, the string in tune within 1 % from 110 to 880 Hz and its decay, the grain
+  voice playing a sine file an octave up and silent without one. Example: `examples/voices.rack` (the string, stack and FM
+  voices together; rendered by `render_voices`).
+
 **Not done** (milestone 1 stops here): the real-time protocol, any GUI, panel layout, undo, a `reset`-less "panic" for stuck notes, WAV
 comparison of the three sample types (they are each exact against the library, not against each other), MSVC `/W4 /WX`.

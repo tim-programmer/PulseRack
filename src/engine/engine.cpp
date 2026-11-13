@@ -64,7 +64,7 @@ bool Engine::init_state(const Node &n, void *mem)
     { // a Sampler gets its file's frames (one that does not load plays nothing: the patch still
       // opens, and sample_error says why)
         std::string err;
-        if (const auto data = sample_data(n.sample, &err); data && !sampler_load(mem, *data))
+        if (const auto data = sample_data(n.sample, &err); data && !load_sample(d, mem, *data))
             sample_errors_[n.sample] = "cannot be played";
     }
     if (d.has_steps)

@@ -87,13 +87,16 @@ int32_t module_position(const ModuleDesc &desc, const void *state);
 // one, after its init (the UI thread): the module keeps a copy; false if it cannot play them.
 struct SampleData;
 bool takes_sample(const ModuleDesc &desc);
-bool sampler_load(void *state, const SampleData &data);
+bool load_sample(const ModuleDesc &desc, void *state, const SampleData &data);
 
 // ---- every module descriptor (defined in modules_lib.cpp and modules_glue.cpp)
 extern const ModuleDesc kOscDesc, kNoiseDesc, kSahDesc, kLfoDesc, kAdsrDesc, kVcaDesc, kSvfDesc,
     kBiquadDesc, kClockDesc, kArpDesc, kSeqDesc;
 extern const ModuleDesc kLadderDesc, kUnisonDesc, kDelayDesc, kReverbDesc, kSamplerDesc;
 extern const ModuleDesc kKickDesc, kSnareDesc, kMetalDesc;
+extern const ModuleDesc kSyncVoiceDesc, kStackVoiceDesc, kFmVoiceDesc, kAirVoiceDesc,
+    kStringVoiceDesc, kGrainVoiceDesc;
+bool grain_load(void *state, const SampleData &data); // (modules_voices.cpp)
 extern const ModuleDesc kKeyboardDesc, kAudioOutDesc, kMixerDesc, kAttenuverterDesc,
     kNoteToGateDesc, kMergeDesc, kScopeDesc, kMidiInDesc, kMidiCcDesc, kMidiClockDesc, kMidiOutDesc;
 
