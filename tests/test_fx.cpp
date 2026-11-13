@@ -99,7 +99,7 @@ TEST(reverb_size_makes_it_again_and_its_tail_starts_over)
     {
         const size_t at = r.L.size();
         r.param(rv, "size", size);
-        r.param(rv, "algorithm", size < 0.5f ? 0 : 1);
+        r.param(rv, "algorithm", size < 0.5f ? 0.f : 1.f);
         r.render(kRate / 4);
         CHECK(peak(r.L, at + 64) < 1e-4f); // a new, empty reverb (the input is silent now)
     }
