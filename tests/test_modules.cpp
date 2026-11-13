@@ -353,9 +353,9 @@ struct KeyRig
             && r.cable(gate, "gate", out, "l") == Err::Ok);
         CHECK(r.compile());
     }
-    bool push(uint64_t at, uint8_t type, uint8_t note, uint8_t vel)
+    bool push(uint64_t at, int type, uint8_t note, uint8_t vel)
     {
-        return keyboard_push(const_cast<void *>(r.e.state(kb)), at, type, note, vel);
+        return keyboard_push(const_cast<void *>(r.e.state(kb)), at, (uint8_t)type, note, vel);
     }
     bool high(size_t i) const { return r.L[i] > 0.5f; }
 };

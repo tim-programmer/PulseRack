@@ -1152,7 +1152,7 @@ struct PanelView
                       .border_color(st::kKnobEdge)
                       .child(div()
                               .absolute()
-                              .left(on ? 12 : 0)
+                              .left(on ? 12.f : 0.f)
                               .top(0)
                               .w(12)
                               .h(12)
@@ -1219,7 +1219,7 @@ struct PanelView
                     .child(div()
                             .w(8)
                             .h(8)
-                            .rounded(event ? 1 : 4)
+                            .rounded(event ? 1.f : 4.f)
                             .bg_gradient(180, { stop(rgb(0x050506), 0), stop(rgb(0x1d1f26), 1) })))
             .child(div()
                     .absolute()
@@ -1283,7 +1283,7 @@ struct PanelView
                         .bg_gradient(180, { stop(cc.top, 0), stop(cc.bottom, 1) })
                         .border(kPanelBorder)
                         .border_color(selected_ ? st::kAccent : st::kKnobEdge)
-                        .shadow(0, selected_ ? 0 : 3, selected_ ? 12 : 8,
+                        .shadow(0, selected_ ? 0.f : 3.f, selected_ ? 12.f : 8.f,
                             selected_ ? with_alpha(st::kAccent, 0.55f) : with_alpha(kBlack, 0.4f))
                         // the face moves the panel (a press on it does not pan the rack); controls,
                         // jacks and cables take their own presses first
@@ -1320,7 +1320,7 @@ struct PanelView
                 .items_center()
                 .justify_center()
                 .overflow_hidden()
-                .child(label(std::string(d.name), L.width < 100 ? 9 : 11, st::kText).font_bold())
+                .child(label(std::string(d.name), L.width < 100 ? 9.f : 11.f, st::kText).font_bold())
 
                 .on_mouse_down([](PanelView &self, Ctx cx, const gp_mouse_event &ev)
                     { self.press_face(cx, ev); })
