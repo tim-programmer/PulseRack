@@ -15,24 +15,25 @@ foreach(ex sequence arpeggio filter_sweep)
 endforeach()
 
 # The window (needs a display; skipped without one): driven by synthetic input, and a screenshot of a
-# loaded example patch that must not be blank.
+# loaded example patch that must not be blank. (The time limits are for a hang: with a software renderer on a CI
+# runner ui_smoke takes about 35 s on Linux and over a minute on Windows.)
 if(PULSERACK_BUILD_GUI)
     add_executable(ui_smoke ui_smoke.cpp)
     target_link_libraries(ui_smoke PRIVATE rack_ui rack_warnings)
     add_test(NAME ui_smoke COMMAND ui_smoke)
-    set_tests_properties(ui_smoke PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 60)
+    set_tests_properties(ui_smoke PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 180)
     # with the sound card on, through SDL's dummy driver (no real device is needed or used)
     add_test(NAME ui_sound COMMAND ui_smoke --sound)
-    set_tests_properties(ui_sound PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 60)
+    set_tests_properties(ui_sound PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 180)
     # files: New, Open, Save, the question, examples and recovery, with the test's own file chooser
     add_test(NAME ui_files COMMAND ui_smoke --files)
-    set_tests_properties(ui_files PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 60)
+    set_tests_properties(ui_files PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 180)
     add_test(NAME ui_undo COMMAND ui_smoke --undo)
-    set_tests_properties(ui_undo PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 60)
+    set_tests_properties(ui_undo PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 180)
     add_test(NAME ui_steps COMMAND ui_smoke --steps)
-    set_tests_properties(ui_steps PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 60)
+    set_tests_properties(ui_steps PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 180)
     add_test(NAME ui_gaps COMMAND ui_smoke --gaps)
-    set_tests_properties(ui_gaps PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 60)
+    set_tests_properties(ui_gaps PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 180)
 
     add_test(NAME ui_screenshot COMMAND pulserack ${CMAKE_SOURCE_DIR}/examples/sequence.rack)
     set_tests_properties(ui_screenshot PROPERTIES FIXTURES_SETUP shot TIMEOUT 30
