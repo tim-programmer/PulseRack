@@ -1,0 +1,82 @@
+# A drum machine at 100 bpm: Kick, Snare / Clap and Metal from three sequencers. The hats play GM notes: 42 closed, 46 open on the last offbeat, choked by the next closed hit.
+pulserack 1
+node 1 clock x=0 y=0
+param 1 bpm 100
+param 1 ppqn 24
+param 1 run 1
+node 2 seq x=6 y=0
+param 2 length 16
+param 2 division 6
+param 2 gate 2
+step 2 0 note=36 vel=127 gate=0 tie=0
+step 2 7 note=36 vel=80 gate=0 tie=0
+step 2 8 note=36 vel=110 gate=0 tie=0
+step 2 10 note=36 vel=90 gate=0 tie=0
+node 3 kick x=22 y=0
+param 3 tune 52
+param 3 sweep 2.2
+param 3 sweep_time 30
+param 3 decay 420
+param 3 punch 0.55
+param 3 drive 0.25
+param 3 accent 0.6
+node 4 seq x=30 y=0
+param 4 length 16
+param 4 division 6
+param 4 gate 2
+step 4 4 note=38 vel=120 gate=0 tie=0
+step 4 12 note=38 vel=120 gate=0 tie=0
+step 4 15 note=38 vel=45 gate=0 tie=0
+node 5 snare x=46 y=0
+param 5 tune 190
+param 5 body 110
+param 5 tone 3200
+param 5 snap 0.65
+param 5 decay 200
+param 5 clap 0.25
+param 5 spread 10
+param 5 accent 0.7
+node 6 seq x=0 y=26
+param 6 length 16
+param 6 division 6
+param 6 gate 2
+step 6 0 note=42 vel=70 gate=0 tie=0
+step 6 2 note=42 vel=110 gate=0 tie=0
+step 6 4 note=42 vel=70 gate=0 tie=0
+step 6 6 note=42 vel=110 gate=0 tie=0
+step 6 8 note=42 vel=70 gate=0 tie=0
+step 6 10 note=42 vel=110 gate=0 tie=0
+step 6 12 note=42 vel=70 gate=0 tie=0
+step 6 14 note=46 vel=110 gate=0 tie=0
+step 6 15 note=42 vel=70 gate=0 tie=0
+node 7 metal x=16 y=26
+param 7 tune 1
+param 7 noise 0.3
+param 7 tone 8500
+param 7 closed 55
+param 7 open 500
+param 7 accent 0.7
+node 8 mixer x=24 y=26
+param 8 level1 0.75
+param 8 level2 0.6
+param 8 level3 0.35
+node 9 reverb x=30 y=26
+param 9 algorithm small
+param 9 size 0.4
+param 9 decay 0.7
+param 9 predelay 5
+param 9 mix 0.12
+node 10 out x=42 y=26
+param 10 level 0.8
+cable 1.clock -> 2.in
+cable 1.clock -> 4.in
+cable 1.clock -> 6.in
+cable 2.out -> 3.note
+cable 4.out -> 5.note
+cable 6.out -> 7.note
+cable 3.out -> 8.in1
+cable 5.out -> 8.in2
+cable 7.out -> 8.in3
+cable 8.out -> 9.in
+cable 9.l -> 10.l
+cable 9.r -> 10.r

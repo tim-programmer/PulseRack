@@ -93,7 +93,7 @@ bool sampler_load(void *state, const SampleData &data);
 extern const ModuleDesc kOscDesc, kNoiseDesc, kSahDesc, kLfoDesc, kAdsrDesc, kVcaDesc, kSvfDesc,
     kBiquadDesc, kClockDesc, kArpDesc, kSeqDesc;
 extern const ModuleDesc kLadderDesc, kUnisonDesc, kDelayDesc, kReverbDesc, kSamplerDesc;
-extern const ModuleDesc kKickDesc;
+extern const ModuleDesc kKickDesc, kSnareDesc, kMetalDesc;
 extern const ModuleDesc kKeyboardDesc, kAudioOutDesc, kMixerDesc, kAttenuverterDesc,
     kNoteToGateDesc, kMergeDesc, kScopeDesc, kMidiInDesc, kMidiCcDesc, kMidiClockDesc, kMidiOutDesc;
 

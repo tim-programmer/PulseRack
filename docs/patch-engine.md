@@ -341,7 +341,7 @@ build agrees on the check count.
   missing file and patch record), `descriptors_every_rebuild_param_initialises_at_min_and_max`, and the Sample box in
   `ui_smoke --files`.
 
-## As built (the drum modules: Kick)
+## As built (the drum modules: Kick, Snare / Clap, Metal)
 
 The first of the "all-in-one" modules (worklist, *New modules*): each is its own module with a layout made for it, its sound made in
 the rack (`src/engine/rt/modules_drums.cpp`) from PulseCoreLib's parts, in the new **Drum** category (peach).
@@ -363,6 +363,24 @@ the rack (`src/engine/rt/modules_drums.cpp`) from PulseCoreLib's parts, in the n
 * Tests: `tests/test_drums.cpp` (silent until hit and starting on the hit's sample, the pitch falling to the tune, decay length,
   accent from velocity and the Accent knob, a second hit identical to the first, TRIG's edge and the DECAY input). Example:
   `examples/kick_drum.rack` (rendered by `render_kick_drum`).
+
+The three drums share their hit detection (`collect_hits`: the note-ons and any number of trigger inputs, each a Schmitt
+trigger, in time order) and the accent (`accent_of`, `accent_level`).
+
+* **Snare / Clap** (8 HP): Tune (100-400 Hz), Body (its decay), Tone (the noise's band-pass), Snap (the noise's level), Decay
+  (the noise's), Clap, Spread, Accent; TRIG, NOTE, ACCENT, DECAY (the noise's decay) in. The body is a `pcl_osc` sine reset on
+  each hit with a 0.6-octave drop over 8 ms; the noise is `pcl_noise` through a `pcl_svf` (its band-pass plus half its
+  high-pass). **Clap** makes the noise three bursts Spread apart (each falling over 18 ms), the third going on into the tail,
+  and takes the body away as it rises: 0 is a snare, 1 a clap, between them a snare with a clap's smear. A gentle tanh at the
+  end glues the two.
+* **Metal** (8 HP): Tune (a ratio, 0.5-2), Noise, Tone, Closed and Open decays, Accent; TRIG (closed), OPEN, CHOKE, NOTE,
+  ACCENT in. Six `pcl_osc` square waves at the classic inharmonic ratios (205, 304, 370, 523, 540 and 800 Hz times Tune),
+  running freely, blended with noise, through a band-pass at Tone and a high-pass at 0.6 Tone. A note hits closed, except the
+  General MIDI open hat and cymbals (46, 49, 51, 52, 55, 57, 59), which hit open. Every hit starts the one envelope again, so
+  a closed hit chokes an open one, as on a real hi-hat; CHOKE fades it out over 12 ms.
+* Tests: the snare silent until hit, its decay and its body's pitch; the clap's three bursts at the Spread and its tail (and
+  no body); Metal's closed and open by note, a closed hit choking an open one, CHOKE, accent. Example:
+  `examples/drum_machine.rack` (rendered by `render_drum_machine`).
 
 **Not done** (milestone 1 stops here): the real-time protocol, any GUI, panel layout, undo, a `reset`-less "panic" for stuck notes, WAV
 comparison of the three sample types (they are each exact against the library, not against each other), MSVC `/W4 /WX`.
