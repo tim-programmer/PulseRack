@@ -87,8 +87,13 @@ std::string default_config_dir()
 {
     if (const char *x = std::getenv("XDG_CONFIG_HOME"); x && *x)
         return std::string(x) + "/pulserack";
+#ifdef _WIN32
+    if (const char *a = std::getenv("APPDATA"); a && *a)
+        return std::string(a) + "/PulseRack";
+#else
     if (const char *h = std::getenv("HOME"); h && *h)
         return std::string(h) + "/.config/pulserack";
+#endif
     return { };
 }
 

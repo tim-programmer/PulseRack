@@ -9,6 +9,8 @@
 //   ui_smoke --pose-ask PATCH   opens PATCH, makes a change and asks New: the unsaved-changes
 //   question
 //                             GPUIC_WAIT_MS)
+#include "portable_env.h"
+
 #include "engine/model/patchfile.h"
 #include "engine/model/registry.h"
 #include "ui/files.h"
@@ -1665,11 +1667,13 @@ int main(int argc, char **argv)
     }
     if (sound)
         setenv("SDL_AUDIO_DRIVER", "dummy", 1); // never the real sound card in a test
+#ifndef _WIN32 // (Windows always has a desktop to open a window on)
     if (!std::getenv("DISPLAY") && !std::getenv("WAYLAND_DISPLAY"))
     {
         std::printf("no display: skipped\n");
         return 77;
     }
+#endif
     setenv("GPUIC_IGNORE_REAL_MOUSE", "1", 1); // only the synthetic pointer
     gpuic::run(
         [](App app)

@@ -1,3 +1,9 @@
+# Builds and tests PulseRack on Linux (GCC and clang) and Windows (MSVC) with the CMake presets (CMakePresets.json).
+# PulseCoreLib, gpuic and libremidi are fetched by CMake; gpuic's own dependencies (SDL3, FreeType, HarfBuzz, FriBidi)
+# are downloaded at the versions it pins (PULSERACK_GPUIC_DEPENDENCIES=FETCH, the default).
+#
+# The window tests draw with OpenGL 3.3 and the runners have no GPU: Mesa's software renderer (llvmpipe) stands in on
+# both, under Xvfb on Linux and on the runner's own desktop on Windows.
 name: CI
 
 on:
@@ -14,10 +20,10 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  build-and-test:
-    name: ${{ matrix.preset }}
+  linux:
+    name: linux-${{ matrix.preset }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    timeout-minutes: 30 # (a cold build takes about 4 minutes)
     strategy:
       fail-fast: false
       matrix:
@@ -54,7 +60,40 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v5
         with:
-          name: test-log-${{ matrix.preset }}
+          name: test-log-linux-${{ matrix.preset }}
           path: out/${{ matrix.preset }}/Testing/Temporary/LastTest.log
           if-no-files-found: ignore
 
+  windows:
+    name: windows-release-msvc
+    runs-on: windows-latest
+    timeout-minutes: 45 # (gpuic's dependencies make a cold build about 10-15 minutes)
+
+    steps:
+      - uses: actions/checkout@v5
+
+      # cl, link and the Windows SDK on the PATH, for Ninja (windows-latest already has CMake, Ninja and VS 2022)
+      - name: Set up MSVC
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Configure
+        run: cmake --preset release-msvc
+
+      - name: Build
+        run: cmake --build --preset release-msvc
+
+      # Windows' own software OpenGL is 1.1: Mesa's llvmpipe, installed system-wide, is the counterpart of
+      # LIBGL_ALWAYS_SOFTWARE on Linux.
+      - name: Install Mesa (software OpenGL)
+        uses: ssciwr/setup-mesa-dist-win@v3
+
+      - name: Test
+        run: ctest --preset release-msvc -j 2 --output-on-failure
+
+      - name: Upload the test log
+        if: failure()
+        uses: actions/upload-artifact@v5
+        with:
+          name: test-log-windows-release-msvc
+          path: out/release-msvc/Testing/Temporary/LastTest.log
+          if-no-files-found: ignore

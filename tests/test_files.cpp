@@ -1,4 +1,5 @@
 // Patch files on disk (src/ui/files.h): the built-in factory patches, safe writing, the state dir.
+#include "portable_env.h"
 #include "testutil.h"
 
 #include "ui/files.h"
@@ -93,8 +94,13 @@ TEST(files_state_dir_follows_xdg)
     CHECK(recovery_path("/tmp/xdg-state/pulserack") == "/tmp/xdg-state/pulserack/unsaved.rack");
     CHECK(recovery_path("").empty()); // no state dir: no recovery
     unsetenv("XDG_STATE_HOME");
+#ifdef _WIN32
+    if (const char *a = std::getenv("LOCALAPPDATA"))
+        CHECK(default_state_dir() == std::string(a) + "/PulseRack");
+#else
     if (const char *h = std::getenv("HOME"))
         CHECK(default_state_dir() == std::string(h) + "/.local/state/pulserack");
+#endif
     if (old)
         setenv("XDG_STATE_HOME", saved.c_str(), 1);
 }

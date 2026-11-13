@@ -22,7 +22,8 @@ bool read_file(const std::string &path, std::string *out, std::string *error);
 // failure (a full disk, a crash) never leaves a half-written patch where the old one was.
 bool write_file_atomic(const std::string &path, const std::string &text, std::string *error);
 
-// $XDG_STATE_HOME/pulserack, or ~/.local/state/pulserack; empty if neither can be found.
+// $XDG_STATE_HOME/pulserack, or ~/.local/state/pulserack (%LOCALAPPDATA%/PulseRack on Windows); empty if neither
+// can be found.
 std::string default_state_dir();
 // The patch kept when the window closed with unsaved changes (in a state directory).
 std::string recovery_path(const std::string &state_dir);

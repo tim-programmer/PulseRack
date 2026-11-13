@@ -32,12 +32,21 @@
       "name": "release-clang",
       "displayName": "Release (clang)",
       "inherits": ["clang", "release"]
+    },
+    {
+      "name": "release-msvc",
+      "displayName": "Release (MSVC)",
+      "description": "Optimized build with MSVC and Ninja: run it from a Developer PowerShell / x64 Native Tools prompt",
+      "inherits": "release",
+      "cacheVariables": { "CMAKE_C_COMPILER": "cl", "CMAKE_CXX_COMPILER": "cl" },
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Windows" }
     }
   ],
   "buildPresets": [
     { "name": "debug", "configurePreset": "debug" },
     { "name": "release", "configurePreset": "release" },
-    { "name": "release-clang", "configurePreset": "release-clang" }
+    { "name": "release-clang", "configurePreset": "release-clang" },
+    { "name": "release-msvc", "configurePreset": "release-msvc" }
   ],
   "testPresets": [
     {
@@ -48,7 +57,8 @@
     },
     { "name": "debug", "inherits": "base", "configurePreset": "debug" },
     { "name": "release", "inherits": "base", "configurePreset": "release" },
-    { "name": "release-clang", "inherits": "base", "configurePreset": "release-clang" }
+    { "name": "release-clang", "inherits": "base", "configurePreset": "release-clang" },
+    { "name": "release-msvc", "inherits": "base", "configurePreset": "release-msvc" }
   ],
   "workflowPresets": [
     {
@@ -73,6 +83,14 @@
         { "type": "configure", "name": "release-clang" },
         { "type": "build", "name": "release-clang" },
         { "type": "test", "name": "release-clang" }
+      ]
+    },
+    {
+      "name": "release-msvc",
+      "steps": [
+        { "type": "configure", "name": "release-msvc" },
+        { "type": "build", "name": "release-msvc" },
+        { "type": "test", "name": "release-msvc" }
       ]
     }
   ]
