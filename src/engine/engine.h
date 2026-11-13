@@ -21,6 +21,7 @@
 #include "engine/model/wav.h"
 #include "engine/rt/spsc.h"
 #include "midi/inbox.h"
+#include "midi/outbox.h"
 
 #include <array>
 #include <atomic>
@@ -32,6 +33,8 @@
 
 namespace rack
 {
+
+struct MidiOutMsg; // (engine/rt/modules_common.h)
 
 inline constexpr size_t kTelemetrySlots = 1024; // as many as a patch may have modules
 
@@ -88,6 +91,12 @@ public:
     // NoSuchParam for a module that takes no MIDI.
     Err                                     set_device(uint32_t node, const std::string &name);
     std::function<int(const std::string &)> midi_slot_of;
+    // MIDI out (step 9): a MIDI Out module's device names an output; `midi_out_slot_of` gives its
+    // slot (the application's output manager), and what the modules send goes into the outbox,
+    // each message due one device call after the sample it was made at (or at once with no audio
+    // thread). The outbox must outlive the last render(); set it only while detached.
+    std::function<int(const std::string &)> midi_out_slot_of;
+    void                                    set_midi_out(midi::Outbox *outbox);
     // Looks every such module's device up again (after `midi_slot_of` was set or changed).
     void refresh_devices();
     // The WAV file a Sampler plays (kept in the patch as Node::sample): read now, and the module
@@ -174,6 +183,8 @@ private:
         std::vector<ScriptEvent> script;
         // the modules that take MIDI: each one's function (modules_common.h, midi_sink) and state
         std::vector<std::pair<void (*)(void *, const midi::Msg &, uint64_t), void *>> midi_ins;
+        // the modules that send MIDI: each one's function (midi_source) and state
+        std::vector<std::pair<size_t (*)(void *, MidiOutMsg *, size_t), void *>> midi_outs;
         std::vector<Probe> probes;   // in plan order
         std::vector<float> activity; // per step, written by Plan::run
     };
@@ -239,6 +250,11 @@ private:
 
     // audio-owned
     midi::Inboxes *midi_ = nullptr; // (set while detached)
+    midi::Outbox  *outbox_ = nullptr; // (set while detached)
+    int64_t        call_ns_ = 0;      // the device call being rendered: when it began,
+    uint64_t       call_t0_ = 0;      // its first sample,
+    size_t         call_frames_ = 0;  // and its length
+    void           send_midi(uint64_t block_t0);
     int64_t (*midi_now_)() = nullptr;
     Snapshot *cur_ = nullptr;
     size_t    script_pos_ = 0;

@@ -4,6 +4,7 @@
 #include "testutil.h"
 
 #include "midi/inbox.h"
+#include "midi/outbox.h"
 #include "midi/message.h"
 #include "midi/names.h"
 #include "engine/rt/modules_common.h"
@@ -711,4 +712,315 @@ TEST(settings_default_config_dir_follows_xdg)
         setenv("XDG_CONFIG_HOME", keep.c_str(), 1);
     else
         unsetenv("XDG_CONFIG_HOME");
+}
+
+// ---- MIDI Clock (step 9): the module alone, its messages pushed at chosen samples, its events read
+// back with their engine time
+namespace
+{
+struct ClockRig
+{
+    const ModuleDesc &d = *find_module("midi_clock");
+    std::vector<unsigned char> mem;
+    std::vector<pcl_event_t>   buf = std::vector<pcl_event_t>(64);
+    EventBuf                   out;
+    uint64_t                   time = 0;
+    std::vector<std::pair<uint64_t, uint8_t>> got; // (sample, type)
+    explicit ClockRig(float ppqn = 24, float follow = 1)
+        : mem(d.state_size + d.state_align)
+    {
+        const float p[2] = { ppqn, follow };
+        CHECK(d.init(state(), NodeContext { 48000 }, p));
+    }
+    void *state()
+    {
+        void  *s = mem.data();
+        size_t n = mem.size();
+        return std::align(d.state_align, d.state_size, s, n);
+    }
+    void push(Type t, uint64_t at) { midi_sink(d)(state(), msg(t), at); }
+    void run(uint64_t frames, size_t block = 256)
+    {
+        static const pcl_sample_t zeros[PCL_MAX_BLOCK] = { };
+        static pcl_sample_t       scratch[PCL_MAX_BLOCK];
+        EventBuf                 *outs[1] = { &out };
+        for (uint64_t done = 0; done < frames;)
+        {
+            const size_t n = (size_t)std::min<uint64_t>(block, frames - done);
+            out = EventBuf { buf.data(), buf.size(), 0 };
+            NodeIo io { { }, { }, { }, outs, scratch, zeros, { nullptr, nullptr }, time, n };
+            d.process(state(), io);
+            for (size_t i = 0; i < out.count; i++)
+            {
+                CHECK(out.data[i].offset < n && (i == 0 || out.data[i].offset >= out.data[i - 1].offset));
+                got.push_back({ time + out.data[i].offset, out.data[i].type });
+            }
+            time += n;
+            done += n;
+        }
+    }
+    static std::pair<uint64_t, uint8_t> ev(uint64_t at, uint8_t type) { return { at, type }; }
+    std::vector<uint64_t> pulses() const
+    {
+        std::vector<uint64_t> v;
+        for (auto [at, type] : got)
+            if (type == PCL_EVT_CLOCK)
+                v.push_back(at);
+        return v;
+    }
+};
+} // namespace
+
+TEST(midi_clock_passes_ticks_on_between_start_and_stop)
+{
+    ClockRig c; // 24 ppqn, following the transport
+    c.push(Type::Clock, 100); // before a start: not passed on
+    c.push(Type::Start, 1000);
+    for (uint64_t t = 1000; t < 3000; t += 250) // a tick every 250 samples: 192 bpm at 48 kHz
+        c.push(Type::Clock, t);
+    c.push(Type::Stop, 3100);
+    c.push(Type::Clock, 3250); // after the stop: not passed on
+    c.run(4000);
+    CHECK(c.got.size() == 10 && c.got.front() == ClockRig::ev(1000, PCL_EVT_START));
+    CHECK(c.got[1] == ClockRig::ev(1000, PCL_EVT_CLOCK)); // START before CLOCK
+    CHECK(c.got.back() == ClockRig::ev(3100, PCL_EVT_STOP));
+    const auto p = c.pulses();
+    CHECK(p.size() == 8 && p[0] == 1000 && p[7] == 2750); // each on its own sample, across blocks
+    // continue: pulses again, without a start
+    c.got.clear();
+    c.push(Type::Continue, 4100);
+    c.push(Type::Clock, 4200);
+    c.run(500);
+    CHECK(c.got.size() == 1 && c.got[0] == ClockRig::ev(4200, PCL_EVT_CLOCK));
+}
+
+TEST(midi_clock_at_other_pulses_per_beat)
+{
+    { // 12: every other tick, the first one after a start included
+        ClockRig c(12);
+        c.push(Type::Start, 0);
+        for (uint64_t t = 0; t < 2400; t += 200)
+            c.push(Type::Clock, t);
+        c.run(3000);
+        CHECK((c.pulses() == std::vector<uint64_t> { 0, 400, 800, 1200, 1600, 2000 }));
+    }
+    { // 96: four a tick, spread over the last tick's time (the first tick has none: all at once)
+        ClockRig c(96);
+        c.push(Type::Start, 0);
+        for (uint64_t t = 0; t < 1200; t += 400)
+            c.push(Type::Clock, t);
+        c.run(2000, 128); // (blocks shorter than a tick: the spread pulses wait across them)
+        CHECK((c.pulses()
+            == std::vector<uint64_t> { 0, 0, 0, 0, 400, 500, 600, 700, 800, 900, 1000, 1100 }));
+    }
+    { // 96, and the tempo jumps up: the pulses still owed go out at the next tick, none lost
+        ClockRig c(96);
+        c.push(Type::Start, 0);
+        c.push(Type::Clock, 0);
+        c.push(Type::Clock, 400);
+        c.push(Type::Clock, 500); // much sooner
+        c.run(2000);
+        const auto p = c.pulses();
+        CHECK(p.size() == 12 && p[4] == 400 && p[5] == 500 && p[6] == 500 && p[7] == 500);
+        CHECK(std::is_sorted(p.begin(), p.end()));
+    }
+}
+
+TEST(midi_clock_without_start_stop_and_a_lost_device)
+{
+    { // Start/stop off: every tick is a pulse, the transport is not passed on
+        ClockRig c(24, 0);
+        c.push(Type::Clock, 10);
+        c.push(Type::Start, 20);
+        c.push(Type::Clock, 30);
+        c.push(Type::Stop, 40);
+        c.push(Type::Clock, 50);
+        c.run(256);
+        CHECK(c.got.size() == 3 && c.pulses() == (std::vector<uint64_t> { 10, 30, 50 }));
+    }
+    { // following: its device going away stops it, as a stop would
+        ClockRig c;
+        c.push(Type::Start, 0);
+        c.push(Type::Clock, 0);
+        c.push(Type::DeviceLost, 100);
+        c.push(Type::Clock, 200);
+        c.run(256);
+        CHECK(c.got.size() == 3 && c.got[2] == ClockRig::ev(100, PCL_EVT_STOP));
+    }
+    { // notes and controls are not for it; another device's ticks neither
+        ClockRig c(24, 0);
+        CHECK(midi_set_device(c.d, c.state(), 3));
+        c.push(Type::NoteOn, 10);
+        c.push(Type::Control, 20);
+        c.push(Type::Clock, 30); // slot 0
+        Msg m = msg(Type::Clock, 0, 0, 0, 3);
+        midi_sink(c.d)(c.state(), m, 40);
+        c.run(256);
+        CHECK(c.pulses() == std::vector<uint64_t> { 40 });
+    }
+}
+
+TEST(midi_clock_drives_a_sequencer_in_a_patch)
+{
+    // MIDI Clock -> Sequencer (a step every 6 pulses) -> Note to Gate: a start and 24 ticks (a beat)
+    // are four steps, through the engine's inboxes
+    Rig                      r;
+    std::unique_ptr<Inboxes> boxes = std::make_unique<Inboxes>();
+    r.e.set_midi(boxes.get());
+    const uint32_t mc = r.add("midi_clock"), seq = r.add("seq"), g = r.add("note_to_gate"),
+                   out = r.add("out");
+    r.param(seq, "division", 6);
+    r.param(seq, "gate", 3);
+    r.param(out, "level", 1);
+    CHECK(r.cable(mc, "clock", seq, "in") == Err::Ok && r.cable(seq, "out", g, "notes") == Err::Ok
+        && r.cable(g, "gate", out, "l") == Err::Ok);
+    for (size_t i = 0; i < 8; i++)
+        CHECK(r.e.set_step(seq, i, StepData { 60, 100, 0, 0 }) == Err::Ok);
+    CHECK(r.compile());
+    (*boxes)[0].push(msg(Type::Start));
+    int rises = 0;
+    float prev = 0;
+    for (int tick = 0; tick < 24; tick++)
+    {
+        (*boxes)[0].push(msg(Type::Clock));
+        r.render(256);
+        for (size_t i = r.L.size() - 256; i < r.L.size(); i++)
+        {
+            rises += prev < 0.5f && r.L[i] >= 0.5f;
+            prev = r.L[i];
+        }
+    }
+    CHECK(rises == 4);
+}
+
+// ---- MIDI Out (step 9): what the module sends reaches the outbox, as bytes, on its output's slot
+namespace
+{
+struct OutRig : Rig
+{
+    std::unique_ptr<midi::Outbox> box = std::make_unique<midi::Outbox>();
+    uint32_t                      kb = 0, mo = 0;
+    OutRig()
+    {
+        e.set_midi_out(box.get());
+        e.midi_out_slot_of = [](const std::string &n) { return n == "Synth" ? 2 : n == "Drums" ? 5 : -1; };
+        kb = add("keyboard");
+        mo = add("midi_out");
+        CHECK(cable(kb, "notes", mo, "notes") == Err::Ok);
+    }
+    std::vector<midi::OutMsg> take()
+    {
+        std::vector<midi::OutMsg> v;
+        midi::OutMsg              m;
+        while (box->ring.pop(m))
+            v.push_back(m);
+        return v;
+    }
+    static bool is(const midi::OutMsg &m, uint8_t slot, std::initializer_list<uint8_t> bytes)
+    {
+        if (m.slot != slot || m.len != bytes.size())
+            return false;
+        size_t i = 0;
+        for (uint8_t b : bytes)
+            if (m.bytes[i++] != b)
+                return false;
+        return true;
+    }
+};
+} // namespace
+
+TEST(midi_out_sends_notes_on_its_channel_to_its_output)
+{
+    OutRig r;
+    r.param(r.mo, "channel", 9); // (the 10th: drums)
+    CHECK(r.compile() && r.e.set_device(r.mo, "Synth") == Err::Ok);
+    CHECK(r.e.key(r.kb, true, 60, 100) == Err::Ok);
+    r.render(256);
+    CHECK(r.e.key(r.kb, false, 60) == Err::Ok);
+    r.render(256);
+    const auto v = r.take();
+    CHECK(v.size() == 2 && OutRig::is(v[0], 2, { 0x99, 60, 100 }) && OutRig::is(v[1], 2, { 0x89, 60, 0 }));
+    CHECK(v[0].due_ns == 0); // no audio thread: at once
+    // a note off for a note it did not send is not passed on
+    CHECK(r.e.key(r.kb, false, 61) == Err::Ok);
+    r.render(256);
+    CHECK(r.take().empty());
+}
+
+TEST(midi_out_lets_go_of_its_notes_on_a_change_of_channel_or_output)
+{
+    OutRig r;
+    CHECK(r.compile() && r.e.set_device(r.mo, "Synth") == Err::Ok);
+    CHECK(r.e.key(r.kb, true, 64, 90) == Err::Ok);
+    r.render(256);
+    r.take();
+    r.param(r.mo, "channel", 3); // the held note: off on channel 1, where it was sent
+    r.render(256);
+    auto v = r.take();
+    CHECK(v.size() == 1 && OutRig::is(v[0], 2, { 0x80, 64, 0 }));
+    CHECK(r.e.key(r.kb, true, 65, 90) == Err::Ok);
+    r.render(256);
+    r.take();
+    CHECK(r.e.set_device(r.mo, "Drums") == Err::Ok); // off to the output it was sent to
+    r.render(256);
+    v = r.take();
+    CHECK(v.size() == 1 && OutRig::is(v[0], 2, { 0x83, 65, 0 }));
+    CHECK(r.e.key(r.kb, true, 66, 90) == Err::Ok);
+    r.render(256);
+    v = r.take();
+    CHECK(v.size() == 1 && OutRig::is(v[0], 5, { 0x93, 66, 90 }));
+    // no output: nothing is sent
+    CHECK(r.e.set_device(r.mo, "") == Err::Ok);
+    r.render(256);
+    r.take(); // (the note off for 66, to Drums)
+    CHECK(r.e.key(r.kb, true, 67, 90) == Err::Ok);
+    r.render(256);
+    CHECK(r.take().empty());
+    CHECK(r.e.set_device(r.mo, "Nowhere") == Err::Ok); // a name with no slot: none either
+    CHECK(r.e.key(r.kb, true, 68, 90) == Err::Ok);
+    r.render(256);
+    CHECK(r.take().empty());
+}
+
+TEST(midi_out_sends_the_clock_start_and_stop)
+{
+    OutRig         r;
+    const uint32_t clk = r.add("clock");
+    r.param(clk, "bpm", 120);
+    r.param(clk, "ppqn", 24);
+    CHECK(r.cable(clk, "clock", r.mo, "clock") == Err::Ok && r.compile()
+        && r.e.set_device(r.mo, "Synth") == Err::Ok);
+    CHECK(r.e.key(r.kb, true, 60, 100) == Err::Ok);
+    r.render(kRate / 2); // half a second at 120 bpm: one beat, 24 pulses (the 25th is at 0.5 s)
+    auto   v = r.take();
+    size_t ticks = 0, starts = 0;
+    for (const auto &m : v)
+    {
+        ticks += OutRig::is(m, 2, { 0xF8 });
+        starts += OutRig::is(m, 2, { 0xFA });
+    }
+    CHECK(starts == 1 && OutRig::is(v[0], 2, { 0xFA }) && ticks == 24);
+    r.param(clk, "run", 0); // a stop: FC, and the held note let go
+    r.render(256);
+    v = r.take();
+    CHECK(v.size() == 2 && OutRig::is(v[0], 2, { 0xFC }) && OutRig::is(v[1], 2, { 0x80, 60, 0 }));
+}
+
+TEST(midi_out_messages_are_due_a_device_call_after_their_sample)
+{
+    OutRig r;
+    CHECK(r.compile() && r.e.set_device(r.mo, "Synth") == Err::Ok);
+    g_clock_ns = kStart;
+    r.e.set_midi_clock(fake_clock);
+    r.e.attach_audio(true); // this thread is the audio thread now
+    r.e.key(r.kb, true, 60, 100, 300); // at sample 300: the second block of a call of 512
+    r.render(512);
+    r.e.attach_audio(false);
+    const auto v = r.take();
+    CHECK(v.size() == 1);
+    if (v.size() == 1)
+    {
+        const double want = (double)kStart + (300.0 + 512.0) * 1e9 / kRate;
+        CHECK(std::fabs((double)v[0].due_ns - want) < 1000); // within a microsecond
+    }
 }

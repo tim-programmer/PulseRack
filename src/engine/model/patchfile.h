@@ -8,6 +8,8 @@
 //   cable 1.clock -> 2.in             output -> input, by the jacks' ids
 //   device 4 KeyStep 37               a MIDI module's input: the rest of the line
 //   sample 6 /home/me/kick.wav        a Sampler's file: the rest of the line
+//   map 2 cutoff 1 74 nanoKONTROL2    MIDI learn in this patch: node, control, channel 1..16,
+//                                     controller 0..119, the input's name (the rest of the line)
 //
 // A file with a syntax error, an unknown version, or a cable the rules forbid is rejected whole. An
 // unknown module type, jack or control is skipped with a warning, so a patch from a newer rack

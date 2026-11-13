@@ -84,6 +84,7 @@ Err Patch::remove_node(uint32_t id)
     nodes_.erase(it);
     std::erase_if(cables_, [&](const Cable &c) { return c.from.node == id || c.to.node == id; });
     std::erase_if(keys, [&](const KeyScript &k) { return k.node == id; });
+    std::erase_if(mappings, [&](const Mapping &m) { return m.node == id; });
     return Err::Ok;
 }
 

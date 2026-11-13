@@ -349,3 +349,28 @@ TEST(patchfile_a_midi_module_keeps_its_device_by_name)
     p.find(in)->device = "a\nnode 9 osc";
     CHECK(save_patch(p).find("node 9") == std::string::npos);
 }
+
+// MIDI learn in the patch (docs/midi.md, step 9): `map <node> <control> <channel> <cc> <device>`
+TEST(patchfile_midi_mappings)
+{
+    Patch          p;
+    const uint32_t a = p.add_node(*find_module("svf")), b = p.add_node(*find_module("osc"));
+    p.mappings.push_back(Mapping { a, 0, 0, 74, "nanoKONTROL2 #2" });
+    p.mappings.push_back(Mapping { b, 1, 15, 7, "" });
+    const std::string text = save_patch(p);
+    CHECK(text.find("map " + std::to_string(a) + " cutoff 1 74 nanoKONTROL2 #2\n") != std::string::npos);
+    CHECK(text.find("map " + std::to_string(b) + " frequency 16 7\n") != std::string::npos);
+    Patch back;
+    CHECK(load_patch(text, back).ok && back.mappings == p.mappings);
+    // removing a module takes its mappings with it
+    CHECK(back.remove_node(a) == Err::Ok && back.mappings.size() == 1 && back.mappings[0].node == b);
+    // a control the module does not have: skipped with a warning; bad numbers: refused
+    const std::string head = "pulserack 1\nnode 1 osc x=0 y=0\n";
+    LoadResult        r = load_patch(head + "map 1 nonsense 1 7 X\n", back);
+    CHECK(r.ok && r.warnings.size() == 1 && back.mappings.empty());
+    CHECK(!load_patch(head + "map 1 frequency 0 7\n", back).ok);   // channel 1..16
+    CHECK(!load_patch(head + "map 1 frequency 17 7\n", back).ok);
+    CHECK(!load_patch(head + "map 1 frequency 1 120\n", back).ok); // controllers 0..119
+    CHECK(!load_patch(head + "map 2 frequency 1 7\n", back).ok);   // no such module
+    CHECK(!load_patch(head + "map 1 frequency 1\n", back).ok);
+}
