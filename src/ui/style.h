@@ -39,7 +39,7 @@ inline constexpr float kHintH = 26;
 inline constexpr float kBrowserW = 280;
 inline constexpr float kBrowserPad = 10;
 inline constexpr float kSearchH = 32; // the search box
-inline constexpr float kChipsH = 56;  // the category chips (two rows) and the gap under them
+inline constexpr float kChipsH = 92; // the category chips (three rows of 22, 6 apart, 8 above) and 6 under
 inline constexpr float kCardH = 74;   // one module card
 inline constexpr float kCardGap = 6;
 inline constexpr float kAddW = 46, kAddH = 24; // a card's Add button (top right of the card)
