@@ -906,7 +906,16 @@ struct PanelView
         Editor     *e = ed.get(cx);
         const char *caption = "DEVICE";
         bool        heard = true;
-        if (e && !n.device.empty())
+        const bool  out = sends_midi(*n.desc);
+        if (out)
+        {
+            caption = "OUTPUT";
+            if (e && !n.device.empty()
+                && std::find(e->midi_out_available.begin(), e->midi_out_available.end(), n.device)
+                    == e->midi_out_available.end())
+                caption = "NOT CONNECTED", heard = false;
+        }
+        else if (e && !n.device.empty())
         {
             const auto in = [&](const std::vector<std::string> &v)
             { return std::find(v.begin(), v.end(), n.device) != v.end(); };
@@ -933,7 +942,7 @@ struct PanelView
             .overflow_hidden()
             .cursor_pointer()
             .child(label(caption, 8, heard ? st::kDim : rgb(0xf9e2af)).whitespace_pre())
-            .child(label(n.device.empty() ? std::string("Any device") : n.device, 10,
+            .child(label(n.device.empty() ? std::string(out ? "No output" : "Any device") : n.device, 10,
                 heard ? st::kText : st::kSubtext)
                     .whitespace_pre())
             // the box's press, not the panel's
@@ -1392,7 +1401,7 @@ struct PanelView
         }
         if (d.id == "out") // the output level, between its controls and its jacks
             p.child(meters(L));
-        if (midi_sink(d)) // the MIDI input it listens to, under its controls
+        if (has_midi_device(d)) // the MIDI device it listens or sends to, under its controls
             p.child(device_element(cx, *n, L, cc.chip));
         if (takes_sample(d)) // the file it plays, there too
             p.child(sample_element(cx, *n, L, cc.chip));
@@ -1435,7 +1444,7 @@ namespace
 
     // A control's right-click menu: under the control, its left edge at the control's (rack
     // pixels).
-    constexpr float kControlMenuW = 190, kControlMenuPad = 4, kMenuItemH = 26;
+    constexpr float kControlMenuW = 240, kControlMenuPad = 4, kMenuItemH = 26;
     Pt              control_menu_origin(const Node &n, size_t param)
     {
         const Rect &r = panel_layout(*n.desc).params[param];
@@ -1891,6 +1900,8 @@ struct RackView
             const Pt       at = control_menu_origin(*n, pi);
             const auto     it = std::find_if(e->settings.learn.begin(), e->settings.learn.end(),
                 [&](const Learn &l) { return l.control == (int)pi; });
+            const auto     mp = std::find_if(patch.mappings.begin(), patch.mappings.end(),
+                [&](const Mapping &l) { return l.node == id && l.param == (uint16_t)pi; });
             Element        menu = div()
                                       .absolute()
                                       .left(at.x)
@@ -1911,6 +1922,14 @@ struct RackView
                     if (Editor *ed = self.ed.get(cx))
                         ed->learn_begin(cx, id, pi);
                 }));
+            menu.child(menu_item("MIDI learn for this knob only", st::kText,
+                [id, pi](RackView &self, Ctx cx)
+                {
+                    self.ctrl_node = 0;
+                    cx.notify();
+                    if (Editor *ed = self.ed.get(cx))
+                        ed->learn_begin(cx, id, pi, true);
+                }));
             if (it != e->settings.learn.end())
                 menu.child(menu_item("Forget its mapping  (CC " + std::to_string(it->cc) + ")",
                     st::kDanger,
@@ -1921,6 +1940,16 @@ struct RackView
                         if (Editor *ed = self.ed.get(cx))
                             ed->forget_learned_at(cx, (int)pi);
                     }));
+            if (mp != patch.mappings.end())
+                menu.child(menu_item("Forget this knob's mapping  (CC " + std::to_string(mp->cc) + ")",
+                    st::kDanger,
+                    [id, pi](RackView &self, Ctx cx)
+                    {
+                        self.ctrl_node = 0;
+                        cx.notify();
+                        if (Editor *ed = self.ed.get(cx))
+                            ed->forget_mapping(cx, id, pi);
+                    }));
             menu.child(menu_item("Cancel", st::kText,
                 [](RackView &self, Ctx cx)
                 {
@@ -1930,7 +1959,7 @@ struct RackView
             content.child(std::move(menu));
         }
         // a MIDI module's device menu, under its Device box: every input, or one of them
-        if (const Node *n = dev_node ? patch.find(dev_node) : nullptr; n && midi_sink(*n->desc))
+        if (const Node *n = dev_node ? patch.find(dev_node) : nullptr; n && has_midi_device(*n->desc))
         {
             const uint32_t id = dev_node;
             const Pt       at = device_menu_origin(*n);
@@ -1947,7 +1976,9 @@ struct RackView
                                       .shadow(0, 6, 16, with_alpha(rgb(0x000000), 0.5f))
                                       .on_mouse_down([](RackView &) { });
             // the one it has now is in the accent colour
-            menu.child(menu_item("Any device", n->device.empty() ? st::kAccent : st::kText,
+            const std::vector<std::string> &present = e->midi_present(*n->desc);
+            menu.child(menu_item(sends_midi(*n->desc) ? "No output" : "Any device",
+                n->device.empty() ? st::kAccent : st::kText,
                 [id](RackView &self, Ctx cx)
                 {
                     self.dev_node = 0;
@@ -1959,8 +1990,7 @@ struct RackView
             for (size_t k = 0; k < names.size(); k++)
             {
                 const bool here
-                    = std::find(e->midi_available.begin(), e->midi_available.end(), names[k])
-                    != e->midi_available.end();
+                    = std::find(present.begin(), present.end(), names[k]) != present.end();
                 menu.child(menu_item(names[k] + (here ? "" : "   (not connected)"),
                     names[k] == n->device ? st::kAccent : here ? st::kText : st::kSubtext,
                     [id, k](RackView &self, Ctx cx)
@@ -2389,6 +2419,10 @@ std::string Editor::describe_item(uint32_t node, int item) const
                              "plugged here"
                            : "      drag from it to an output to connect");
     }
+    if (item == kHoverDevice && sends_midi(d))
+        return std::string(d.name) + "  ·  sends to "
+            + (n->device.empty() ? std::string("no output") : n->device)
+            + "      click to choose a MIDI output";
     if (item == kHoverDevice)
         return std::string(d.name) + "  ·  listens to "
             + (n->device.empty() ? std::string("every MIDI input that is switched on") : n->device)
@@ -2503,6 +2537,11 @@ void Editor::start_midi(Ctx cx)
     for (const std::string &e : errors)
         say(cx, "MIDI: " + e + ".");
     midi_available = midi->available();
+    midi_out = std::make_unique<midi::Outputs>(*midi_outbox);
+    if (!midi_out->start(&err))
+        midi_out.reset(); // (the inputs work without it)
+    else
+        midi_out_available = midi_out->available();
     if (settings.midi_inputs.empty() && !midi_available.empty() && status.empty())
         status = "MIDI inputs are connected: switch them on in the device menu (top right, beside "
                  "Audio).";
@@ -2519,7 +2558,15 @@ void Editor::poll_midi(Ctx cx)
         if (midi->is_open(n))
             before.push_back(n);
     std::vector<std::string> errors;
-    if (!midi->poll(&errors) && errors.empty())
+    bool                     outs_moved = false;
+    if (midi_out)
+    {
+        const std::vector<std::string> outs_before = midi_out_available;
+        outs_moved = midi_out->poll(&errors);
+        midi_out_available = midi_out->available();
+        outs_moved = outs_moved || midi_out_available != outs_before;
+    }
+    if (!midi->poll(&errors) && errors.empty() && !outs_moved)
         return;
     for (const std::string &n : midi->enabled())
     {
@@ -2585,15 +2632,16 @@ void Editor::toggle_midi_input(Ctx cx, const std::string &name)
 void Editor::refresh_midi_panels(Ctx cx)
 {
     for (const Node &n : engine.patch().nodes())
-        if (midi_sink(*n.desc))
+        if (has_midi_device(*n.desc))
             if (auto it = panels.find(n.id); it != panels.end())
                 it->second.update(cx, [](PanelView &, Ctx c) { c.notify(); });
 }
 
 std::vector<std::string> Editor::device_menu_names(uint32_t node) const
 {
-    std::vector<std::string> names = midi_menu_names();
     const Node              *n = engine.patch().find(node);
+    std::vector<std::string> names
+        = n && sends_midi(*n->desc) ? midi_out_available : midi_menu_names();
     if (n && !n->device.empty() && std::find(names.begin(), names.end(), n->device) == names.end())
         names.push_back(n->device); // from a patch made on another machine, perhaps
     return names;
@@ -2602,9 +2650,24 @@ std::vector<std::string> Editor::device_menu_names(uint32_t node) const
 void Editor::set_midi_device(Ctx cx, uint32_t node, const std::string &name)
 {
     const Node *n = engine.patch().find(node);
-    if (!n || !midi_sink(*n->desc) || n->device == name)
+    if (!n || !has_midi_device(*n->desc) || n->device == name)
         return;
     checkpoint(cx, std::string(n->desc->name) + " device");
+    if (sends_midi(*n->desc))
+    { // an output: nothing to switch on
+        engine.set_device(node, name);
+        touch(cx);
+        if (auto it = panels.find(node); it != panels.end())
+            it->second.update(cx, [](PanelView &, Ctx c) { c.notify(); });
+        const bool here = std::find(midi_out_available.begin(), midi_out_available.end(), name)
+            != midi_out_available.end();
+        say(cx,
+            std::string(n->desc->name)
+                + (name.empty() ? " sends to no output."
+                                : " sends to " + name
+                            + (here ? "." : "  (not connected: it will be when it is).")));
+        return;
+    }
     // an input that is chosen is wanted: it is switched on if it was not (a machine setting, which
     // undo leaves alone)
     const bool was_on = name.empty()
@@ -2675,20 +2738,24 @@ void Editor::sample_chosen(
 
 // ---- MIDI learn
 
-void Editor::learn_begin(Ctx cx, uint32_t node, size_t param)
+void Editor::learn_begin(Ctx cx, uint32_t node, size_t param, bool exact)
 {
     const Node *n = engine.patch().find(node);
     if (!n || param >= n->desc->params.size())
         return;
     select_node(cx, node);
     learn_control = (int)param;
+    learn_exact = exact;
+    learn_node = node;
     notice = true; // (the pointer is on the control: its own hint would hide this)
     notice_node = node;
     notice_item = (int)param;
     say(cx,
         "MIDI learn: move a knob or fader on your controller to map it to "
-            + std::string(n->desc->params[param].name) + " (control " + std::to_string(param + 1)
-            + " of the selected module).      Escape cancels.");
+            + std::string(n->desc->params[param].name)
+            + (exact ? " of this " + std::string(n->desc->name) + ", in this patch"
+                     : " (control " + std::to_string(param + 1) + " of the selected module)")
+            + ".      Escape cancels.");
     hint_line.update(cx, [](HintLine &, Ctx c) { c.notify(); });
 }
 
@@ -2710,6 +2777,20 @@ void Editor::forget_learned_at(Ctx cx, int control)
     else
         say(cx, "The MIDI mapping of control " + std::to_string(control + 1) + " is forgotten.");
     notice = true;
+    hint_line.update(cx, [](HintLine &, Ctx c) { c.notify(); });
+}
+
+void Editor::forget_mapping(Ctx cx, uint32_t node, size_t param)
+{
+    auto &maps = engine.patch().mappings;
+    const auto here = [&](const Mapping &m) { return m.node == node && m.param == param; };
+    if (std::find_if(maps.begin(), maps.end(), here) == maps.end())
+        return;
+    checkpoint(cx, "MIDI mapping");
+    std::erase_if(maps, here);
+    touch(cx);
+    notice = true;
+    say(cx, "This control's MIDI mapping is forgotten.");
     hint_line.update(cx, [](HintLine &, Ctx c) { c.notify(); });
 }
 
@@ -2744,6 +2825,29 @@ void Editor::midi_control(Ctx cx, const midi::Msg &m)
     { return l.channel == m.channel && l.cc == m.data && l.device == device; };
     const std::string from
         = "CC " + std::to_string(m.data) + (device.empty() ? std::string() : " of " + device);
+    const auto same_map = [&](const Mapping &l)
+    { return l.channel == m.channel && l.cc == m.data && l.device == device; };
+    if (learn_control >= 0 && learn_exact)
+    { // this very control, in the patch: one controller per control, one control per controller
+        const int control = learn_control;
+        learn_control = -1;
+        notice = true;
+        const Node *n = engine.patch().find(learn_node);
+        if (!n || (size_t)control >= n->desc->params.size())
+            return; // (the module went while it waited)
+        checkpoint(cx, "MIDI mapping");
+        auto &maps = engine.patch().mappings;
+        std::erase_if(maps,
+            [&](const Mapping &l)
+            { return same_map(l) || (l.node == learn_node && l.param == (uint16_t)control); });
+        maps.push_back(Mapping { learn_node, (uint16_t)control, m.channel, m.data, device });
+        touch(cx);
+        say(cx,
+            from + " now turns " + std::string(n->desc->params[(size_t)control].name) + " of this "
+                + std::string(n->desc->name) + " (in this patch).");
+        hint_line.update(cx, [](HintLine &, Ctx c) { c.notify(); });
+        return;
+    }
     if (learn_control >= 0)
     { // one controller per place, one place per controller
         const int control = learn_control;
@@ -2761,6 +2865,32 @@ void Editor::midi_control(Ctx cx, const midi::Msg &m)
         hint_line.update(cx, [](HintLine &, Ctx c) { c.notify(); });
         return;
     }
+    // the value a controller gives a control: 0..127 as its travel, a switch on from 64
+    const auto value_for = [&](const ParamDesc &p)
+    {
+        const float t = (float)std::min<int>(m.value, 127) / 127.0f;
+        return p.control == Control::Switch || p.control == Control::Button
+            ? (t >= 0.5f ? p.max : p.min)
+            : from_travel(p, t);
+    };
+    // a mapping in the patch first: its own control, whatever is selected
+    {
+        const auto &maps = engine.patch().mappings;
+        const auto  mp = std::find_if(maps.begin(), maps.end(), same_map);
+        if (mp != maps.end())
+        {
+            const Node *n = engine.patch().find(mp->node);
+            if (!n || mp->param >= n->desc->params.size())
+                return;
+            const float v = value_for(n->desc->params[mp->param]);
+            if (v != n->params[mp->param])
+            {
+                set_param(cx, mp->node, mp->param, v); // (a sweep is one undo step)
+                hint_line.update(cx, [](HintLine &, Ctx c) { c.notify(); });
+            }
+            return;
+        }
+    }
     const auto it = std::find_if(settings.learn.begin(), settings.learn.end(), same);
     if (it == settings.learn.end())
         return;
@@ -2776,11 +2906,7 @@ void Editor::midi_control(Ctx cx, const midi::Msg &m)
     }
     if ((size_t)it->control >= n->desc->params.size())
         return; // this module has fewer controls
-    const ParamDesc &p = n->desc->params[(size_t)it->control];
-    const float      t = (float)std::min<int>(m.value, 127) / 127.0f;
-    const float      v = p.control == Control::Switch || p.control == Control::Button
-        ? (t >= 0.5f ? p.max : p.min)
-        : from_travel(p, t);
+    const float v = value_for(n->desc->params[(size_t)it->control]);
     if (v != n->params[(size_t)it->control])
     {
         set_param(cx, selected_node, (size_t)it->control, v); // (a sweep is one undo step)
@@ -4056,6 +4182,10 @@ bool Editor::open_text(Ctx cx, const std::string &text, const std::string &name,
         engine.compile();
         return false;
     }
+    // Every module made again from the new patch, time 0. (compile() keeps a module whose id still
+    // has the same type, which is right for an edit; but another patch numbers its modules from 1
+    // too, and its sequencer at id 2 would go on with the old one's steps and settings.)
+    engine.reset();
     // what the view held about the old patch goes
     drag = CableDrag { };
     mdrag = ModuleDrag { };
@@ -4232,6 +4362,14 @@ Entity<Editor> open_rack(App app, const Options &opt, std::string *error)
 #endif
         return -1;
     };
+    e->engine.midi_out_slot_of = [e]([[maybe_unused]] const std::string &name) -> int
+    {
+#if PULSERACK_MIDI
+        if (e->midi_out)
+            return e->midi_out->slot_for(name);
+#endif
+        return -1;
+    };
     if (!opt.patch_path.empty() && !e->open_path(app.ctx(), opt.patch_path, error))
         return { };
     if (e->has_recovery())
@@ -4246,6 +4384,7 @@ Entity<Editor> open_rack(App app, const Options &opt, std::string *error)
     w.height = (int)st::kWindowH;
     app.open_window(w, root);
     e->engine.set_midi(e->midi_boxes.get()); // (no audio thread yet)
+    e->engine.set_midi_out(e->midi_outbox.get());
     if (opt.midi)
     {
         e->start_midi(app.ctx(ed));
@@ -4311,7 +4450,7 @@ gp_point device_box_center(Ctx cx, Entity<Editor> ed, uint32_t node)
 {
     Editor     *e = ed.get(cx);
     const Node *n = e ? e->engine.patch().find(node) : nullptr;
-    if (!n || !midi_sink(*n->desc))
+    if (!n || !has_midi_device(*n->desc))
         return { -1, -1 };
     const RackViewport vp = viewport_of(cx, *e);
     const gp_point     o = rack_origin();

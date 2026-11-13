@@ -6,9 +6,11 @@
 
 #include "audio/audio_out.h"
 #include "engine/engine.h"
+#include "engine/rt/modules_common.h"
 #include "midi/inbox.h"
 #if PULSERACK_MIDI
 #include "midi/inputs.h"
+#include "midi/outputs.h"
 #endif
 #include "ui/geometry.h"
 #include "ui/settings.h"
@@ -47,11 +49,20 @@ struct Editor
     // put them there. Both are declared before the sound card: its thread reads the inboxes, so
     // they are destroyed after it has stopped (and the devices before the inboxes they push into).
     std::unique_ptr<midi::Inboxes> midi_boxes = std::make_unique<midi::Inboxes>();
+    // and what the MIDI Out modules send, waiting for the outputs' sender (step 9)
+    std::unique_ptr<midi::Outbox> midi_outbox = std::make_unique<midi::Outbox>();
 #if PULSERACK_MIDI
-    std::unique_ptr<midi::Inputs> midi; // null: MIDI is off, or the system has none (midi_error)
+    std::unique_ptr<midi::Inputs>  midi;     // null: MIDI is off, or the system has none (midi_error)
+    std::unique_ptr<midi::Outputs> midi_out; // the same for the outputs
 #endif
     std::string              midi_error;
-    std::vector<std::string> midi_available; // the inputs, as listed when the device menu opened
+    std::vector<std::string> midi_available;     // the inputs, as listed when the device menu opened
+    std::vector<std::string> midi_out_available; // the outputs, likewise
+    // The devices a module's Device box chooses from: the inputs, or for a MIDI Out the outputs.
+    const std::vector<std::string> &midi_present(const ModuleDesc &d) const
+    {
+        return sends_midi(d) ? midi_out_available : midi_available;
+    }
     gpuic::Task              midi_task;      // 4 Hz: follows devices being plugged in and out
     void                     start_midi(gpuic::Ctx cx); // opens the settings' inputs
     void                     poll_midi(gpuic::Ctx cx);
@@ -79,15 +90,19 @@ struct Editor
     std::function<void(gpuic::Ctx, uint32_t node, const std::string &suggested)> sample_chooser;
 
     // MIDI learn (docs/midi.md): a right-click on a control waits for a controller to move
-    // (learn_control: which control of its module, -1: not learning) and maps it to that place on
-    // whichever module is selected; a mapped controller then turns that control. The mappings are
-    // in the settings.
+    // (learn_control: which control of its module, -1: not learning) and maps it either to that
+    // place on whichever module is selected (global: the settings), or, with learn_exact, to that
+    // very control (this patch: Patch::mappings, one undo step). A controller with a mapping in the
+    // patch turns that control; one without, its global place on the selected module.
     int         learn_control = -1;
-    gpuic::Task control_task; // 60 Hz while MIDI is on: takes the control changes
-    void        learn_begin(gpuic::Ctx cx, uint32_t node, size_t param);
+    bool        learn_exact = false;
+    uint32_t    learn_node = 0; // (learn_exact: the module)
+    gpuic::Task control_task;   // 60 Hz while MIDI is on: takes the control changes
+    void        learn_begin(gpuic::Ctx cx, uint32_t node, size_t param, bool exact = false);
     void        learn_cancel(gpuic::Ctx cx);
-    void        forget_learned(gpuic::Ctx cx);                 // every mapping
-    void        forget_learned_at(gpuic::Ctx cx, int control); // the mapping of one place
+    void        forget_learned(gpuic::Ctx cx);                 // every global mapping
+    void        forget_learned_at(gpuic::Ctx cx, int control); // the global mapping of one place
+    void        forget_mapping(gpuic::Ctx cx, uint32_t node, size_t param); // the patch's, of one control
     // Takes every control change that has come in and acts on it (the task; the tests call it).
     void pump_controls(gpuic::Ctx cx);
     void midi_control(gpuic::Ctx cx, const midi::Msg &m);

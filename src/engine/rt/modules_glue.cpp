@@ -365,6 +365,315 @@ namespace
     static_assert(std::size(kMidiCcParams) == CC_COUNT);
 
     // ============================================================================================================
+    // MIDI Clock Another device's or program's tempo (docs/midi.md, step 9): its MIDI clock, 24
+    // ticks a beat, as clock pulses at this module's own pulses per beat, with its start and stop.
+    // At 24 a tick is a pulse. Below, ticks are skipped evenly (12: every other one); above, a tick
+    // makes several pulses, the first on the tick and the others spread over the time the last tick
+    // took (a tick that comes sooner sends any still waiting at once, so no pulse is lost). With
+    // Start/stop on, it sends pulses only between a start (or continue) and a stop, as a sequencer
+    // should hear them; off, it passes every tick on and ignores the transport.
+    enum
+    {
+        MCLK_PPQN,
+        MCLK_FOLLOW,
+        MCLK_COUNT
+    };
+    constexpr uint32_t kMidiPpqn = 24;
+    struct MidiClockNode
+    {
+        MidiQueue in;
+        int       device; // kMidiAnyDevice, kMidiNoDevice, or a slot
+        uint32_t  ppqn;
+        bool      follow, running;
+        uint32_t  acc;           // pulses owed, in 24ths
+        bool      ticked;        // a tick has come (since init or reset)
+        uint64_t  last_tick;     // when the last one came
+        uint64_t  period;        // samples between the last two ticks (0: not known)
+        uint64_t  pending[4];    // pulses still to send in the coming samples (a tick makes at most 4)
+        uint32_t  npending;
+    };
+    // A start: the next tick is the first of a beat, so it makes a pulse even below 24 ppqn.
+    void mclk_rewind(MidiClockNode *c)
+    {
+        c->acc = (kMidiPpqn - c->ppqn % kMidiPpqn) % kMidiPpqn;
+        c->npending = 0;
+    }
+    bool mclk_init(void *s, const NodeContext &, const float *p)
+    {
+        auto *c = as<MidiClockNode>(s);
+        c->device = kMidiAnyDevice;
+        c->ppqn = (uint32_t)std::clamp(to_int(p[MCLK_PPQN]), 1, 96);
+        c->follow = to_int(p[MCLK_FOLLOW]) != 0;
+        c->running = !c->follow;
+        mclk_rewind(c);
+        return true;
+    }
+    void mclk_reset(void *s)
+    {
+        auto *c = as<MidiClockNode>(s);
+        c->in.head = c->in.n = 0;
+        c->running = !c->follow;
+        c->ticked = false;
+        c->last_tick = c->period = 0;
+        mclk_rewind(c);
+    }
+    void mclk_process(void *s, NodeIo &io)
+    {
+        using midi::Type;
+        auto          *c = as<MidiClockNode>(s);
+        EventBuf      &out = *io.evt_out[0];
+        const uint64_t end = io.time + io.frames;
+        out.count = 0;
+        auto emit = [&](uint8_t type, uint64_t at)
+        {
+            if (out.count < out.cap)
+                out.data[out.count++] = pcl_event_t {
+                    (uint16_t)(at <= io.time ? 0 : at - io.time), type, 0, 0
+                };
+        };
+        // the pulses waiting from earlier ticks, up to `upto` (all of them if `all`)
+        auto flush = [&](uint64_t upto, bool all)
+        {
+            uint32_t k = 0;
+            for (; k < c->npending && (all || c->pending[k] < upto); k++)
+                emit(PCL_EVT_CLOCK, std::min(c->pending[k], upto));
+            std::memmove(c->pending, c->pending + k, (c->npending - k) * sizeof(uint64_t));
+            c->npending -= k;
+        };
+        while (true)
+        {
+            const uint64_t next = c->in.head < c->in.n ? c->in.q[c->in.head].at : end;
+            flush(std::min(next, end), false);
+            const TimedMsg *t = timed_next(c->in, end);
+            if (!t)
+                break;
+            const uint64_t at = std::max(t->at, io.time);
+            switch (t->m.type)
+            {
+            case Type::Clock:
+            {
+                if (c->ticked)
+                    c->period = at - c->last_tick;
+                c->ticked = true;
+                c->last_tick = at;
+                if (!c->running)
+                    break;
+                flush(at, true); // (late: this tick came before they were due)
+                c->acc += c->ppqn;
+                const uint32_t pulses = c->acc / kMidiPpqn;
+                c->acc %= kMidiPpqn;
+                for (uint32_t j = 0; j < pulses; j++)
+                {
+                    const uint64_t when = at + (c->period * j) / pulses;
+                    if (j == 0 || when < end)
+                        emit(PCL_EVT_CLOCK, when);
+                    else if (c->npending < std::size(c->pending))
+                        c->pending[c->npending++] = when;
+                }
+                break;
+            }
+            case Type::Start:
+                if (!c->follow)
+                    break;
+                c->running = true;
+                mclk_rewind(c);
+                emit(PCL_EVT_START, at);
+                break;
+            case Type::Continue:
+                if (c->follow)
+                    c->running = true;
+                break;
+            case Type::Stop:
+            case Type::DeviceLost:
+                if (!c->follow || !c->running)
+                    break;
+                c->running = false;
+                c->npending = 0;
+                emit(PCL_EVT_STOP, at);
+                break;
+            default:
+                break;
+            }
+        }
+    }
+    const PortDesc  kMidiClockPorts[] = { { "clock", "CLOCK", Kind::Event, true } };
+    const ParamDesc kMidiClockParams[] = {
+        param("ppqn", "Pulses per beat", "", 1, 96, 24, Scale::Int, Control::Knob,
+            [](void *s, float v)
+            {
+                as<MidiClockNode>(s)->ppqn = (uint32_t)std::clamp(to_int(v), 1, 96);
+                return true;
+            }),
+        param("follow", "Start/stop", "", 0, 1, 1, Scale::Toggle, Control::Switch,
+            [](void *s, float v)
+            {
+                auto *c = as<MidiClockNode>(s);
+                c->follow = to_int(v) != 0;
+                if (!c->follow)
+                    c->running = true; // every tick from now on
+                return true;
+            }),
+    };
+    static_assert(std::size(kMidiClockParams) == MCLK_COUNT);
+
+    // ============================================================================================================
+    // MIDI Out Notes and the clock to another device or program (docs/midi.md, step 9). NOTES:
+    // note on and off on its channel; CLOCK: the clock's pulses as MIDI clock (whatever their
+    // rate: send it 24 pulses a beat), and start and stop. The engine takes what it made after each
+    // block (midi_out_take) and sends it a device buffer later, as MIDI in is heard. It remembers
+    // the notes it holds, and lets go of them (note offs) on a change of channel or output, on
+    // reset, and on stop.
+    constexpr size_t kMidiOutMax = 256; // messages per block
+    struct MidiOutNode
+    {
+        int        device;  // the output's slot, or kMidiAnyDevice / kMidiNoDevice: none
+        uint8_t    channel; // 0..15
+        int16_t    held[128]; // per note: the slot it was sent to, -1 if not held (ch: held_ch)
+        uint8_t    held_ch[128];
+        MidiOutMsg out[kMidiOutMax];
+        uint32_t   nout;
+        MidiOutMsg pending[kMidiOutMax]; // made between blocks: sent at the start of the next
+        uint32_t   npending;
+        uint32_t   dropped;
+    };
+    void mout_add(MidiOutMsg *buf, uint32_t &n, MidiOutNode *o, uint16_t offset, int slot,
+        uint8_t len, uint8_t b0, uint8_t b1 = 0, uint8_t b2 = 0)
+    {
+        if (slot < 0)
+            return; // no output: nothing is sent
+        if (n == kMidiOutMax)
+        {
+            o->dropped++;
+            return;
+        }
+        buf[n++] = MidiOutMsg { offset, (uint8_t)slot, len, { b0, b1, b2 } };
+    }
+    // Note offs for every note it holds, between blocks (they go out first in the next).
+    void mout_release_all(MidiOutNode *o)
+    {
+        for (int k = 0; k < 128; k++)
+            if (o->held[k] >= 0)
+            {
+                mout_add(o->pending, o->npending, o, 0, o->held[k], 3,
+                    (uint8_t)(0x80 | o->held_ch[k]), (uint8_t)k, 0);
+                o->held[k] = -1;
+            }
+    }
+    bool mout_init(void *s, const NodeContext &, const float *p)
+    {
+        auto *o = as<MidiOutNode>(s);
+        o->device = kMidiNoDevice;
+        o->channel = (uint8_t)std::clamp(to_int(p[0]), 0, 15);
+        for (int16_t &h : o->held)
+            h = -1;
+        return true;
+    }
+    void mout_reset(void *s) { mout_release_all(as<MidiOutNode>(s)); }
+    void mout_process(void *s, NodeIo &io)
+    {
+        auto           *o = as<MidiOutNode>(s);
+        const EventBuf &a = *io.evt_in[0], &b = *io.evt_in[1];
+        const int       slot = o->device >= 0 ? o->device : -1;
+        o->nout = 0;
+        for (uint32_t k = 0; k < o->npending; k++)
+            if (o->nout < kMidiOutMax)
+                o->out[o->nout++] = o->pending[k];
+        o->npending = 0;
+        // the two inputs in time order, and at one sample in the library's order (pcl_event.h):
+        // STOP, NOTE_OFF, START, CLOCK, NOTE_ON, so a note is let go before the next starts and a
+        // start reaches the other side before the notes that follow it
+        auto rank = [](const pcl_event_t &e)
+        {
+            switch (e.type)
+            {
+            case PCL_EVT_STOP:
+                return 0;
+            case PCL_EVT_NOTE_OFF:
+                return 1;
+            case PCL_EVT_START:
+                return 2;
+            case PCL_EVT_CLOCK:
+                return 3;
+            default:
+                return e.velocity == 0 ? 1 : 4; // (a note on of velocity 0 is a note off)
+            }
+        };
+        size_t i = 0, j = 0;
+        while (i < a.count || j < b.count)
+        {
+            const bool from_a = j >= b.count
+                || (i < a.count
+                    && (a.data[i].offset < b.data[j].offset
+                        || (a.data[i].offset == b.data[j].offset
+                            && rank(a.data[i]) <= rank(b.data[j]))));
+            const pcl_event_t &e = from_a ? a.data[i++] : b.data[j++];
+            const uint8_t ch = o->channel;
+            switch (e.type)
+            {
+            case PCL_EVT_NOTE_ON:
+                if (e.velocity > 0 && e.note < 128)
+                {
+                    mout_add(o->out, o->nout, o, e.offset, slot, 3, (uint8_t)(0x90 | ch), e.note,
+                        std::min<uint8_t>(e.velocity, 127));
+                    if (slot >= 0)
+                    {
+                        o->held[e.note] = (int16_t)slot;
+                        o->held_ch[e.note] = ch;
+                    }
+                    break;
+                }
+                [[fallthrough]]; // (velocity 0: a note off)
+            case PCL_EVT_NOTE_OFF:
+                if (e.note < 128 && o->held[e.note] >= 0)
+                {
+                    mout_add(o->out, o->nout, o, e.offset, o->held[e.note], 3,
+                        (uint8_t)(0x80 | o->held_ch[e.note]), e.note, 0);
+                    o->held[e.note] = -1;
+                }
+                break;
+            case PCL_EVT_CLOCK:
+                mout_add(o->out, o->nout, o, e.offset, slot, 1, 0xF8);
+                break;
+            case PCL_EVT_START:
+                mout_add(o->out, o->nout, o, e.offset, slot, 1, 0xFA);
+                break;
+            case PCL_EVT_STOP:
+                mout_add(o->out, o->nout, o, e.offset, slot, 1, 0xFC);
+                for (int k = 0; k < 128; k++) // (a sequencer lets go of its note on a stop too)
+                    if (o->held[k] >= 0)
+                    {
+                        mout_add(o->out, o->nout, o, e.offset, o->held[k], 3,
+                            (uint8_t)(0x80 | o->held_ch[k]), (uint8_t)k, 0);
+                        o->held[k] = -1;
+                    }
+                break;
+            default:
+                break;
+            }
+        }
+    }
+    // (not "1".."16": a patch file writes a choice by its name, and a name that is a number would
+    // be read back as the choice's index)
+    constexpr std::string_view kOutChannels[] = { "ch 1", "ch 2", "ch 3", "ch 4", "ch 5", "ch 6",
+        "ch 7", "ch 8", "ch 9", "ch 10", "ch 11", "ch 12", "ch 13", "ch 14", "ch 15", "ch 16" };
+    const PortDesc  kMidiOutPorts[] = { { "notes", "NOTES", Kind::Event, false },
+        { "clock", "CLOCK", Kind::Event, false } };
+    const ParamDesc kMidiOutParams[] = {
+        param(
+            "channel", "Channel", "", 0, 15, 0, Scale::Enum, Control::Selector,
+            [](void *s, float v)
+            {
+                auto         *o = as<MidiOutNode>(s);
+                const uint8_t ch = (uint8_t)std::clamp(to_int(v), 0, 15);
+                if (ch != o->channel)
+                    mout_release_all(o);
+                o->channel = ch;
+                return true;
+            },
+            kOutChannels),
+    };
+
+    // ============================================================================================================
     // Audio Output The sink: the only module that knows the host. It adds its inputs, scaled, to
     // the engine's float master buffers; the engine clamps the sum to +-1. One input alone plays on
     // both channels.
@@ -785,9 +1094,38 @@ void midi_cc_push(void *state, const midi::Msg &msg, uint64_t at)
     timed_push(c->in, at, msg); // (full: this one change is lost; the next one is taken)
 }
 
+// The realtime messages for a MIDI Clock node (and the loss of its device, which stops it).
+void midi_clock_push(void *state, const midi::Msg &msg, uint64_t at)
+{
+    using midi::Type;
+    auto *c = as<MidiClockNode>(state);
+    if (msg.type < Type::Clock || !listens_to(c->device, msg))
+        return;
+    timed_push(c->in, at, msg); // (full: this tick is lost)
+}
+
+size_t midi_out_take(void *state, MidiOutMsg *out, size_t cap)
+{
+    auto        *o = as<MidiOutNode>(state);
+    const size_t n = std::min<size_t>(o->nout, cap);
+    std::memcpy(out, o->out, n * sizeof(MidiOutMsg));
+    o->nout = 0;
+    return n;
+}
+
+MidiTakeFn midi_source(const ModuleDesc &desc)
+{
+    return &desc == &kMidiOutDesc ? midi_out_take : nullptr;
+}
+
+bool has_midi_device(const ModuleDesc &desc) { return midi_sink(desc) || midi_source(desc); }
+
 MidiPushFn midi_sink(const ModuleDesc &desc)
 {
-    return &desc == &kMidiInDesc ? midi_in_push : &desc == &kMidiCcDesc ? midi_cc_push : nullptr;
+    return &desc == &kMidiInDesc  ? midi_in_push
+        : &desc == &kMidiCcDesc   ? midi_cc_push
+        : &desc == &kMidiClockDesc ? midi_clock_push
+                                  : nullptr;
 }
 
 // The device a MIDI module listens to: a slot, -1 for every device, -2 for none (its device is not
@@ -803,6 +1141,15 @@ bool midi_set_device(const ModuleDesc &desc, void *state, int device)
     }
     else if (&desc == &kMidiCcDesc)
         as<MidiCcNode>(state)->device = device;
+    else if (&desc == &kMidiClockDesc)
+        as<MidiClockNode>(state)->device = device;
+    else if (&desc == &kMidiOutDesc)
+    {
+        auto *o = as<MidiOutNode>(state);
+        if (device != o->device)
+            mout_release_all(o); // (to the output they were sent to)
+        o->device = device;
+    }
     else
         return false;
     return true;
@@ -826,6 +1173,12 @@ RACK_GLUE(kMidiInDesc, "midi_in", "MIDI In", kEvent, 8, MidiInNode, kMidiInPorts
 RACK_GLUE(kMidiCcDesc, "midi_cc", "MIDI CC", kEvent, 6, MidiCcNode, kMidiCcPorts, kMidiCcParams,
     cc_init, cc_reset, cc_process, nullptr,
     "One knob, fader or pedal of a MIDI controller as a signal");
+RACK_GLUE(kMidiClockDesc, "midi_clock", "MIDI Clock", kEvent, 6, MidiClockNode, kMidiClockPorts,
+    kMidiClockParams, mclk_init, mclk_reset, mclk_process, nullptr,
+    "Another device's tempo: its MIDI clock as clock pulses, with its start and stop");
+RACK_GLUE(kMidiOutDesc, "midi_out", "MIDI Out", kEvent, 6, MidiOutNode, kMidiOutPorts,
+    kMidiOutParams, mout_init, mout_reset, mout_process, nullptr,
+    "Sends notes and the clock to another device or program, on one channel");
 RACK_GLUE(kAudioOutDesc, "out", "Audio Output", kUtility, 4, AudioOutNode, kOutPorts, kOutParams,
     out_init, nullptr, out_process, nullptr,
     "Sends a signal to the speakers; L alone plays on both");

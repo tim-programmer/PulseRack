@@ -1,0 +1,122 @@
+# Three of the voices together at 90 bpm (Am F C G): the String voice plucking an arpeggio, the Stack voice holding a slow stereo pad, the FM voice ringing a bell now and then, in one reverb.
+pulserack 1
+node 1 clock x=0 y=0
+param 1 bpm 90
+param 1 ppqn 24
+param 1 run 1
+node 2 seq x=6 y=0
+param 2 length 32
+param 2 division 12
+param 2 gate 10
+step 2 0 note=69 vel=90 gate=0 tie=0
+step 2 1 note=72 vel=70 gate=0 tie=0
+step 2 2 note=76 vel=90 gate=0 tie=0
+step 2 3 note=81 vel=70 gate=0 tie=0
+step 2 4 note=76 vel=90 gate=0 tie=0
+step 2 5 note=72 vel=70 gate=0 tie=0
+step 2 6 note=81 vel=90 gate=0 tie=0
+step 2 7 note=76 vel=70 gate=0 tie=0
+step 2 8 note=65 vel=90 gate=0 tie=0
+step 2 9 note=69 vel=70 gate=0 tie=0
+step 2 10 note=72 vel=90 gate=0 tie=0
+step 2 11 note=77 vel=70 gate=0 tie=0
+step 2 12 note=72 vel=90 gate=0 tie=0
+step 2 13 note=69 vel=70 gate=0 tie=0
+step 2 14 note=77 vel=90 gate=0 tie=0
+step 2 15 note=72 vel=70 gate=0 tie=0
+step 2 16 note=67 vel=90 gate=0 tie=0
+step 2 17 note=72 vel=70 gate=0 tie=0
+step 2 18 note=76 vel=90 gate=0 tie=0
+step 2 19 note=79 vel=70 gate=0 tie=0
+step 2 20 note=76 vel=90 gate=0 tie=0
+step 2 21 note=72 vel=70 gate=0 tie=0
+step 2 22 note=79 vel=90 gate=0 tie=0
+step 2 23 note=76 vel=70 gate=0 tie=0
+step 2 24 note=67 vel=90 gate=0 tie=0
+step 2 25 note=71 vel=70 gate=0 tie=0
+step 2 26 note=74 vel=90 gate=0 tie=0
+step 2 27 note=79 vel=70 gate=0 tie=0
+step 2 28 note=74 vel=90 gate=0 tie=0
+step 2 29 note=71 vel=70 gate=0 tie=0
+step 2 30 note=79 vel=90 gate=0 tie=0
+step 2 31 note=74 vel=70 gate=0 tie=0
+node 3 string_voice x=22 y=0
+param 3 damping 0.45
+param 3 brightness 0.6
+param 3 position 0.18
+param 3 decay 2.5
+param 3 release 400
+node 4 seq x=30 y=0
+param 4 length 4
+param 4 division 96
+param 4 gate 92
+step 4 0 note=57 vel=90 gate=0 tie=0
+step 4 1 note=53 vel=90 gate=0 tie=0
+step 4 2 note=60 vel=90 gate=0 tie=0
+step 4 3 note=55 vel=90 gate=0 tie=0
+node 5 stack_voice x=46 y=0
+param 5 voices 6
+param 5 detune 18
+param 5 spread 1
+param 5 cutoff 600
+param 5 resonance 0.2
+param 5 drive 1.3
+param 5 contour 1.2
+param 5 attack 1200
+param 5 release 2500
+node 6 seq x=0 y=26
+param 6 length 16
+param 6 division 24
+param 6 gate 6
+step 6 0 note=81 vel=100 gate=0 tie=0
+step 6 6 note=76 vel=80 gate=0 tie=0
+step 6 9 note=84 vel=90 gate=0 tie=0
+step 6 14 note=79 vel=80 gate=0 tie=0
+node 7 fm_voice x=16 y=26
+param 7 ratio x4
+param 7 index 1
+param 7 env_amount 5
+param 7 env_decay 900
+param 7 feedback 0.1
+param 7 attack 2
+param 7 release 2500
+node 8 mixer x=24 y=26
+param 8 level1 0.6
+param 8 level2 0.7
+param 8 level3 0.35
+node 9 mixer x=30 y=26
+param 9 level1 0.6
+param 9 level2 0.7
+param 9 level3 0.35
+node 10 reverb x=36 y=26
+param 10 algorithm quality
+param 10 size 0.8
+param 10 decay 4
+param 10 predelay 25
+param 10 mix 0.3
+param 10 width 1
+node 11 reverb x=48 y=26
+param 11 algorithm quality
+param 11 size 0.8
+param 11 decay 4
+param 11 predelay 25
+param 11 mix 0.3
+param 11 width 1
+node 12 out x=60 y=26
+param 12 level 1.2
+cable 1.clock -> 2.in
+cable 1.clock -> 4.in
+cable 1.clock -> 6.in
+cable 2.out -> 3.note
+cable 4.out -> 5.note
+cable 6.out -> 7.note
+cable 3.out -> 8.in1
+cable 5.l -> 8.in2
+cable 7.out -> 8.in3
+cable 3.out -> 9.in1
+cable 5.r -> 9.in2
+cable 7.out -> 9.in3
+cable 8.out -> 10.in
+cable 9.out -> 11.in
+cable 10.l -> 12.l
+cable 11.r -> 12.r

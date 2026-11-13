@@ -116,6 +116,15 @@ std::string save_patch(const Patch &patch)
         if (!n->sample.empty() && n->sample.find_first_of("\r\n") == std::string::npos)
             s += "sample " + std::to_string(n->id) + " " + n->sample + "\n";
     }
+    for (const Mapping &m : patch.mappings)
+    {
+        const Node *n = patch.find(m.node);
+        if (!n || m.param >= n->desc->params.size() || m.device.find_first_of("\r\n") != std::string::npos)
+            continue;
+        s += "map " + std::to_string(m.node) + " " + std::string(n->desc->params[m.param].id) + " "
+            + std::to_string(m.channel + 1) + " " + std::to_string(m.cc)
+            + (m.device.empty() ? std::string() : " " + m.device) + "\n";
+    }
     for (const KeyScript &k : patch.keys)
         s += "key " + std::to_string(k.node) + " " + num(k.seconds) + (k.on ? " on " : " off ")
             + std::to_string(k.note) + " " + std::to_string(k.velocity) + "\n";
@@ -159,13 +168,14 @@ LoadResult load_patch(std::string_view text, Patch &out)
         // of the line, and may hold a '#' ("nanoKONTROL2 #2", "take #3.wav").
         std::string_view device_name;
         bool             is_device = false;
-        if (const auto whole = split(line);
-            header && !whole.empty() && (whole[0] == "device" || whole[0] == "sample"))
+        if (const auto whole = split(line); header && !whole.empty()
+            && (whole[0] == "device" || whole[0] == "sample" || whole[0] == "map"))
         {
             is_device = true;
-            if (whole.size() >= 3)
+            const size_t name_at = whole[0] == "map" ? 5 : 2; // the token the name starts at
+            if (whole.size() > name_at)
             {
-                const size_t from = (size_t)(whole[2].data() - line.data());
+                const size_t from = (size_t)(whole[name_at].data() - line.data());
                 size_t       to = line.size();
                 while (to > from
                     && (line[to - 1] == ' ' || line[to - 1] == '\t' || line[to - 1] == '\r'))
@@ -315,13 +325,35 @@ LoadResult load_patch(std::string_view text, Patch &out)
             Node *n = p.find(id);
             if (!n)
                 return fail("device for a module that is not defined yet");
-            if (!midi_sink(*n->desc))
+            if (!has_midi_device(*n->desc))
             {
                 r.warnings.push_back("line " + std::to_string(lineno) + ": "
                     + std::string(n->desc->id) + " has no MIDI device, skipped");
                 continue;
             }
             n->device = std::string(device_name);
+        }
+        else if (t[0] == "map")
+        {
+            uint32_t id, channel, cc;
+            if (t.size() != 5 || !parse_uint(t[1], id, 1000000) || !parse_uint(t[3], channel, 16)
+                || channel < 1 || !parse_uint(t[4], cc, 119))
+                return fail("bad map record");
+            if (skipped.count(id))
+                continue;
+            const Node *n = p.find(id);
+            if (!n)
+                return fail("map for a module that is not defined yet");
+            const int pi = find_param(*n->desc, t[2]);
+            if (pi < 0)
+            {
+                r.warnings.push_back("line " + std::to_string(lineno) + ": "
+                    + std::string(n->desc->id) + " has no control '" + std::string(t[2])
+                    + "', mapping skipped");
+                continue;
+            }
+            p.mappings.push_back(Mapping { id, (uint16_t)pi, (uint8_t)(channel - 1), (uint8_t)cc,
+                std::string(device_name) });
         }
         else if (t[0] == "sample")
         {

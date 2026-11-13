@@ -341,7 +341,7 @@ build agrees on the check count.
   missing file and patch record), `descriptors_every_rebuild_param_initialises_at_min_and_max`, and the Sample box in
   `ui_smoke --files`.
 
-## As built (the drum modules: Kick)
+## As built (the drum modules: Kick, Snare / Clap, Metal)
 
 The first of the "all-in-one" modules (worklist, *New modules*): each is its own module with a layout made for it, its sound made in
 the rack (`src/engine/rt/modules_drums.cpp`) from PulseCoreLib's parts, in the new **Drum** category (peach).
@@ -363,6 +363,62 @@ the rack (`src/engine/rt/modules_drums.cpp`) from PulseCoreLib's parts, in the n
 * Tests: `tests/test_drums.cpp` (silent until hit and starting on the hit's sample, the pitch falling to the tune, decay length,
   accent from velocity and the Accent knob, a second hit identical to the first, TRIG's edge and the DECAY input). Example:
   `examples/kick_drum.rack` (rendered by `render_kick_drum`).
+
+The three drums share their hit detection (`collect_hits`: the note-ons and any number of trigger inputs, each a Schmitt
+trigger, in time order) and the accent (`accent_of`, `accent_level`).
+
+* **Snare / Clap** (8 HP): Tune (100-400 Hz), Body (its decay), Tone (the noise's band-pass), Snap (the noise's level), Decay
+  (the noise's), Clap, Spread, Accent; TRIG, NOTE, ACCENT, DECAY (the noise's decay) in. The body is a `pcl_osc` sine reset on
+  each hit with a 0.6-octave drop over 8 ms; the noise is `pcl_noise` through a `pcl_svf` (its band-pass plus half its
+  high-pass). **Clap** makes the noise three bursts Spread apart (each falling over 18 ms), the third going on into the tail,
+  and takes the body away as it rises: 0 is a snare, 1 a clap, between them a snare with a clap's smear. A gentle tanh at the
+  end glues the two.
+* **Metal** (8 HP): Tune (a ratio, 0.5-2), Noise, Tone, Closed and Open decays, Accent; TRIG (closed), OPEN, CHOKE, NOTE,
+  ACCENT in. Six `pcl_osc` square waves at the classic inharmonic ratios (205, 304, 370, 523, 540 and 800 Hz times Tune),
+  running freely, blended with noise, through a band-pass at Tone and a high-pass at 0.6 Tone. A note hits closed, except the
+  General MIDI open hat and cymbals (46, 49, 51, 52, 55, 57, 59), which hit open. Every hit starts the one envelope again, so
+  a closed hit chokes an open one, as on a real hi-hat; CHOKE fades it out over 12 ms.
+* Tests: the snare silent until hit, its decay and its body's pitch; the clap's three bursts at the Spread and its tail (and
+  no body); Metal's closed and open by note, a closed hit choking an open one, CHOKE, accent. Example:
+  `examples/drum_machine.rack` (rendered by `render_drum_machine`).
+
+## As built (the voice modules)
+
+Six voices in a **Voice** category (yellow), each its own module with only the controls its sound needs
+(`src/engine/rt/modules_voices.cpp`). Each is a complete voice from a stream of notes: NOTE in, PITCH in (octaves), its own
+envelope and amplifier, so it sounds with nothing else patched.
+
+* **The core they share** (`VoiceCore`): monophonic, the last note held taking priority. A note played while another is held
+  glides there without starting the envelope again; letting it go falls back to the note still held; a note after all were
+  let go starts the envelope again on its own sample. The envelope is a linear attack to full, held while a note is, then an
+  exponential release. Velocity sets the level (35 % to 100 %). STOP lets go.
+* **Sync voice** (8 HP): a master `pcl_osc` at the note, never heard, hard-syncs a slave (saw or pulse; PWM in) at Ratio times
+  it; the slave's pitch sweeps down from Sweep octaves above over Sweep time at each new note. Wave, Ratio, Sweep, Sweep time,
+  Pulse width, Attack, Release.
+* **Stack voice** (12 HP): `pcl_unison` (up to 8 saws, spread in stereo) through a driven `pcl_ladder` per side, opened by the
+  envelope Contour octaves (CUTOFF in adds octaves). Voices, Detune, Spread, Cutoff, Resonance, Drive, Contour, Attack,
+  Release; L and R out (L alone: the mono mix through one filter).
+* **FM voice** (8 HP): two sine operators, the modulator at a Ratio of the note (x0.5 to x12: names, not numbers, for the
+  patch file) bending the carrier's phase by Index, plus Env amount falling over Env decay at each new note, and Feedback on
+  the modulator; INDEX in. In the rack's own float: the library's oscillators take their pitch at control rate, and phase
+  modulation needs it at audio rate. From silence both phases start at 0, so every note sounds alike.
+* **Air voice** (8 HP): `pcl_noise` (Colour) through a `pcl_svf` band-pass tuned to the note: high Resonance whistles, low is
+  wind; the band's level is made up as it narrows. Breath adds the filter's high-pass for the air around a blown note.
+* **String voice** (8 HP): Karplus-Strong, in the rack's own float. Each new note adds to a delay line a burst of noise one
+  period long, softened by Brightness and combed at Position (where along the string it was plucked); the line feeds back
+  through a low-pass blend (Damping) with the gain that rings for Decay seconds while the key is held and for Release after.
+  Its length is fractional (linear interpolation, the filter's half sample counted), so it is in tune. Its 64 KB of line and
+  burst are allocated by its init and freed by `destroy`.
+* **Grain voice** (12 HP): clouds of grains of a WAV file, chosen in its Sample box as for the Sampler (`takes_sample`, now
+  with `load_sample(desc, ...)` choosing the module's loader). Grains Size long under a raised-cosine window start Density
+  times a second around Position (POS in adds), scattered by Spread, each at the note's pitch against the Root note, up to
+  48 at once, the sum scaled by the overlap. Silent with no file. In the rack's own float: the library's sampler is one
+  playhead.
+* Tests (`tests/test_voices.cpp`): each voice silent until its note and then at the note's pitch (set up to sound plainly;
+  pitch by autocorrelation, as a bright waveform crosses zero many times a period), the release, legato gliding without a
+  restart and falling back to the held note, the string in tune within 1 % from 110 to 880 Hz and its decay, the grain
+  voice playing a sine file an octave up and silent without one. Example: `examples/voices.rack` (the string, stack and FM
+  voices together; rendered by `render_voices`).
 
 **Not done** (milestone 1 stops here): the real-time protocol, any GUI, panel layout, undo, a `reset`-less "panic" for stuck notes, WAV
 comparison of the three sample types (they are each exact against the library, not against each other), MSVC `/W4 /WX`.

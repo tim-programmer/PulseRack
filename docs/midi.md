@@ -1,6 +1,6 @@
 # MIDI controllers
 
-Status: **design, steps 1 to 8 built** (see the *As built* sections at the end). Where the two differ, *As built* and the code win.
+Status: **design, steps 1 to 9 built** (see the *As built* sections at the end). Where the two differ, *As built* and the code win.
 
 MIDI keyboards and controllers playing and turning the rack: notes into a patch, controls (knobs, faders, the mod wheel)
 into signals, and a controller's knobs turning the knobs on screen.
@@ -115,6 +115,7 @@ and the knob moves on screen; a sweep becomes one undo step, like a knob drag. M
    (a constant delay instead of up to a block of jitter: 5.3 ms at 256 frames and 48 kHz). *(built, with the modules'
    Device)*
 9. **Later:** per-patch mappings, MIDI clock in to the clock and sequencer (`PCL_EVT_CLOCK/START/STOP`), MIDI out.
+   *(built: the MIDI Clock and MIDI Out modules, and MIDI learn for one knob in the patch)*
 
 ## As built (steps 1 to 3)
 
@@ -320,3 +321,77 @@ or *SWITCHED OFF* when the module's input cannot be heard; it follows hot-pluggi
 
 **Not yet checked:** with the real controller: that fast repeated notes sound even and not grouped by buffer, and the Device
 menu by hand with it plugged in and unplugged. Two controllers at once (there is one here).
+
+## As built (step 9: MIDI clock in, per-patch mappings, MIDI out)
+
+**MIDI Clock** (`midi_clock`, 6 HP, Event, in `modules_glue.cpp`): another device's tempo as clock pulses. A module of its own
+rather than a mode of the Clock: a patch chooses its source by which module feeds the sequencer, and the Clock stays the
+library's. It has a **Device** box like MIDI In (the realtime messages have no channel), a **Pulses per beat** knob (1 to 96,
+24 at first, as the Clock's) and a **Start/stop** switch.
+* MIDI clock is 24 ticks a beat. At 24 a tick is a pulse on its own sample. Below 24, ticks are skipped evenly (12: every other
+  one); above, a tick makes several pulses, the first on the tick and the others spread over the time the last tick took, so
+  that 96 ppqn has four evenly spaced pulses a tick. A tick that comes before the pulses still owed (the tempo went up) sends
+  them at once: none is lost, and the count stays exact. After a start the first tick always makes a pulse (the first of the
+  beat), whatever the rate.
+* With **Start/stop** on (the default), it sends pulses only between a *start* (which it passes on as `PCL_EVT_START`: the
+  sequencer goes back to its first step) or a *continue* (no START: it carries on from where it was) and a *stop*
+  (`PCL_EVT_STOP`, which also comes when its device goes away). Off, every tick is a pulse and the transport is ignored, for a
+  device that sends its clock without them.
+* The internal **Clock** is unchanged: it does not follow MIDI.
+
+**Per-patch mappings.** A control's right-click menu now has two learns: **MIDI learn** (as in step 7: control N of whichever
+module is selected, in the settings) and **MIDI learn for this knob only**, which maps the controller to that very control of
+that module, in the patch (`Patch::mappings`, written as `map <node> <control> <channel 1..16> <cc> <device name>`, the name
+being the rest of the line). Learning one is an undo step and marks the patch unsaved; a module's mappings go with it when it is
+removed. A controller with a mapping in the patch turns its control **whatever is selected**, and before any global mapping of
+the same controller. The menu offers *Forget this knob's mapping (CC n)* for it, beside *Forget its mapping* for the global one
+of that place. The control menu is wider for the longer items.
+
+**MIDI Out** (`midi_out`, 6 HP, Event): NOTES and CLOCK inputs, a **Channel** selector (*ch 1* to *ch 16*: a name that is a
+number would be read back from a patch file as an index), and a Device box that chooses an **output** (*No output* at first:
+it sends nothing until one is chosen; a name with no slot sends nothing either).
+* Note on and off on its channel; on the CLOCK input, every pulse is a MIDI clock tick (feed it a 24 ppqn clock), START is
+  `FA` and STOP `FC`. At one sample the two inputs are merged in the library's order (STOP, NOTE_OFF, START, CLOCK, NOTE_ON), so
+  a start reaches the other side before the notes after it.
+* It remembers the notes it holds and sends their note offs, to the output and channel they went to, on a change of channel or
+  output, on reset and on a stop. A note off for a note it did not send is not passed on.
+* **Timing.** The engine takes what each MIDI Out made after every block (`midi_source`, `Snapshot::midi_outs`) and puts it in
+  the **outbox** (`midi/outbox.h`: one ring, its producer the rendering thread) stamped with the time it is due: the sample's
+  place in the device call plus one call's length after the call began, the same fixed latency as MIDI in, so MIDI and audio
+  leave together. With no audio thread it is due at once.
+* **`midi::Outputs`** (`midi/outputs.cpp`, libremidi; the only file besides `inputs.cpp` that includes it): a name gets a slot
+  (`Engine::midi_out_slot_of`) and its port is opened when present (also later, when it is plugged in: `poll()`, with the
+  inputs' 4 Hz tick). A **sender thread** takes the outbox, keeps the messages in time order and sends each when it is due,
+  checking every half millisecond, under a lock it shares with the UI thread's opening and closing of ports. Before it lets go
+  of its outputs (at exit) it sends *all notes off* (CC 123) on all 16 channels to each, so nothing is left sounding.
+* The Device box says *OUTPUT* or, amber, *NOT CONNECTED*; its menu lists *No output* and the outputs present (and the
+  module's own if it is not). Choosing one is an undo step and switches nothing on in the settings (outputs are not switched on
+  and off: a module naming one opens it).
+* `has_midi_device()` replaces `midi_sink()` wherever "has a Device" is meant (the box, the patch file's `device` record,
+  `Engine::set_device`, `refresh_devices`).
+
+**Checked.**
+* `rack_tests`: MIDI Clock alone, its events read with their samples: ticks passed on only between start and stop and each on its
+  own sample across blocks, START before the first CLOCK, continue without START; 12 ppqn (every other tick, the first after a
+  start included); 96 ppqn (four a tick, spread over the last tick's time across short blocks); a tempo jump (the owed pulses
+  sent at the next tick, in order, none lost); Start/stop off; a lost device stopping it; notes, controls and another device's
+  ticks ignored. In a patch, a start and 24 ticks through the engine's inboxes are four sequencer steps. MIDI Out: notes on its
+  channel to its output's slot, unmatched note offs not sent, note offs on a change of channel and of output (to where the notes
+  went), nothing with no output or an unknown one, clock ticks, START first and STOP with the held note let go, and a message due
+  a device call after its sample (a fake clock, to the microsecond). The patch file's `map` record: the round trip, a name with
+  spaces and `#`, no name, the refusals, a control that is not there, and removing a module.
+* `ui_smoke`: *MIDI learn for this knob only* maps the knob in the patch as one undo step, marks it unsaved and is saved; the
+  controller turns it with nothing selected and before a global mapping of the same controller; forgetting it, undo and redo.
+  The MIDI Out's box: its hint, *No output* and the outputs in its menu, choosing one (an undo step, no setting changed, saved),
+  an unplugged one kept in its menu.
+* **By hand, through ALSA's *Midi Through*:** a patch whose key script plays three notes into a MIDI Out on channel 3 printed
+  them in `aseqdump` (note on, note off, in order), and at exit *all notes off* on the 16 channels released the last one. A start,
+  48 ticks and a stop sent with `aseqsend` into a MIDI Clock driving a 4-step sequencer (a step every 6 pulses) whose notes went
+  back out through a MIDI Out gave exactly eight notes, the pattern twice from its first step, then the stop.
+* A build with `-DPULSERACK_MIDI=OFF` (17 of 17), and the engine tests in Q15.
+
+**Not yet checked:** a real synth on the end of MIDI Out (the timing heard against the rack's own sound), a real device's clock
+(a drum machine or a DAW) into MIDI Clock, and a per-patch mapping with the real controller.
+
+**Not done:** a MIDI Out's own clock rate (feed it 24 ppqn); song position; 14-bit controllers; MIDI Out of controls (CC) or
+pitch bend; soft takeover and a mark on mapped controls (as before).

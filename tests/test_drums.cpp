@@ -144,3 +144,141 @@ TEST(kick_trig_input_and_decay_input)
     CHECK(tail(0) < 1e-3f);  // 100 ms
     CHECK(tail(1) > 0.01f);  // 400 ms
 }
+
+// ---- Snare / Clap and Metal
+namespace
+{
+// A drum of `type` hit by notes (note, seconds), into the output; returns the left channel.
+struct DrumRig
+{
+    Rig      r;
+    uint32_t kb, drum, out;
+    explicit DrumRig(const char *type)
+    {
+        kb = r.add("keyboard");
+        drum = r.add(type);
+        out = r.add("out");
+        r.param(out, "level", 1);
+        CHECK(r.cable(kb, "notes", drum, "note") == Err::Ok
+            && r.cable(drum, "out", out, "l") == Err::Ok);
+    }
+    void hit(double t, uint8_t note = 38, uint8_t vel = 127)
+    {
+        r.key(kb, t, true, note, vel);
+        r.key(kb, t + 0.005, false, note);
+    }
+    const std::vector<float> &run(double seconds)
+    {
+        CHECK(r.compile());
+        r.render((size_t)(seconds * kRate));
+        CHECK(r.e.nonfinite_samples() == 0 && r.e.apply_failures() == 0);
+        return r.L;
+    }
+};
+// The level in 1 ms windows from `from` for `ms` windows.
+std::vector<float> envelope(const std::vector<float> &v, size_t from, int ms)
+{
+    std::vector<float> e;
+    const size_t       w = kRate / 1000;
+    for (int i = 0; i < ms; i++)
+        e.push_back(peak(v, from + (size_t)i * w, from + (size_t)(i + 1) * w));
+    return e;
+}
+} // namespace
+
+TEST(snare_is_silent_until_hit_and_its_decay_sets_its_length)
+{
+    float tail[2];
+    int   k = 0;
+    for (float decay : { 60.f, 600.f })
+    {
+        DrumRig d("snare");
+        d.r.param(d.drum, "decay", decay);
+        d.r.param(d.drum, "body", 40);
+        d.hit(0.05);
+        const auto &L = d.run(0.6);
+        CHECK(peak(L, 0, at(0.05)) == 0.f && peak(L, at(0.05), at(0.06)) > 0.4f);
+        tail[k++] = peak(L, at(0.3), at(0.4));
+    }
+    CHECK(tail[0] < 1e-3f && tail[1] > 0.02f);
+}
+
+TEST(snare_body_is_tuned)
+{
+    DrumRig d("snare");
+    d.r.param(d.drum, "tune", 200);
+    d.r.param(d.drum, "snap", 0); // the body alone
+    d.r.param(d.drum, "body", 400);
+    d.hit(0.05);
+    const auto  &L = d.run(0.5);
+    const double f = frequency(L, at(0.1), at(0.3));
+    CHECK(f > 195 && f < 205);
+}
+
+TEST(clap_is_three_bursts_spread_apart_then_a_tail)
+{
+    DrumRig d("snare");
+    d.r.param(d.drum, "clap", 1);
+    d.r.param(d.drum, "spread", 12);
+    d.r.param(d.drum, "decay", 150);
+    d.hit(0.05);
+    const auto &L = d.run(0.4);
+    // the level rises again at 12 and 24 ms after the hit, having fallen in between
+    const auto e = envelope(L, at(0.05), 40);
+    CHECK(e[1] > 0.3f);
+    CHECK(e[10] < e[1] * 0.7f && e[13] > e[10] * 1.5f);  // the second burst
+    CHECK(e[22] < e[13] * 0.7f && e[25] > e[22] * 1.5f); // the third
+    CHECK(e[39] > 0.05f);                                 // then the tail goes on
+    // and no body: with snap 0 a clap is silent
+    DrumRig quiet("snare");
+    quiet.r.param(quiet.drum, "clap", 1);
+    quiet.r.param(quiet.drum, "snap", 0);
+    quiet.hit(0.05);
+    CHECK(peak(quiet.run(0.2)) < 1e-3f);
+}
+
+TEST(metal_closed_is_short_open_is_long_and_a_closed_hit_chokes_an_open_one)
+{
+    { // GM 42 (closed) against 46 (open)
+        DrumRig a("metal"), b("metal");
+        a.hit(0.05, 42);
+        b.hit(0.05, 46);
+        const float closed = peak(a.run(0.6), at(0.3), at(0.4)),
+                    open = peak(b.run(0.6), at(0.3), at(0.4));
+        CHECK(peak(a.r.L, at(0.05), at(0.06)) > 0.2f);
+        CHECK(closed < 1e-3f && open > 0.02f);
+    }
+    { // an open hit, then a closed one 100 ms later: the long tail is cut
+        DrumRig d("metal");
+        d.hit(0.05, 46);
+        d.hit(0.15, 42);
+        CHECK(peak(d.run(0.6), at(0.4), at(0.5)) < 1e-3f);
+    }
+}
+
+TEST(metal_choke_input_and_accent)
+{
+    // OPEN from a gate, CHOKE from another 100 ms later: silent soon after the choke
+    Rig            r;
+    const uint32_t kb = r.add("keyboard"), g1 = r.add("note_to_gate"), kb2 = r.add("keyboard"),
+                   g2 = r.add("note_to_gate"), m = r.add("metal"), out = r.add("out");
+    r.param(out, "level", 1);
+    CHECK(r.cable(kb, "notes", g1, "notes") == Err::Ok && r.cable(g1, "gate", m, "open") == Err::Ok
+        && r.cable(kb2, "notes", g2, "notes") == Err::Ok && r.cable(g2, "gate", m, "choke") == Err::Ok
+        && r.cable(m, "out", out, "l") == Err::Ok);
+    r.key(kb, 0.05, true, 60);
+    r.key(kb, 0.5, false, 60);
+    r.key(kb2, 0.15, true, 60);
+    r.key(kb2, 0.5, false, 60);
+    CHECK(r.compile());
+    r.render(kRate / 2);
+    CHECK(peak(r.L, at(0.1), at(0.15)) > 0.05f); // ringing (open) until the choke
+    CHECK(peak(r.L, at(0.2), at(0.3)) < 1e-3f);  // gone within 50 ms of it
+    // accent: a soft note is quieter, as much as the knob says
+    DrumRig loud("metal"), soft("metal");
+    loud.r.param(loud.drum, "accent", 1);
+    soft.r.param(soft.drum, "accent", 1);
+    loud.hit(0.05, 42, 127);
+    soft.hit(0.05, 42, 30);
+    CHECK(peak(soft.run(0.2)) < 0.4f * peak(loud.run(0.2)));
+}

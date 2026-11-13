@@ -64,7 +64,7 @@ bool Engine::init_state(const Node &n, void *mem)
     { // a Sampler gets its file's frames (one that does not load plays nothing: the patch still
       // opens, and sample_error says why)
         std::string err;
-        if (const auto data = sample_data(n.sample, &err); data && !sampler_load(mem, *data))
+        if (const auto data = sample_data(n.sample, &err); data && !load_sample(d, mem, *data))
             sample_errors_[n.sample] = "cannot be played";
     }
     if (d.has_steps)
@@ -108,6 +108,8 @@ Engine::Snapshot *Engine::build_snapshot(bool restart)
             s->probes.push_back(Probe { l.slot, l.desc, l.mem.get() });
             if (const MidiPushFn push = midi_sink(*l.desc))
                 s->midi_ins.push_back({ push, l.mem.get() });
+            if (const MidiTakeFn take = midi_source(*l.desc))
+                s->midi_outs.push_back({ take, l.mem.get() });
         }
         s->activity.assign(s->probes.size(), 0.f);
     }
@@ -245,11 +247,18 @@ Err Engine::set_param(uint32_t node, size_t param, float value)
 
 int Engine::device_code(const Node &n) const
 {
+    if (sends_midi(*n.desc))
+    { // an output: none named is none
+        const int slot = n.device.empty() || !midi_out_slot_of ? -1 : midi_out_slot_of(n.device);
+        return slot >= 0 ? slot : kMidiNoDevice;
+    }
     if (n.device.empty())
         return kMidiAnyDevice;
     const int slot = midi_slot_of ? midi_slot_of(n.device) : -1;
     return slot >= 0 ? slot : kMidiNoDevice;
 }
+
+void Engine::set_midi_out(midi::Outbox *outbox) { outbox_ = outbox; }
 
 Err Engine::set_device(uint32_t node, const std::string &name)
 {
@@ -257,11 +266,11 @@ Err Engine::set_device(uint32_t node, const std::string &name)
     Node *n = patch_.find(node);
     if (!n)
         return Err::NoSuchNode;
-    if (!midi_sink(*n->desc))
+    if (!has_midi_device(*n->desc))
         return Err::NoSuchParam; // not a MIDI module: it has no device
     n->device = name;
     auto it = live_.find(node);
-    if (it != live_.end() && midi_sink(*it->second.desc))
+    if (it != live_.end() && has_midi_device(*it->second.desc))
     {
         Cmd c { };
         c.type = Cmd::Device;
@@ -332,7 +341,7 @@ std::string Engine::sample_error(uint32_t node) const
 void Engine::refresh_devices()
 {
     for (const Node &n : patch_.nodes())
-        if (midi_sink(*n.desc))
+        if (has_midi_device(*n.desc))
             set_device(n.id, std::string(n.device));
 }
 
@@ -532,6 +541,31 @@ void Engine::feed_midi(size_t frames)
         }
 }
 
+// What the MIDI Out modules made in the block that starts at `block_t0`, into the outbox: a message
+// at sample s of the device call is due when that sample will be heard, a call's length after the
+// call began (the same latency as MIDI in). With no audio thread, at once.
+void Engine::send_midi(uint64_t block_t0)
+{
+    MidiOutMsg buf[256];
+    for (const auto &[take, state] : cur_->midi_outs)
+    {
+        const size_t n = take(state, buf, std::size(buf));
+        for (size_t i = 0; i < n; i++)
+        {
+            midi::OutMsg m;
+            m.slot = buf[i].slot;
+            m.len = buf[i].len;
+            std::memcpy(m.bytes, buf[i].bytes, 3);
+            if (call_ns_)
+            {
+                const double into = (double)(block_t0 + buf[i].offset - call_t0_ + call_frames_);
+                m.due_ns = call_ns_ + (int64_t)(into * 1e9 / (double)sample_rate_);
+            }
+            outbox_->push(m);
+        }
+    }
+}
+
 bool Engine::take_control(midi::Msg &out)
 {
     if (!attached_)
@@ -558,7 +592,15 @@ void Engine::render(size_t frames, float *left, float *right)
         float       *r = right + done;
         begin_block();
         if (done == 0)
+        {
             feed_midi(frames); // once per device call, after the plan for it is in place
+            if (outbox_)
+            {
+                call_ns_ = attached_ ? (midi_now_ ? midi_now_() : steady_ns()) : 0;
+                call_t0_ = time_.load(std::memory_order_relaxed);
+                call_frames_ = frames;
+            }
+        }
         std::memset(l, 0, n * sizeof(float));
         std::memset(r, 0, n * sizeof(float));
         const uint64_t t = time_.load(std::memory_order_relaxed);
@@ -566,6 +608,8 @@ void Engine::render(size_t frames, float *left, float *right)
         {
             feed_script(t + n);
             cur_->plan.run(t, n, l, r, cur_->activity.data());
+            if (outbox_ && !cur_->midi_outs.empty())
+                send_midi(t);
             for (size_t i = 0; i < cur_->probes.size(); i++)
             {
                 const Probe &pr = cur_->probes[i];

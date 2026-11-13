@@ -52,8 +52,25 @@ uint32_t midi_in_dropped(const void *state); // notes it had no room for
 // to every such module), or null for a module that takes none.
 using MidiPushFn = void (*)(void *state, const midi::Msg &m, uint64_t at);
 MidiPushFn midi_sink(const ModuleDesc &desc);
+// A message a MIDI Out module made in the block just processed: its sample there, the output's
+// slot, the bytes.
+struct MidiOutMsg
+{
+    uint16_t offset;
+    uint8_t  slot, len;
+    uint8_t  bytes[3];
+};
+// The function that hands over what a module of this type sent in its last block (the engine
+// takes them after every block), or null for a module that sends none. Returns how many it wrote.
+using MidiTakeFn = size_t (*)(void *state, MidiOutMsg *out, size_t cap);
+MidiTakeFn midi_source(const ModuleDesc &desc);
+// Has this module type a MIDI device (Node::device): an input it listens to, or an output it sends
+// to (sends_midi)?
+bool        has_midi_device(const ModuleDesc &desc);
+inline bool sends_midi(const ModuleDesc &desc) { return midi_source(desc) != nullptr; }
 // The device such a module listens to: a slot (0 ..), -1 for every device, -2 for none (its device
-// is not known on this machine). False for a module that takes no MIDI. The audio thread.
+// is not known on this machine); for a MIDI Out, the output it sends to (-1 and -2: none). False
+// for a module with no MIDI device. The audio thread.
 inline constexpr int kMidiAnyDevice = -1, kMidiNoDevice = -2;
 bool                 midi_set_device(const ModuleDesc &desc, void *state, int device);
 // How many events the sequencer, arpeggiator or clock dropped for lack of room (telemetry for the
@@ -70,14 +87,17 @@ int32_t module_position(const ModuleDesc &desc, const void *state);
 // one, after its init (the UI thread): the module keeps a copy; false if it cannot play them.
 struct SampleData;
 bool takes_sample(const ModuleDesc &desc);
-bool sampler_load(void *state, const SampleData &data);
+bool load_sample(const ModuleDesc &desc, void *state, const SampleData &data);
 
 // ---- every module descriptor (defined in modules_lib.cpp and modules_glue.cpp)
 extern const ModuleDesc kOscDesc, kNoiseDesc, kSahDesc, kLfoDesc, kAdsrDesc, kVcaDesc, kSvfDesc,
     kBiquadDesc, kClockDesc, kArpDesc, kSeqDesc;
 extern const ModuleDesc kLadderDesc, kUnisonDesc, kDelayDesc, kReverbDesc, kSamplerDesc;
-extern const ModuleDesc kKickDesc;
+extern const ModuleDesc kKickDesc, kSnareDesc, kMetalDesc;
+extern const ModuleDesc kSyncVoiceDesc, kStackVoiceDesc, kFmVoiceDesc, kAirVoiceDesc,
+    kStringVoiceDesc, kGrainVoiceDesc;
+bool grain_load(void *state, const SampleData &data); // (modules_voices.cpp)
 extern const ModuleDesc kKeyboardDesc, kAudioOutDesc, kMixerDesc, kAttenuverterDesc,
-    kNoteToGateDesc, kMergeDesc, kScopeDesc, kMidiInDesc, kMidiCcDesc;
+    kNoteToGateDesc, kMergeDesc, kScopeDesc, kMidiInDesc, kMidiCcDesc, kMidiClockDesc, kMidiOutDesc;
 
 } // namespace rack

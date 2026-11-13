@@ -531,8 +531,27 @@ RACK_DESC_D(kSamplerDesc, "sampler", "Sampler", kSource, 12, SamplerNode, kSampl
     kSamplerParams, sampler_init, sampler_reset, sampler_process, sampler_destroy,
     "Plays a WAV file at the pitch of each note: one shot, or looped while a key is held");
 
-bool takes_sample(const ModuleDesc &desc) { return &desc == &kSamplerDesc; }
+bool takes_sample(const ModuleDesc &desc)
+{
+    return &desc == &kSamplerDesc || &desc == &kGrainVoiceDesc;
+}
 
+namespace
+{
+    bool sampler_load(void *state, const SampleData &d);
+}
+
+bool load_sample(const ModuleDesc &desc, void *state, const SampleData &data)
+{
+    if (&desc == &kSamplerDesc)
+        return sampler_load(state, data);
+    if (&desc == &kGrainVoiceDesc)
+        return grain_load(state, data);
+    return false;
+}
+
+namespace
+{
 bool sampler_load(void *state, const SampleData &d)
 {
     auto *n = as<SamplerNode>(state);
@@ -556,5 +575,6 @@ bool sampler_load(void *state, const SampleData &d)
     n->data = data;
     return true;
 }
+} // namespace
 
 } // namespace rack

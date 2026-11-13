@@ -45,6 +45,19 @@ struct KeyScript
     uint8_t  note = 60, velocity = 100;
 };
 
+// A MIDI learn mapping kept in the patch (docs/midi.md, step 9): this controller of this device turns
+// exactly this control, whichever module is selected. (The global mappings, in the settings, turn a
+// place on the selected module instead.)
+struct Mapping
+{
+    uint32_t    node = 0;
+    uint16_t    param = 0;   // index into the descriptor's parameters
+    uint8_t     channel = 0; // 0..15
+    uint8_t     cc = 0;      // 0..119
+    std::string device;      // the input's name (empty: unknown, as in the tests)
+    bool        operator==(const Mapping &) const = default;
+};
+
 enum class Err
 {
     Ok,
@@ -88,6 +101,7 @@ public:
         uint32_t          to_node) const; // is there a path of cables from one node to the other?
 
     std::vector<KeyScript> keys;
+    std::vector<Mapping>   mappings; // a module's go with it
 
 private:
     std::vector<Node>  nodes_;

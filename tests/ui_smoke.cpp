@@ -26,6 +26,7 @@
 #include <algorithm>
 #include <filesystem>
 #include <fstream>
+#include <memory>
 #include <set>
 #include <vector>
 
@@ -708,6 +709,32 @@ struct Driver
         };
         const Patch &patch = e().engine.patch();
         wait(0.3);
+        // another patch opened over one whose modules have the same ids and types: it sounds as
+        // it does on its own (every module made again from its own settings, not kept)
+        {
+            const auto f = factory_patches();
+            std::string err2;
+            CHECK(e().open_text(cx(), std::string(f[factory_index("voices")].text), "a", "", false, &err2));
+            float L[512], R[512];
+            for (int i = 0; i < 40; i++)
+                e().engine.render(512, L, R);
+            CHECK(e().open_text(cx(), std::string(f[factory_index("drum_machine")].text), "b", "", false, &err2));
+            auto fresh = std::make_unique<Engine>(e().engine.sample_rate()); // (big for a coroutine's stack)
+            CHECK(load_patch(f[factory_index("drum_machine")].text, fresh->patch()).ok
+                && fresh->compile() == Err::Ok);
+            bool same = true;
+            for (int i = 0; i < 100 && same; i++)
+            {
+                float l2[512], r2[512];
+                e().engine.render(512, L, R);
+                fresh->render(512, l2, r2);
+                same = std::memcmp(L, l2, sizeof L) == 0 && std::memcmp(R, r2, sizeof R) == 0;
+            }
+            CHECK(same);
+            e().new_patch(cx());
+            wait(0.1);
+        }
+
         CHECK(e().patch_name == "untitled" && !e().dirty && e().file_path.empty());
 
         // an edit makes the patch unsaved; Ctrl+S on an untitled patch asks where (".rack" added)
@@ -1279,18 +1306,58 @@ struct Driver
             gp_simulate_keystrokes(app, "escape");
             wait();
             CHECK(e().learn_control == -1 && e().settings.learn.size() == 1);
-            // the menu of a control with a mapping can forget it (its second item); the last item
-            // and a press elsewhere only close the menu
+            // the menu of a control with a mapping can forget it (its third item, after the two
+            // learns); the last item and a press elsewhere only close the menu
             click(k, GP_MOUSE_RIGHT);
             wait(0.1);
-            click(control_menu_item(cx(), ed, 2)); // Cancel
+            click(control_menu_item(cx(), ed, 3)); // Cancel
             wait(0.1);
             CHECK(control_menu_item(cx(), ed, 0).x < 0 && e().settings.learn.size() == 1);
             click(k, GP_MOUSE_RIGHT);
             wait(0.1);
-            click(control_menu_item(cx(), ed, 1)); // Forget its mapping
+            click(control_menu_item(cx(), ed, 2)); // Forget its mapping
             wait(0.1);
             CHECK(e().settings.learn.empty() && e().learn_control == -1);
+
+            // ---- MIDI learn for this knob only (step 9): kept in the patch, one undo step; the
+            // controller turns this very knob whichever module is selected, and before a global
+            // mapping of the same controller
+            const auto &maps = e().engine.patch().mappings;
+            const size_t undo1 = e().undo_stack.size();
+            click(k, GP_MOUSE_RIGHT);
+            wait(0.1);
+            click(control_menu_item(cx(), ed, 1)); // MIDI learn for this knob only
+            wait(0.1);
+            CHECK(e().learn_control == fi && e().learn_exact
+                && e().hint().find("in this patch") != std::string::npos);
+            cc(30, 5);
+            CHECK(e().learn_control == -1 && maps.size() == 1
+                && maps[0] == (Mapping { osc, (uint16_t)fi, 0, 30, "" }));
+            CHECK(e().undo_stack.size() == undo1 + 1 && e().dirty
+                && e().hint().find("CC 30 now turns Frequency of this Oscillator") != std::string::npos);
+            CHECK(save_patch(e().engine.patch())
+                    .find("map " + std::to_string(osc) + " frequency 1 30\n")
+                != std::string::npos);
+            e().select_node(cx(), 0);
+            cc(30, 127);
+            CHECK(param(osc, "frequency") == freq.max); // nothing selected: still this knob
+            e().settings.learn = { { 0, 30, 0, "" } }; // a global mapping of the same controller
+            cc(30, 0);
+            CHECK(param(osc, "frequency") == freq.min); // the patch's wins
+            e().settings.learn.clear();
+            // its menu offers to forget it; undo brings it back, redo forgets it again
+            click(k, GP_MOUSE_RIGHT);
+            wait(0.1);
+            click(control_menu_item(cx(), ed, 2)); // Forget this knob's mapping
+            wait(0.1);
+            CHECK(maps.empty() && e().learn_control == -1);
+            e().undo(cx());
+            wait(0.1);
+            CHECK(maps.size() == 1);
+            e().redo(cx());
+            wait(0.1);
+            CHECK(maps.empty());
+            e().set_param(cx(), osc, (size_t)fi, freq.def);
             // a selector and a switch have the menu too
             click(control(osc, "waveform"), GP_MOUSE_RIGHT);
             wait(0.1);
@@ -1458,6 +1525,35 @@ struct Driver
             // a module that takes no MIDI has no device
             e().set_midi_device(cx(), osc, "KeyStep");
             CHECK(node(osc)->device.empty());
+            // a MIDI Out's box chooses an output: "No output", then the outputs; choosing one is
+            // an undo step and switches nothing on in the settings (step 9)
+            {
+                const uint32_t mo = e().add_module(cx(), *find_module("midi_out"));
+                wait(0.1);
+                e().midi_out_available = { "Synth A", "Synth B" };
+                const gp_point obox = device_box_center(cx(), ed, mo);
+                CHECK(obox.x >= 0);
+                move(obox);
+                wait(0.1);
+                CHECK(e().hint().find("sends to no output") != std::string::npos);
+                const size_t u = e().undo_stack.size();
+                const auto   inputs = e().settings.midi_inputs;
+                click(obox);
+                wait(0.1);
+                CHECK(device_menu_item(cx(), ed, 2).x >= 0 && device_menu_item(cx(), ed, 3).x < 0);
+                click(device_menu_item(cx(), ed, 2)); // Synth B
+                wait(0.1);
+                CHECK(node(mo)->device == "Synth B" && e().undo_stack.size() == u + 1);
+                CHECK(e().settings.midi_inputs == inputs && e().hint().find("sends to Synth B") != std::string::npos);
+                CHECK(save_patch(e().engine.patch()).find("device " + std::to_string(mo) + " Synth B\n")
+                    != std::string::npos);
+                // unplugged: still in its menu, marked
+                e().midi_out_available = { "Synth A" };
+                CHECK((e().device_menu_names(mo) == std::vector<std::string> { "Synth A", "Synth B" }));
+                e().remove_module(cx(), mo);
+                wait(0.1);
+                e().midi_out_available.clear();
+            }
             e().remove_module(cx(), mi);
             wait(0.1);
             e().midi_available.clear();

@@ -8,6 +8,7 @@ add_library(rack_engine STATIC
     engine/rt/modules_glue.cpp
     engine/rt/modules_fx.cpp
     engine/rt/modules_drums.cpp
+    engine/rt/modules_voices.cpp
     engine/engine.cpp
 )
 target_include_directories(rack_engine PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
@@ -19,7 +20,7 @@ target_link_libraries(rack-render PRIVATE rack_engine rack_warnings)
 # The rack's geometry (panel layout, knob mapping, placement) and patch files: no window, so the headless tests use them.
 # The factory patches: examples/*.rack compiled in as text, so the application needs no path to them.
 # (A changed or new .rack file reconfigures, so the copy is never stale.)
-file(GLOB RACK_FACTORY_PATCHES CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/examples/*.rack)
+file(GLOB RACK_FACTORY_PATCHES CONFIGURE_DEPENDS ${PROJECT_SOURCE_DIR}/examples/*.rack)
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${RACK_FACTORY_PATCHES})
 set(rack_factory_body "")
 foreach(f ${RACK_FACTORY_PATCHES})
@@ -56,7 +57,7 @@ add_library(rack_midi_core STATIC midi/message.cpp midi/names.cpp)
 target_include_directories(rack_midi_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(rack_midi_core PRIVATE rack_warnings)
 if(PULSERACK_MIDI)
-    add_library(rack_midi STATIC midi/inputs.cpp)
+    add_library(rack_midi STATIC midi/inputs.cpp midi/outputs.cpp)
     target_link_libraries(rack_midi PUBLIC rack_midi_core PRIVATE libremidi rack_warnings)
     add_executable(pulserack-midi midi_monitor.cpp)
     target_link_libraries(pulserack-midi PRIVATE rack_midi rack_warnings)
