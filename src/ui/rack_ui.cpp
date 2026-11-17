@@ -194,18 +194,23 @@ struct Toolbar
                               + (e->shown_dropouts == 1 ? " dropout" : " dropouts"),
                           12, st::kDanger)
                     : div())
-            .child(div()
-                    .flex_row()
-                    .items_center()
-                    .h(st::kToolBtnH)
-                    .px(6)
-                    .rounded(4)
-                    .cursor_pointer()
-                    .hover_bg(st::kSurfaceHi)
-                    .child(label((e ? e->audio_status() + e->midi_status() : std::string()) + "  v",
-                        12, st::kDim))
-                    .on_click([](Toolbar &self, Ctx cx) { self.ed.get(cx)->open_device_menu(cx); }))
-            .child(div()
+            .child(e && e->hosted // (in a plugin the host has the sound and the MIDI)
+                    ? div().flex_row().items_center().h(st::kToolBtnH).px(6).child(
+                          label(e->audio_status(), 12, st::kDim))
+                    : div()
+                          .flex_row()
+                          .items_center()
+                          .h(st::kToolBtnH)
+                          .px(6)
+                          .rounded(4)
+                          .cursor_pointer()
+                          .hover_bg(st::kSurfaceHi)
+                          .child(label(
+                              (e ? e->audio_status() + e->midi_status() : std::string()) + "  v",
+                              12, st::kDim))
+                          .on_click([](Toolbar &self, Ctx cx)
+                              { self.ed.get(cx)->open_device_menu(cx); }))
+            .child(e && e->hosted ? div() : div()
                     .w(st::kAudioW)
                     .justify_center()
                     .h(24)
@@ -907,7 +912,13 @@ struct PanelView
         const char *caption = "DEVICE";
         bool        heard = true;
         const bool  out = sends_midi(*n.desc);
-        if (out)
+        std::string shown = n.device.empty() ? std::string(out ? "No output" : "Any device") : n.device;
+        if (e && e->hosted) // in a plugin every device is the host's track (and there is no menu)
+        {
+            caption = out ? "TO THE TRACK" : "FROM THE TRACK";
+            shown = e->host_name.empty() ? std::string("the host") : e->host_name;
+        }
+        else if (out)
         {
             caption = "OUTPUT";
             if (e && !n.device.empty()
@@ -942,7 +953,7 @@ struct PanelView
             .overflow_hidden()
             .cursor_pointer()
             .child(label(caption, 8, heard ? st::kDim : rgb(0xf9e2af)).whitespace_pre())
-            .child(label(n.device.empty() ? std::string(out ? "No output" : "Any device") : n.device, 10,
+            .child(label(shown, 10,
                 heard ? st::kText : st::kSubtext)
                     .whitespace_pre())
             // the box's press, not the panel's
@@ -950,8 +961,8 @@ struct PanelView
                 [](PanelView &self, Ctx cx, const gp_mouse_event &ev)
                 {
                     Editor *e = self.ed.get(cx);
-                    if (e && ev.button != GP_MOUSE_MIDDLE) // (the middle button: nothing, as on a
-                        open_device_menu_of(cx, *e, self.node); // control)
+                    if (e && !e->hosted && ev.button != GP_MOUSE_MIDDLE) // (the middle button:
+                        open_device_menu_of(cx, *e, self.node); // nothing, as on a control)
                 })
             .on_hover([](PanelView &self, Ctx cx, bool inside)
                 { self.ed.get(cx)->hover(cx, self.node, Editor::kHoverDevice, inside); });
@@ -1950,6 +1961,28 @@ struct RackView
                         if (Editor *ed = self.ed.get(cx))
                             ed->forget_mapping(cx, id, pi);
                     }));
+            // in a plugin: the host's automation (a macro parameter)
+            const auto mc = std::find_if(patch.macros.begin(), patch.macros.end(),
+                [&](const Macro &m) { return m.node == id && m.param == (uint16_t)pi; });
+            if (e->hosted && mc != patch.macros.end())
+                menu.child(menu_item("Take off host macro " + std::to_string(mc->index + 1),
+                    st::kDanger,
+                    [id, pi](RackView &self, Ctx cx)
+                    {
+                        self.ctrl_node = 0;
+                        cx.notify();
+                        if (Editor *ed = self.ed.get(cx))
+                            ed->unassign_macro(cx, id, pi);
+                    }));
+            else if (e->hosted && !n->desc->params[pi].rebuild)
+                menu.child(menu_item("Automate with a host macro", st::kText,
+                    [id, pi](RackView &self, Ctx cx)
+                    {
+                        self.ctrl_node = 0;
+                        cx.notify();
+                        if (Editor *ed = self.ed.get(cx))
+                            ed->assign_macro(cx, id, pi);
+                    }));
             menu.child(menu_item("Cancel", st::kText,
                 [](RackView &self, Ctx cx)
                 {
@@ -2794,6 +2827,61 @@ void Editor::forget_mapping(Ctx cx, uint32_t node, size_t param)
     hint_line.update(cx, [](HintLine &, Ctx c) { c.notify(); });
 }
 
+void Editor::assign_macro(Ctx cx, uint32_t node, size_t param)
+{
+    auto       &macros = engine.patch().macros;
+    const Node *n = engine.patch().find(node);
+    if (!n || param >= n->desc->params.size() || n->desc->params[param].rebuild)
+        return;
+    for (const Macro &m : macros)
+        if (m.node == node && m.param == param)
+            return; // (it has one)
+    uint8_t free = 0;
+    while (free < kMacros
+        && std::any_of(macros.begin(), macros.end(), [&](const Macro &m) { return m.index == free; }))
+        free++;
+    if (free == kMacros)
+    {
+        notice = true;
+        say(cx, "Every host macro turns a control already: take one off first.");
+        hint_line.update(cx, [](HintLine &, Ctx c) { c.notify(); });
+        return;
+    }
+    checkpoint(cx, "Host macro");
+    macros.push_back(Macro { free, node, (uint16_t)param });
+    engine.compile(); // (the audio thread's table of what each macro turns)
+    touch(cx);
+    notice = true;
+    say(cx,
+        "Macro " + std::to_string(free + 1) + " of " + (host_name.empty() ? "the host" : host_name)
+            + " now turns " + std::string(n->desc->params[param].name) + " of this "
+            + std::string(n->desc->name) + ".");
+    hint_line.update(cx, [](HintLine &, Ctx c) { c.notify(); });
+}
+
+void Editor::unassign_macro(Ctx cx, uint32_t node, size_t param)
+{
+    auto      &macros = engine.patch().macros;
+    const auto here = [&](const Macro &m) { return m.node == node && m.param == param; };
+    if (std::find_if(macros.begin(), macros.end(), here) == macros.end())
+        return;
+    checkpoint(cx, "Host macro");
+    std::erase_if(macros, here);
+    engine.compile();
+    touch(cx);
+    notice = true;
+    say(cx, "This control is no longer on a host macro.");
+    hint_line.update(cx, [](HintLine &, Ctx c) { c.notify(); });
+}
+
+void Editor::pump_host_params(Ctx cx)
+{
+    HostParam hp;
+    while (engine.take_host_param(hp))
+        if (auto it = panels.find(hp.node); it != panels.end())
+            it->second.update(cx, [](PanelView &, Ctx c) { c.notify(); });
+}
+
 void Editor::forget_learned(Ctx cx)
 {
     settings.learn.clear();
@@ -2821,12 +2909,13 @@ void Editor::midi_control(Ctx cx, const midi::Msg &m)
     if (midi)
         device = midi->name_of(m.slot);
 #endif
+    // (in a plugin every device is the host: a mapping made with any of them answers it)
     auto same = [&](const Learn &l)
-    { return l.channel == m.channel && l.cc == m.data && l.device == device; };
+    { return l.channel == m.channel && l.cc == m.data && (hosted || l.device == device); };
     const std::string from
         = "CC " + std::to_string(m.data) + (device.empty() ? std::string() : " of " + device);
     const auto same_map = [&](const Mapping &l)
-    { return l.channel == m.channel && l.cc == m.data && l.device == device; };
+    { return l.channel == m.channel && l.cc == m.data && (hosted || l.device == device); };
     if (learn_control >= 0 && learn_exact)
     { // this very control, in the patch: one controller per control, one control per controller
         const int control = learn_control;
@@ -2866,22 +2955,16 @@ void Editor::midi_control(Ctx cx, const midi::Msg &m)
         return;
     }
     // the value a controller gives a control: 0..127 as its travel, a switch on from 64
-    const auto value_for = [&](const ParamDesc &p)
-    {
-        const float t = (float)std::min<int>(m.value, 127) / 127.0f;
-        return p.control == Control::Switch || p.control == Control::Button
-            ? (t >= 0.5f ? p.max : p.min)
-            : from_travel(p, t);
-    };
+    const auto value_for = [&](const ParamDesc &p) { return controller_value(p, m.value); };
     // a mapping in the patch first: its own control, whatever is selected
     {
         const auto &maps = engine.patch().mappings;
-        const auto  mp = std::find_if(maps.begin(), maps.end(), same_map);
-        if (mp != maps.end())
+        if (std::find_if(maps.begin(), maps.end(), same_map) != maps.end())
         {
+            const Mapping *mp = find_mapping(engine.patch(), m, device, hosted);
+            if (!mp)
+                return; // (the module no longer has that control)
             const Node *n = engine.patch().find(mp->node);
-            if (!n || mp->param >= n->desc->params.size())
-                return;
             const float v = value_for(n->desc->params[mp->param]);
             if (v != n->params[mp->param])
             {
@@ -2977,6 +3060,13 @@ void Editor::stop_audio(Ctx cx)
 
 std::string Editor::audio_status() const
 {
+    if (hosted)
+    {
+        char buf[128];
+        std::snprintf(buf, sizeof buf, "played by %s  ·  %.1f kHz",
+            host_name.empty() ? "the host" : host_name.c_str(), engine.sample_rate() / 1000.0);
+        return buf;
+    }
     if (!audio_running())
         return audio_error.empty() ? "audio off" : audio_error;
     const audio::DeviceInfo &d = audio->info();
@@ -2988,6 +3078,8 @@ std::string Editor::audio_status() const
 
 void Editor::tick(Ctx cx)
 {
+    if (hosted)
+        pump_host_params(cx);
     Telemetry &t = engine.telemetry();
     for (auto &[id, view] : panels)
     {
@@ -3048,14 +3140,15 @@ void Editor::tick(Ctx cx)
             if (n.desc->id == "out")
                 if (auto it = panels.find(n.id); it != panels.end())
                     it->second.update(cx, [](PanelView &, Ctx c) { c.notify(); });
-    const uint32_t drops = audio_running() ? audio->dropouts() : shown_dropouts;
+    const bool     card = audio && audio->running();
+    const uint32_t drops = card ? audio->dropouts() : shown_dropouts;
     if (drops != shown_dropouts)
     {
         shown_dropouts = drops;
         toolbar.update(cx, [](Toolbar &, Ctx c) { c.notify(); });
     }
     const int load
-        = audio_running() ? (int)std::lround(100 * t.load.load(std::memory_order_relaxed)) : -1;
+        = card ? (int)std::lround(100 * t.load.load(std::memory_order_relaxed)) : -1;
     if (load != load_pct)
     {
         load_pct = load;
@@ -3851,6 +3944,18 @@ void Editor::set_step(Ctx cx, uint32_t node, size_t index, const StepData &step)
 
 // ---- files
 
+Editor::Editor()
+    : own_engine_(std::make_unique<Engine>(48000))
+    , engine(*own_engine_)
+{
+}
+
+Editor::Editor(Engine &hosts)
+    : engine(hosts)
+    , hosted(true)
+{
+}
+
 Editor::~Editor()
 {
     try
@@ -3869,6 +3974,8 @@ void Editor::touch(Ctx cx)
     dirty = version != saved_version;
     if (dirty != was)
         toolbar.update(cx, [](Toolbar &, Ctx c) { c.notify(); });
+    if (on_change)
+        on_change();
 }
 
 // ---- undo
@@ -4211,6 +4318,8 @@ bool Editor::open_text(Ctx cx, const std::string &text, const std::string &name,
     version = ++next_version;
     saved_version = dirty_after ? 0 : version;
     dirty = dirty_after;
+    if (on_change) // (a plugin's patch was replaced: the host's project has changed)
+        on_change();
     sync_panels(cx);
     sync_cables(cx);
     for (auto &[id, view] : panels) // a kept id may now be another module
@@ -4253,8 +4362,10 @@ bool Editor::has_recovery() const
 
 Entity<Editor> open_rack(App app, const Options &opt, std::string *error)
 {
-    auto    ed = app.new_entity<Editor>();
+    auto    ed = opt.engine ? app.new_entity<Editor>(*opt.engine) : app.new_entity<Editor>();
     Editor *e = app.get(ed);
+    e->host_name = opt.host_name;
+    e->on_change = opt.on_change;
     e->self = ed;
     e->status = "Add modules from the list on the left.";
 
@@ -4353,8 +4464,10 @@ Entity<Editor> open_rack(App app, const Options &opt, std::string *error)
                     .build();
 
     // A MIDI module's device is a name in the patch; the device manager gives each name its slot
-    // (set before a patch is loaded; with no MIDI a named device is not heard).
-    e->engine.midi_slot_of = [e]([[maybe_unused]] const std::string &name) -> int
+    // (set before a patch is loaded; with no MIDI a named device is not heard). A plugin's engine
+    // has its own (every name is the host).
+    if (!e->hosted)
+        e->engine.midi_slot_of = [e]([[maybe_unused]] const std::string &name) -> int
     {
 #if PULSERACK_MIDI
         if (e->midi)
@@ -4362,8 +4475,11 @@ Entity<Editor> open_rack(App app, const Options &opt, std::string *error)
 #endif
         return -1;
     };
-    e->engine.midi_out_slot_of = [e]([[maybe_unused]] const std::string &name) -> int
+    if (!e->hosted)
+        e->engine.midi_out_slot_of = [e]([[maybe_unused]] const std::string &name) -> int
     {
+        if (name.empty())
+            return -1; // (no output chosen)
 #if PULSERACK_MIDI
         if (e->midi_out)
             return e->midi_out->slot_for(name);
@@ -4380,9 +4496,25 @@ Entity<Editor> open_rack(App app, const Options &opt, std::string *error)
     app.get(root)->ed = ed;
     gp_window_options w { };
     w.title = "PulseRack";
-    w.width = (int)st::kWindowW;
-    w.height = (int)st::kWindowH;
-    app.open_window(w, root);
+    w.width = opt.width > 0 ? opt.width : (int)st::kWindowW;
+    w.height = opt.height > 0 ? opt.height : (int)st::kWindowH;
+    w.parent = opt.parent;
+    e->window = app.open_window(w, root);
+    if (e->hosted)
+    { // the plugin's patch is already in the engine: its panels and cables
+        e->patch_name = "patch in " + (opt.host_name.empty() ? std::string("the host") : opt.host_name);
+        e->sync_panels(app.ctx(ed));
+        e->sync_cables(app.ctx(ed));
+        // the host plays the engine: only the LEDs, meters and playheads to follow, and the
+        // track's control changes (MIDI learn; the plugin applies the patch's own mappings while
+        // no window is open)
+        e->control_task
+            = app.ctx(ed).every(1.0 / 60, [](Editor &ee, Ctx c) { ee.pump_controls(c); });
+        if (e->status.empty() || e->status == "Add modules from the list on the left.")
+            e->status = "The track's MIDI plays the MIDI In modules.";
+        e->meter_task = app.ctx(ed).every(1.0 / 30, [](Editor &ee, Ctx c) { ee.tick(c); });
+        return ed;
+    }
     e->engine.set_midi(e->midi_boxes.get()); // (no audio thread yet)
     e->engine.set_midi_out(e->midi_outbox.get());
     if (opt.midi)

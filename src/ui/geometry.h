@@ -6,6 +6,7 @@
 #pragma once
 
 #include "engine/model/patch.h"
+#include "midi/message.h"
 
 #include <array>
 #include <optional>
@@ -69,6 +70,14 @@ inline constexpr float    kSliderTrack = 72;
 // natural units (Log for frequencies and times, so a turn covers 20 Hz to 20 kHz usefully).
 float to_travel(const ParamDesc &p, float value); // 0..1
 float from_travel(const ParamDesc &p, float t); // clamped and rounded as the engine would store it
+// MIDI learn (docs/midi.md): a controller's value (0..127) as a control's, its travel; a switch or
+// a button is on from 64.
+float controller_value(const ParamDesc &p, int value);
+// The patch's mapping of a control change from `device` ("MIDI learn for this knob only"), or null:
+// none, a channel mode message (120 and up), or a control the module no longer has. In a plugin
+// every device is the host (`any_device`): a mapping made with the KeyStep answers the track.
+const Mapping *find_mapping(
+    const Patch &patch, const midi::Msg &m, const std::string &device, bool any_device = false);
 bool  is_discrete(const ParamDesc &p);          // Int, Enum, Toggle
 float step_value(const ParamDesc &p, float value, int steps, bool fine); // one wheel notch each
 // How a knob or slider moves under a vertical drag: px pixels up from where it was.

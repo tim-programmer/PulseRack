@@ -75,6 +75,20 @@ struct EventBuf
     size_t       count = 0;
 };
 
+// What a plugin's host gives one block (docs/reaper.md), for the modules that take it: the Host
+// Clock (the transport), Audio In (the host's input) and an Audio Output on one of the extra
+// outputs. In the standalone rack there is no transport, no input and no extra output.
+inline constexpr size_t kExtraOutputs = 7; // outputs 2 .. 8 (output 1 is the main one, `master`)
+struct HostBlock
+{
+    bool                transport = false; // the host says where it is (and whether it plays)
+    bool                playing = false;
+    double              tempo = 120; // beats a minute
+    double              beat = 0;    // where the block's first sample is, in beats from the start
+    const float        *in[2] = { nullptr, nullptr }; // the host's audio in (an effect), or none
+    float              *out[kExtraOutputs][2] = { }; // the extra outputs (accumulated), or none
+};
+
 // What a wrapper sees for one block. Indexes are per kind and direction, in the order the ports are
 // listed in the descriptor.
 struct NodeIo
@@ -88,6 +102,7 @@ struct NodeIo
     float              *master[2]; // host output (Audio Output only), accumulated
     uint64_t            time;      // sample index of the first sample of this block
     size_t              frames;    // 1 .. PCL_MAX_BLOCK
+    const HostBlock    *host = nullptr; // never null while the plan runs (see HostBlock)
 };
 
 struct ModuleDesc

@@ -1,0 +1,11 @@
+/* PulseRack.vst3 on Linux: only the VST3 module's entry points (and the CLAP entry it wraps) are seen
+   from outside; everything it links stays inside it. */
+{
+    global:
+        GetPluginFactory;
+        ModuleEntry;
+        ModuleExit;
+        clap_entry;
+    local:
+        *;
+};

@@ -211,8 +211,10 @@ std::vector<uint32_t> Plan::order() const
     return o;
 }
 
-void Plan::run(uint64_t time, size_t frames, float *left, float *right, float *activity)
+void Plan::run(uint64_t time, size_t frames, float *left, float *right, float *activity,
+    const HostBlock *host)
 {
+    static const HostBlock kNone;
     for (size_t k = 0; k < steps_.size(); k++)
     {
         Step &s = steps_[k];
@@ -222,6 +224,7 @@ void Plan::run(uint64_t time, size_t frames, float *left, float *right, float *a
         s.io.master[1] = right;
         s.io.time = time;
         s.io.frames = frames;
+        s.io.host = host ? host : &kNone;
         s.desc->process(s.state, s.io);
         if (!activity)
             continue;

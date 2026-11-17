@@ -58,6 +58,18 @@ struct Mapping
     bool        operator==(const Mapping &) const = default;
 };
 
+// A control a plugin's host automates (docs/reaper.md, *Macro parameters*): the plugin has a fixed
+// set of parameters, Macro 1 to kMacros, and the patch says which control each one turns (its
+// travel, 0..1, as the knob's).
+inline constexpr size_t kMacros = 32;
+struct Macro
+{
+    uint8_t  index = 0; // 0 .. kMacros-1 ("Macro 1" is 0)
+    uint32_t node = 0;
+    uint16_t param = 0; // index into the descriptor's parameters
+    bool     operator==(const Macro &) const = default;
+};
+
 enum class Err
 {
     Ok,
@@ -102,6 +114,7 @@ public:
 
     std::vector<KeyScript> keys;
     std::vector<Mapping>   mappings; // a module's go with it
+    std::vector<Macro>     macros;   // the same; one per macro, one macro per control
 
 private:
     std::vector<Node>  nodes_;

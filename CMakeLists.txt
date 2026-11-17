@@ -13,9 +13,51 @@ if(NOT PULSERACK_SAMPLE_TYPE MATCHES "^(FLOAT|Q15|Q31)$")
 endif()
 option(PULSERACK_BUILD_TESTS "Build the engine tests" ON)
 
+include(FetchContent)
+# --- CLAP (PulseRack as a plugin in a DAW, docs/reaper.md): the headers only, pinned to a release. The plugin is built
+#     with float samples only, and everything it links is compiled as position-independent code.
+option(PULSERACK_CLAP "Build pulserack.clap, the rack as a CLAP instrument" ON)
+if(PULSERACK_CLAP AND NOT PULSERACK_SAMPLE_TYPE STREQUAL "FLOAT")
+    message(STATUS "pulserack.clap: not built (PULSERACK_SAMPLE_TYPE is ${PULSERACK_SAMPLE_TYPE}; a plugin is FLOAT)")
+    set(PULSERACK_CLAP OFF)
+endif()
+if(PULSERACK_CLAP)
+    set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+    FetchContent_Declare(clap
+        URL https://github.com/free-audio/clap/archive/refs/tags/1.2.9.tar.gz
+        URL_HASH SHA256=0241a9b7b3a3156c780484231885ee0ffa13fe3ff41acfcf3a32c63715926e48
+        DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+        SOURCE_SUBDIR _headers_only) # (its headers only: none of its own targets)
+    FetchContent_MakeAvailable(clap)
+    message(STATUS "CLAP: ${clap_SOURCE_DIR} @ 1.2.9")
+endif()
+# --- VST3 (docs/reaper.md): the same plugins as PulseRack.vst3, through clap-wrapper and Steinberg's VST3 SDK (MIT
+#     since 3.8), both fetched and pinned to a release; only the SDK's base, pluginterfaces and public.sdk are cloned.
+#     Off by default: the SDK is a large download.
+option(PULSERACK_VST3 "Also build PulseRack.vst3 (clap-wrapper and the VST3 SDK, fetched)" OFF)
+if(PULSERACK_VST3 AND PULSERACK_CLAP)
+    FetchContent_Declare(vst3sdk
+        GIT_REPOSITORY https://github.com/steinbergmedia/vst3sdk.git
+        GIT_TAG v3.8.0_build_66
+        GIT_SHALLOW TRUE
+        GIT_SUBMODULES base pluginterfaces public.sdk
+        SOURCE_SUBDIR _sources_only) # (clap-wrapper compiles the parts it needs)
+    FetchContent_MakeAvailable(vst3sdk)
+    set(VST3_SDK_ROOT ${vst3sdk_SOURCE_DIR})
+    set(CLAP_SDK_ROOT ${clap_SOURCE_DIR})
+    set(CLAP_WRAPPER_OUTPUT_NAME PulseRack)
+    FetchContent_Declare(clap-wrapper
+        GIT_REPOSITORY https://github.com/free-audio/clap-wrapper.git
+        GIT_TAG v0.17.0
+        GIT_SHALLOW TRUE)
+    FetchContent_MakeAvailable(clap-wrapper)
+    message(STATUS "VST3: clap-wrapper v0.17.0, VST3 SDK v3.8.0_build_66")
+elseif(PULSERACK_VST3)
+    message(STATUS "PulseRack.vst3: not built (it wraps pulserack.clap, which is not)")
+endif()
+
 # --- PulseCoreLib, fetched from GitHub (branch main for now). For work on both repositories at once, point
 #     FETCHCONTENT_SOURCE_DIR_PULSECORELIB at a local checkout.
-include(FetchContent)
 set(PCL_SAMPLE_TYPE "${PULSERACK_SAMPLE_TYPE}" CACHE STRING "" FORCE)
 set(PCL_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(PCL_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)

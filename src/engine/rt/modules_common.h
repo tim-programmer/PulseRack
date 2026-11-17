@@ -98,6 +98,7 @@ extern const ModuleDesc kSyncVoiceDesc, kStackVoiceDesc, kFmVoiceDesc, kAirVoice
     kStringVoiceDesc, kGrainVoiceDesc;
 bool grain_load(void *state, const SampleData &data); // (modules_voices.cpp)
 extern const ModuleDesc kKeyboardDesc, kAudioOutDesc, kMixerDesc, kAttenuverterDesc,
-    kNoteToGateDesc, kMergeDesc, kScopeDesc, kMidiInDesc, kMidiCcDesc, kMidiClockDesc, kMidiOutDesc;
+    kNoteToGateDesc, kMergeDesc, kScopeDesc, kMidiInDesc, kMidiCcDesc, kMidiClockDesc, kMidiOutDesc,
+    kAudioInDesc, kHostClockDesc;
 
 } // namespace rack

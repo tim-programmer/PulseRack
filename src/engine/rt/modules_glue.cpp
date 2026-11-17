@@ -680,20 +680,30 @@ namespace
     enum OutParam
     {
         OUT_LEVEL,
+        OUT_OUTPUT,
         OUT_COUNT
     };
+    // Its Output: 1 is the main one (the speakers, a plugin's main output); 2 to 8 are a plugin's
+    // extra outputs (docs/reaper.md), and go to the main one where there are none (the standalone
+    // rack, or a host that did not take them).
     struct AudioOutNode
     {
-        float level;
+        float    level;
+        uint32_t output; // 1 .. 1 + kExtraOutputs
     };
     bool out_init(void *s, const NodeContext &, const float *p)
     {
         as<AudioOutNode>(s)->level = p[OUT_LEVEL];
+        as<AudioOutNode>(s)->output = (uint32_t)std::clamp(to_int(p[OUT_OUTPUT]), 1, 1 + (int)kExtraOutputs);
         return true;
     }
     void out_process(void *s, NodeIo &io)
     {
         const float         level = as<AudioOutNode>(s)->level;
+        const uint32_t      output = as<AudioOutNode>(s)->output;
+        float              *dl = io.master[0], *dr = io.master[1];
+        if (output >= 2 && io.host->out[output - 2][0] && io.host->out[output - 2][1])
+            dl = io.host->out[output - 2][0], dr = io.host->out[output - 2][1];
         const pcl_sample_t *l = io.sig_in[0];
         const pcl_sample_t *r = io.sig_in[1];
         if (!l && !r)
@@ -704,8 +714,8 @@ namespace
             r = l;
         for (size_t i = 0; i < io.frames; i++)
         {
-            io.master[0][i] += sample_to_float(l[i]) * level;
-            io.master[1][i] += sample_to_float(r[i]) * level;
+            dl[i] += sample_to_float(l[i]) * level;
+            dr[i] += sample_to_float(r[i]) * level;
         }
     }
     const PortDesc kOutPorts[]
@@ -717,8 +727,135 @@ namespace
                 as<AudioOutNode>(s)->level = v;
                 return true;
             }),
+        param("output", "Output", "", 1, 1 + (float)kExtraOutputs, 1, Scale::Int, Control::Knob,
+            [](void *s, float v)
+            {
+                as<AudioOutNode>(s)->output = (uint32_t)std::clamp(to_int(v), 1, 1 + (int)kExtraOutputs);
+                return true;
+            }),
     };
     static_assert(std::size(kOutParams) == OUT_COUNT);
+
+    // ============================================================================================================
+    // Audio In The host's audio input in a plugin (docs/reaper.md, PulseRack FX): its two channels as
+    // signals, times Level. Silent where there is none (the standalone rack has no input yet).
+    struct AudioInNode
+    {
+        float level;
+    };
+    bool ain_init(void *s, const NodeContext &, const float *p)
+    {
+        as<AudioInNode>(s)->level = p[0];
+        return true;
+    }
+    void ain_process(void *s, NodeIo &io)
+    {
+        const float level = as<AudioInNode>(s)->level;
+        const float *in[2] = { io.host->in[0], io.host->in[1] ? io.host->in[1] : io.host->in[0] };
+        for (int c = 0; c < 2; c++)
+        {
+            pcl_sample_t *o = io.sig_out[(size_t)c];
+            if (!o)
+                continue;
+            for (size_t i = 0; i < io.frames; i++)
+                o[i] = in[c] ? to_sample(std::clamp(in[c][i] * level, -1.0f, 1.0f)) : to_sample(0);
+        }
+    }
+    const PortDesc  kAudioInPorts[] = { { "l", "L", Kind::Signal, true }, { "r", "R", Kind::Signal, true } };
+    const ParamDesc kAudioInParams[] = {
+        param("level", "Level", "", 0, 1.5f, 1, Scale::Linear, Control::Knob,
+            [](void *s, float v)
+            {
+                as<AudioInNode>(s)->level = v;
+                return true;
+            }),
+    };
+
+    // ============================================================================================================
+    // Host Clock A plugin host's tempo and transport (docs/reaper.md): clock pulses at Pulses per
+    // beat on the host's beat grid (a pulse on every beat of the song, wherever playing started),
+    // START when the host starts playing or jumps back (a loop, the cursor moved back), STOP when it
+    // stops. Nothing while it stops, and nothing in the standalone rack (no host). The host's
+    // position is not passed on: a sequencer starts from its first step wherever the host started.
+    struct HostClockNode
+    {
+        uint32_t sample_rate;
+        uint32_t ppqn;
+        bool     playing;  // as the last block saw it
+        int64_t  next;     // the next pulse, numbered from the song's start (pulse k is at beat k / ppqn)
+        double   expected; // where the next block should start, in beats, if nothing jumped
+    };
+    bool hclk_init(void *s, const NodeContext &ctx, const float *p)
+    {
+        auto *c = as<HostClockNode>(s);
+        c->sample_rate = ctx.sample_rate;
+        c->ppqn = (uint32_t)std::clamp(to_int(p[0]), 1, 96);
+        return true;
+    }
+    void hclk_reset(void *s)
+    {
+        auto *c = as<HostClockNode>(s);
+        c->playing = false;
+        c->next = 0;
+        c->expected = 0;
+    }
+    void hclk_process(void *s, NodeIo &io)
+    {
+        auto            *c = as<HostClockNode>(s);
+        EventBuf        &out = *io.evt_out[0];
+        const HostBlock &h = *io.host;
+        out.count = 0;
+        auto emit = [&](uint8_t type, size_t at)
+        {
+            if (out.count < out.cap)
+                out.data[out.count++] = pcl_event_t { (uint16_t)at, type, 0, 0 };
+        };
+        const bool playing = h.transport && h.playing && h.tempo > 0;
+        if (!playing)
+        {
+            if (c->playing)
+                emit(PCL_EVT_STOP, 0);
+            c->playing = false;
+            return;
+        }
+        const double ppqn = (double)c->ppqn;
+        const double bps = h.tempo / 60.0 / (double)c->sample_rate; // beats a sample
+        // the first pulse at or after the block's start (to a thousandth of a sample: the host's
+        // position is a fixed-point number, a pulse due "at" a sample may come out a hair after it)
+        const double slack = 1e-3 * bps * ppqn; // a thousandth of a sample, in pulses
+        auto first_pulse = [&] { return (int64_t)std::ceil(h.beat * ppqn - slack); };
+        if (!c->playing)
+        {
+            emit(PCL_EVT_START, 0);
+            c->next = first_pulse();
+        }
+        else if (std::fabs(h.beat - c->expected) > 0.5 / ppqn) // the host jumped
+        {
+            if (h.beat < c->expected)
+                emit(PCL_EVT_START, 0); // back: from the start again
+            c->next = first_pulse();
+        }
+        c->playing = true;
+        while (true)
+        {
+            const double at = ((double)c->next / ppqn - h.beat) / bps; // samples into the block
+            if (at >= (double)io.frames - 1e-3)
+                break;
+            emit(PCL_EVT_CLOCK, (size_t)std::clamp(std::ceil(at - 1e-3), 0.0, (double)io.frames - 1));
+            c->next++;
+        }
+        c->expected = h.beat + (double)io.frames * bps;
+    }
+    size_t          hclk_cap(size_t) { return 64; }
+    const PortDesc  kHostClockPorts[] = { { "clock", "CLOCK", Kind::Event, true } };
+    const ParamDesc kHostClockParams[] = {
+        param("ppqn", "Pulses per beat", "", 1, 96, 24, Scale::Int, Control::Knob,
+            [](void *s, float v)
+            {
+                as<HostClockNode>(s)->ppqn = (uint32_t)std::clamp(to_int(v), 1, 96);
+                return true; // (the next pulse is still the one due: k / ppqn changes with it)
+            }),
+    };
 
     // ============================================================================================================
     // Mixer
@@ -1182,6 +1319,12 @@ RACK_GLUE(kMidiOutDesc, "midi_out", "MIDI Out", kEvent, 6, MidiOutNode, kMidiOut
 RACK_GLUE(kAudioOutDesc, "out", "Audio Output", kUtility, 4, AudioOutNode, kOutPorts, kOutParams,
     out_init, nullptr, out_process, nullptr,
     "Sends a signal to the speakers; L alone plays on both");
+RACK_GLUE(kAudioInDesc, "audio_in", "Audio In", kUtility, 4, AudioInNode, kAudioInPorts,
+    kAudioInParams, ain_init, nullptr, ain_process, nullptr,
+    "The host's audio in PulseRack FX, the plugin as an effect; silent in the rack");
+RACK_GLUE(kHostClockDesc, "host_clock", "Host Clock", kEvent, 6, HostClockNode, kHostClockPorts,
+    kHostClockParams, hclk_init, hclk_reset, hclk_process, hclk_cap,
+    "The DAW's tempo and transport in the plugin: clock pulses on its beats, with start and stop");
 RACK_GLUE(kMixerDesc, "mixer", "Mixer", kUtility, 6, MixerNode, kMixerPorts, kMixerParams,
     mixer_init, nullptr, mixer_process, nullptr, "Mixes four signals, each with its own level");
 RACK_GLUE(kAttenuverterDesc, "attenuverter", "Attenuverter", kUtility, 4, AttNode, kAttPorts,

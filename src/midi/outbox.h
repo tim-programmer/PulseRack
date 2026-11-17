@@ -18,7 +18,8 @@ constexpr size_t kOutboxSize = 2048;  // messages waiting to be sent
 
 struct OutMsg
 {
-    int64_t due_ns = 0; // steady_clock time to send it at; 0: at once
+    int64_t  due_ns = 0; // steady_clock time to send it at; 0: at once
+    uint32_t offset = 0; // its sample in the render call that made it (a plugin's host takes it so)
     uint8_t slot = 0;   // the output's slot
     uint8_t len = 0;    // 1..3
     uint8_t bytes[3] = { };

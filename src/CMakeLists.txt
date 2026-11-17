@@ -78,3 +78,39 @@ if(PULSERACK_BUILD_GUI)
     add_executable(pulserack main.cpp)
     target_link_libraries(pulserack PRIVATE rack_ui rack_warnings)
 endif()
+
+# PulseRack as a CLAP instrument (docs/reaper.md, *Level 3*): the engine, and the rack's window as its editor. Copy pulserack.clap to
+# ~/.clap (Windows: %LOCALAPPDATA%\Programs\Common\CLAP) and rescan the plugins in the host.
+if(PULSERACK_CLAP)
+    # the plugins' code, once: pulserack.clap exports its clap_entry, PulseRack.vst3 wraps the same
+    add_library(rack_plugin OBJECT plugin/clap_plugin.cpp)
+    target_include_directories(rack_plugin PUBLIC ${clap_SOURCE_DIR}/include)
+    target_link_libraries(rack_plugin PUBLIC rack_geometry rack_midi_core PRIVATE rack_warnings)
+    target_compile_definitions(rack_plugin PRIVATE PULSERACK_VERSION="${PROJECT_VERSION}")
+    if(PULSERACK_BUILD_GUI) # the editor: the rack's window inside the host's
+        target_link_libraries(rack_plugin PUBLIC rack_ui)
+        target_compile_definitions(rack_plugin PRIVATE PULSERACK_CLAP_GUI=1)
+    endif()
+    set_target_properties(rack_plugin PROPERTIES CXX_VISIBILITY_PRESET hidden VISIBILITY_INLINES_HIDDEN ON)
+
+    add_library(pulserack_clap MODULE $<TARGET_OBJECTS:rack_plugin>)
+    target_link_libraries(pulserack_clap PRIVATE rack_plugin)
+    set_target_properties(pulserack_clap PROPERTIES OUTPUT_NAME pulserack PREFIX "" SUFFIX ".clap"
+        CXX_VISIBILITY_PRESET hidden VISIBILITY_INLINES_HIDDEN ON)
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        # what it links stays inside it (another plugin may bring its own copy), and nothing is left undefined
+        target_link_options(pulserack_clap PRIVATE -Wl,--exclude-libs,ALL -Wl,--no-undefined)
+    endif()
+
+    # PulseRack.vst3: clap-wrapper's VST3 side around the same objects (Linux: build/PulseRack.vst3/Contents/...)
+    if(PULSERACK_VST3)
+        add_library(pulserack_vst3 MODULE $<TARGET_OBJECTS:rack_plugin>)
+        target_link_libraries(pulserack_vst3 PRIVATE rack_plugin)
+        set_target_properties(pulserack_vst3 PROPERTIES CXX_VISIBILITY_PRESET hidden VISIBILITY_INLINES_HIDDEN ON)
+        target_add_vst3_wrapper(TARGET pulserack_vst3 OUTPUT_NAME PulseRack)
+        if(CMAKE_SYSTEM_NAME STREQUAL "Linux") # (the module's entry points come from the SDK's static library)
+            target_link_options(pulserack_vst3 PRIVATE -Wl,--version-script=${CMAKE_CURRENT_SOURCE_DIR}/plugin/vst3.map)
+            set_property(TARGET pulserack_vst3 APPEND PROPERTY LINK_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/plugin/vst3.map)
+        endif()
+    endif()
+endif()

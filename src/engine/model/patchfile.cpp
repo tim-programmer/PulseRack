@@ -125,6 +125,14 @@ std::string save_patch(const Patch &patch)
             + std::to_string(m.channel + 1) + " " + std::to_string(m.cc)
             + (m.device.empty() ? std::string() : " " + m.device) + "\n";
     }
+    for (const Macro &m : patch.macros)
+    {
+        const Node *n = patch.find(m.node);
+        if (!n || m.param >= n->desc->params.size() || m.index >= kMacros)
+            continue;
+        s += "macro " + std::to_string(m.index + 1) + " " + std::to_string(m.node) + " "
+            + std::string(n->desc->params[m.param].id) + "\n";
+    }
     for (const KeyScript &k : patch.keys)
         s += "key " + std::to_string(k.node) + " " + num(k.seconds) + (k.on ? " on " : " off ")
             + std::to_string(k.note) + " " + std::to_string(k.velocity) + "\n";
@@ -354,6 +362,30 @@ LoadResult load_patch(std::string_view text, Patch &out)
             }
             p.mappings.push_back(Mapping { id, (uint16_t)pi, (uint8_t)(channel - 1), (uint8_t)cc,
                 std::string(device_name) });
+        }
+        else if (t[0] == "macro")
+        {
+            uint32_t index, id;
+            if (t.size() != 4 || !parse_uint(t[1], index, (uint32_t)kMacros) || index < 1
+                || !parse_uint(t[2], id, 1000000))
+                return fail("bad macro record");
+            if (skipped.count(id))
+                continue;
+            const Node *n = p.find(id);
+            if (!n)
+                return fail("macro for a module that is not defined yet");
+            const int pi = find_param(*n->desc, t[3]);
+            if (pi < 0)
+            {
+                r.warnings.push_back("line " + std::to_string(lineno) + ": "
+                    + std::string(n->desc->id) + " has no control '" + std::string(t[3])
+                    + "', macro skipped");
+                continue;
+            }
+            // one control per macro and one macro per control: a later line wins
+            std::erase_if(p.macros, [&](const Macro &m)
+                { return m.index == index - 1 || (m.node == id && m.param == (uint16_t)pi); });
+            p.macros.push_back(Macro { (uint8_t)(index - 1), id, (uint16_t)pi });
         }
         else if (t[0] == "sample")
         {

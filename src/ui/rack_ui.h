@@ -43,8 +43,23 @@ struct Overlay;
 // the views that show them. An entity, so handlers anywhere reach it through a handle.
 struct Editor
 {
-    Engine engine { 48000 }; // made again at the audio device's rate when it starts
-    ~Editor();               // keeps an unsaved patch (see write_recovery)
+    Editor(); // with an engine of its own (the standalone rack)
+    // A plugin's window (docs/reaper.md): the engine is the plugin's, outlives the window, and its
+    // audio thread is the host's.
+    explicit Editor(Engine &hosts);
+    ~Editor(); // keeps an unsaved patch (see write_recovery)
+
+private:
+    std::unique_ptr<Engine> own_engine_; // (the standalone's; declared first, so it goes last)
+
+public:
+    Engine &engine; // made again at the audio device's rate when it starts
+    // In a plugin: the host plays the engine (no sound card, no MIDI devices; the toolbar says so),
+    // and on_change tells it the patch changed (its project then has unsaved changes).
+    bool                  hosted = false;
+    std::string           host_name;
+    std::function<void()> on_change;
+    gpuic::Window         window; // the window open_rack opened
     // MIDI (docs/midi.md): where the devices' messages wait for the engine, then the devices that
     // put them there. Both are declared before the sound card: its thread reads the inboxes, so
     // they are destroyed after it has stopped (and the devices before the inboxes they push into).
@@ -103,6 +118,13 @@ struct Editor
     void        forget_learned(gpuic::Ctx cx);                 // every global mapping
     void        forget_learned_at(gpuic::Ctx cx, int control); // the global mapping of one place
     void        forget_mapping(gpuic::Ctx cx, uint32_t node, size_t param); // the patch's, of one control
+    // A plugin's host macros (Patch::macros, docs/reaper.md): a control given the lowest free macro,
+    // or taken off its macro. One undo step each. The host's automation turns it from then on.
+    void assign_macro(gpuic::Ctx cx, uint32_t node, size_t param);
+    void unassign_macro(gpuic::Ctx cx, uint32_t node, size_t param);
+    // The controls the host's macros set since the last call, into the model and onto the panels
+    // (the plugin's timer, and tick in a plugin).
+    void pump_host_params(gpuic::Ctx cx);
     // Takes every control change that has come in and acts on it (the task; the tests call it).
     void pump_controls(gpuic::Ctx cx);
     void midi_control(gpuic::Ctx cx, const midi::Msg &m);
@@ -377,7 +399,8 @@ struct Editor
     void        stop_audio(gpuic::Ctx cx);
     void        open_device_menu(gpuic::Ctx cx);
     void        choose_device(gpuic::Ctx cx, const std::string &device); // and restart audio on it
-    bool        audio_running() const { return audio && audio->running(); }
+    // (in a plugin, sound runs whenever the host plays)
+    bool audio_running() const { return hosted || (audio && audio->running()); }
     std::string audio_status() const; // for the toolbar
     std::string midi_status() const;  // "  ·  MIDI 2" while inputs are open, else empty
     void        tick(gpuic::Ctx cx);  // takes the telemetry and updates what changed
@@ -398,6 +421,15 @@ struct Options
     std::string state_dir;  // where an unsaved patch is kept at close; empty: nowhere (the tests)
     std::string config_dir; // where the settings file is; empty: none, the defaults (the tests)
     bool        midi = false; // open the MIDI inputs the settings name (the tests feed the engine)
+    // A plugin's window (docs/reaper.md): the plugin's engine, which the window edits but does not
+    // play (no sound card, no MIDI devices, and the engine's MIDI slots are left as they are); the
+    // host's window to open inside of (gp_window_options.parent) and its size; the host's name for
+    // the toolbar; and what to call when the patch changes. `audio` and `midi` are ignored.
+    Engine               *engine = nullptr;
+    void                 *parent = nullptr;
+    int                   width = 0, height = 0;
+    std::string           host_name;
+    std::function<void()> on_change;
 };
 
 // Builds the views and opens the window. Returns the editor (tests drive it), or a null handle and

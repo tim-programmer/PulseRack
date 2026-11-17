@@ -10,6 +10,7 @@
 //   sample 6 /home/me/kick.wav        a Sampler's file: the rest of the line
 //   map 2 cutoff 1 74 nanoKONTROL2    MIDI learn in this patch: node, control, channel 1..16,
 //                                     controller 0..119, the input's name (the rest of the line)
+//   macro 3 4 cutoff                  a plugin host's Macro 3 turns node 4's cutoff (docs/reaper.md)
 //
 // A file with a syntax error, an unknown version, or a cable the rules forbid is rejected whole. An
 // unknown module type, jack or control is skipped with a warning, so a patch from a newer rack

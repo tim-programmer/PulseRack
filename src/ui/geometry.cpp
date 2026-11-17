@@ -166,6 +166,28 @@ float from_travel(const ParamDesc &p, float t)
     return clamp_param(p, v);
 }
 
+float controller_value(const ParamDesc &p, int value)
+{
+    const float t = (float)std::clamp(value, 0, 127) / 127.0f;
+    return p.control == Control::Switch || p.control == Control::Button
+        ? (t >= 0.5f ? p.max : p.min)
+        : from_travel(p, t);
+}
+
+const Mapping *find_mapping(
+    const Patch &patch, const midi::Msg &m, const std::string &device, bool any_device)
+{
+    if (m.type != midi::Type::Control || m.data >= 120)
+        return nullptr;
+    for (const Mapping &l : patch.mappings)
+        if (l.channel == m.channel && l.cc == m.data && (any_device || l.device == device))
+        {
+            const Node *n = patch.find(l.node);
+            return n && l.param < n->desc->params.size() ? &l : nullptr;
+        }
+    return nullptr;
+}
+
 float step_value(const ParamDesc &p, float value, int steps, bool fine)
 {
     if (is_discrete(p))

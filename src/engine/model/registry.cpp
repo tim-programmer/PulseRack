@@ -9,7 +9,7 @@ namespace rack
 
 std::span<const ModuleDesc *const> all_modules()
 {
-    static const std::array<const ModuleDesc *, 36> table = {
+    static const std::array<const ModuleDesc *, 38> table = {
         &kOscDesc,
         &kUnisonDesc,
         &kSamplerDesc,
@@ -40,6 +40,8 @@ std::span<const ModuleDesc *const> all_modules()
         &kMidiCcDesc,
         &kMidiClockDesc,
         &kMidiOutDesc,
+        &kHostClockDesc,
+        &kAudioInDesc,
         &kAudioOutDesc,
         &kMixerDesc,
         &kAttenuverterDesc,

@@ -37,7 +37,7 @@ TEST(descriptors_ids_are_unique_and_well_formed)
                 CHECK(p.min == 0 && p.max == 1);
         }
     }
-    CHECK(ids.size() == 36);
+    CHECK(ids.size() == 38);
 }
 
 // The wrappers index their jacks by slot number; the descriptors list them by name. They must
@@ -80,6 +80,8 @@ TEST(descriptors_slot_counts_match_the_wrappers)
         { "midi_cc", 0, 1, 0, 0 },
         { "midi_clock", 0, 0, 0, 1 },
         { "midi_out", 0, 0, 2, 0 },
+        { "host_clock", 0, 0, 0, 1 },
+        { "audio_in", 0, 2, 0, 0 },
         { "out", 2, 0, 0, 0 },
         { "mixer", 4, 1, 0, 0 },
         { "attenuverter", 1, 1, 0, 0 },

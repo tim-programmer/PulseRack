@@ -28,6 +28,7 @@
 #include <functional>
 #include <map>
 #include <memory>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -37,6 +38,36 @@ namespace rack
 struct MidiOutMsg; // (engine/rt/modules_common.h)
 
 inline constexpr size_t kTelemetrySlots = 1024; // as many as a patch may have modules
+
+// A plugin host's change of a macro parameter (Patch::macros): the knob's travel, 0..1, from the
+// `offset`-th sample of the call.
+struct MacroChange
+{
+    uint32_t offset = 0;
+    uint8_t  index = 0; // 0 .. kMacros-1
+    float    travel = 0;
+};
+
+// Everything a plugin's host gives one call of Engine::render (docs/reaper.md).
+struct HostCall
+{
+    std::span<const midi::Timed> midi; // its MIDI, sorted by offset
+    // the transport at the call's first sample (`transport` false: the host does not say)
+    bool   transport = false, playing = false;
+    double tempo = 120, beat = 0;
+    const float *in[2] = { nullptr, nullptr }; // its audio in (an effect), the call's length
+    // the extra outputs 2 .. 8, the call's length (overwritten), or null
+    float                        *out[kExtraOutputs][2] = { };
+    std::span<const MacroChange> macros; // sorted by offset
+};
+
+// A control a macro set on the audio thread, for the model (Engine::take_host_param).
+struct HostParam
+{
+    uint32_t node = 0;
+    uint16_t param = 0;
+    float    value = 0;
+};
 
 // What the audio thread reports. Levels are the largest |sample| since the UI last took them.
 struct Telemetry
@@ -92,6 +123,7 @@ public:
     Err                                     set_device(uint32_t node, const std::string &name);
     std::function<int(const std::string &)> midi_slot_of;
     // MIDI out (step 9): a MIDI Out module's device names an output; `midi_out_slot_of` gives its
+    // slot, for an empty name too (-1: none; a plugin sends every name, and none, to its host)
     // slot (the application's output manager), and what the modules send goes into the outbox,
     // each message due one device call after the sample it was made at (or at once with no audio
     // thread). The outbox must outlive the last render(); set it only while detached.
@@ -129,6 +161,22 @@ public:
 
     // ---- the audio thread (or the UI thread while none is attached)
     void render(size_t frames, float *left, float *right); // any number of frames; overwritten
+    // The same, with what a plugin's host gives the call (docs/reaper.md): its MIDI reaches the
+    // MIDI In and MIDI CC modules at its own sample, as a device's would (the inboxes' messages are
+    // heard as well); the transport, the audio in and the extra outputs reach the modules that take
+    // them, block by block; a macro change sets its control at the start of the engine block it
+    // falls in (PCL_MAX_BLOCK samples at most).
+    void render(size_t frames, float *left, float *right, const HostCall &host);
+    // Macro changes outside a render call (a host's flush, between process calls).
+    void host_macros(std::span<const MacroChange> changes);
+
+    // ---- the UI thread, for a plugin
+    // How a macro's travel becomes a control's value (the knob's own mapping, ui/geometry.h's
+    // from_travel; unset: linear between min and max).
+    float (*travel_to_value)(const ParamDesc &, float) = nullptr;
+    // A control a macro set, into the model now (false when there is none): the patch then says what
+    // the module plays, for saving and for the panel. Call often (the ring holds 1024).
+    bool take_host_param(HostParam &out);
 
     // ---- either thread
     Telemetry &telemetry() { return telemetry_; }
@@ -185,6 +233,15 @@ private:
         std::vector<std::pair<void (*)(void *, const midi::Msg &, uint64_t), void *>> midi_ins;
         // the modules that send MIDI: each one's function (midi_source) and state
         std::vector<std::pair<size_t (*)(void *, MidiOutMsg *, size_t), void *>> midi_outs;
+        // what each macro turns (desc null: nothing)
+        struct MacroTarget
+        {
+            const ParamDesc *desc = nullptr;
+            void            *state = nullptr;
+            uint32_t         node = 0;
+            uint16_t         param = 0;
+        };
+        std::array<MacroTarget, kMacros> macros;
         std::vector<Probe> probes;   // in plan order
         std::vector<float> activity; // per step, written by Plan::run
     };
@@ -219,7 +276,9 @@ private:
     void begin_block();
     void apply(const Cmd &c);
     void feed_script(uint64_t upto);
-    void feed_midi(size_t frames); // frames: the device call's length, 0 outside one
+    // frames: the device call's length, 0 outside one; host: a plugin host's messages for it
+    void feed_midi(size_t frames, std::span<const midi::Timed> host = { });
+    void apply_macro(const MacroChange &c);
     int  device_code(const Node &n) const;
     // A Sampler's file, read once and kept while the patch names it (null and `error` if it does
     // not load)
@@ -244,6 +303,7 @@ private:
     std::atomic<uint64_t>     adopted_gen_ { 0 };
     SpscRing<Cmd, 4096>       cmds_;
     SpscRing<midi::Msg, 1024> controls_; // MIDI control changes, audio thread to UI (full: dropped)
+    SpscRing<HostParam, 1024> host_params_; // controls macros set, audio thread to UI (full: dropped)
     std::atomic<uint64_t>     time_ { 0 };
     std::atomic<uint32_t>     apply_failures_ { 0 }, nonfinite_ { 0 };
     Telemetry                 telemetry_;

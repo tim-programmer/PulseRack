@@ -1,6 +1,7 @@
 // The window, driven like a user would, through gpuic's synthetic input (it goes through the real
 // event path: hit testing, capture, handlers). Needs a display; exits 77 (skipped) without one.
 //   ui_smoke                  the interaction test
+//   ui_smoke --hosted         the window as a plugin's editor: an engine it does not own (docs/reaper.md)
 //   ui_smoke --check-ppm F    F is a screenshot that is not blank (several colours, not all one)
 //   ui_smoke --pose PATCH NODE PORT X Y   opens PATCH, presses on that jack and holds a cable at
 //                             window (X, Y), for a screenshot of a drag (GPUIC_SCREENSHOT,
@@ -334,6 +335,51 @@ struct Driver
         CHECK(node(osc)->x == 0 && node(osc)->y == 0);
     }
     uint32_t vca_ = 0;
+
+    // ---- a plugin's editor (docs/reaper.md): the engine is the plugin's, with its patch already in
+    // it; the window shows it, edits it, tells the host of each change, and leaves it behind
+    void hosted(int &changes)
+    {
+        wait(0.3);
+        const Patch &patch = e().engine.patch();
+        CHECK(e().hosted && patch.nodes().size() == 6);
+        CHECK(e().panels.size() == patch.nodes().size() && e().cable_views.size() == patch.cables().size());
+        CHECK(e().audio_status().find("played by Test host") == 0 && e().audio_running() && !e().audio);
+        CHECK(e().engine.midi_slot_of && e().engine.midi_slot_of("KeyStep 37") == 0); // the plugin's, kept
+        CHECK(changes == 0);
+        // a knob turned: the engine has it, and the host was told
+        const uint32_t vca = 5;
+        const float    g0 = param(vca, "gain");
+        const gp_point k = control(vca, "gain");
+        drag(k, { k.x, k.y + 60 });
+        CHECK(param(vca, "gain") < g0 && changes > 0);
+        const int before = changes;
+        const uint32_t lfo = e().add_module(cx(), *find_module("lfo"));
+        CHECK(lfo && node(lfo) && changes > before);
+        // a host macro: the lowest free one, one undo step, the host told; the macro sets the knob
+        // (on the audio side) and the window's tick brings it into the model and onto the panel
+        const size_t gi = (size_t)find_param(*node(vca)->desc, "gain");
+        int          c0 = changes;
+        e().assign_macro(cx(), vca, gi);
+        CHECK(patch.macros.size() == 1 && patch.macros[0].index == 0 && patch.macros[0].node == vca);
+        CHECK(changes > c0 && hint_has("Macro 1"));
+        const MacroChange mc { 0, 0, 1.0f };
+        e().engine.host_macros(std::span<const MacroChange>(&mc, 1));
+        wait(0.1);
+        CHECK(param(vca, "gain") == node(vca)->desc->params[gi].max);
+        e().assign_macro(cx(), vca, gi); // (it has one: nothing)
+        CHECK(patch.macros.size() == 1);
+        click(undo_btn());
+        CHECK(patch.macros.empty());
+        e().assign_macro(cx(), vca, gi);
+        e().unassign_macro(cx(), vca, gi);
+        CHECK(patch.macros.empty());
+        // a patch opened through the window replaces the engine's (as a host's state load does)
+        std::string err;
+        CHECK(e().open_text(cx(), "pulserack 1\nnode 1 osc x=0 y=0\nnode 2 out x=8 y=0\ncable 1.out -> 2.l\n",
+            "loaded", "", false, &err));
+        CHECK(patch.nodes().size() == 2 && e().panels.size() == 2);
+    }
 
     // ---- the smaller pieces of milestone 6: selection and Delete, the arrow keys, a cable by its
     // output end, the rack scrolling under a drag held at its edge
@@ -1797,6 +1843,44 @@ int main(int argc, char **argv)
                         }
                     });
             });
+    }
+    if (argc == 2 && !std::strcmp(argv[1], "--hosted"))
+    {
+#ifndef _WIN32
+        if (!std::getenv("DISPLAY") && !std::getenv("WAYLAND_DISPLAY"))
+        {
+            std::printf("no display: skipped\n");
+            return 77;
+        }
+#endif
+        setenv("GPUIC_IGNORE_REAL_MOUSE", "1", 1);
+        // the plugin's side: its engine and patch, made before the window and kept after it
+        static Engine engine(48000);
+        static int    changes = 0;
+        engine.midi_slot_of = [](const std::string &) { return 0; };
+        for (const FactoryPatch &f : factory_patches())
+            if (f.name == "midi_voice")
+                CHECK(load_patch(f.text, engine.patch()).ok && engine.compile() == Err::Ok);
+        gpuic::run(
+            [](App app)
+            {
+                Options opt;
+                opt.engine = &engine;
+                opt.host_name = "Test host";
+                opt.on_change = [] { changes++; };
+                std::string error;
+                auto        ed = open_rack(app, opt, &error);
+                CHECK((bool)ed);
+                app.ctx(ed).spawn(
+                    [app, ed](Co &co)
+                    {
+                        Driver { co, app, ed }.hosted(changes);
+                        app.quit();
+                    });
+            });
+        CHECK(engine.patch().nodes().size() == 2 && engine.compile() == Err::Ok); // it outlived the window
+        std::printf("%d checks, %d failed\n", checks, failures);
+        return failures ? 1 : 0;
     }
     static bool sound = false, files = false, undo = false, steps = false, gaps = false;
     sound = argc == 2 && !std::strcmp(argv[1], "--sound");

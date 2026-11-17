@@ -35,6 +35,14 @@ struct Msg
     uint16_t value = 0;   // velocity, controller value, pressure, or pitch bend
 };
 
+// A message from a plugin host (docs/reaper.md): it comes with the audio it belongs to, already at
+// its own sample, `offset` frames into the host's call to Engine::render.
+struct Timed
+{
+    uint32_t offset = 0;
+    Msg      msg;
+};
+
 // One whole MIDI 1.0 message (libremidi delivers them whole, running status already expanded).
 // False for a message the rack does not use (SysEx, time code, song position...) or a malformed
 // one; `out` is then untouched. `slot` and `time_ns` are the caller's to fill.

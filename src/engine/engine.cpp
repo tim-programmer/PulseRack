@@ -112,6 +112,17 @@ Engine::Snapshot *Engine::build_snapshot(bool restart)
                 s->midi_outs.push_back({ take, l.mem.get() });
         }
         s->activity.assign(s->probes.size(), 0.f);
+        // the macros' controls (one the library fixes when the module is made cannot be one: the
+        // audio thread cannot make a module)
+        for (const Macro &m : patch_.macros)
+        {
+            const Node *n = patch_.find(m.node);
+            auto        it = live_.find(m.node);
+            if (!n || it == live_.end() || m.index >= kMacros || m.param >= n->desc->params.size()
+                || n->desc->params[m.param].rebuild)
+                continue;
+            s->macros[m.index] = { &n->desc->params[m.param], it->second.mem.get(), m.node, m.param };
+        }
     }
     // the key script, in time order (stable, so the order written is kept at one sample)
     for (const KeyScript &k : patch_.keys)
@@ -248,8 +259,8 @@ Err Engine::set_param(uint32_t node, size_t param, float value)
 int Engine::device_code(const Node &n) const
 {
     if (sends_midi(*n.desc))
-    { // an output: none named is none
-        const int slot = n.device.empty() || !midi_out_slot_of ? -1 : midi_out_slot_of(n.device);
+    { // an output: `midi_out_slot_of` decides, for no name too (in a plugin that is the host)
+        const int slot = midi_out_slot_of ? midi_out_slot_of(n.device) : -1;
         return slot >= 0 ? slot : kMidiNoDevice;
     }
     if (n.device.empty())
@@ -511,11 +522,23 @@ void Engine::discard_midi()
 // heard the same time after it arrived (one device buffer), in place of "at the start of the next
 // block", which was up to a buffer of jitter. A message with no timestamp, or outside a device call
 // (frames 0), is heard at once.
-void Engine::feed_midi(size_t frames)
+//
+// A plugin host's messages come already placed: `offset` samples into the call.
+void Engine::feed_midi(size_t frames, std::span<const midi::Timed> host)
 {
+    const uint64_t t0 = time_.load(std::memory_order_relaxed);
+    for (const midi::Timed &h : host)
+    {
+        if (h.msg.type == midi::Type::Control)
+            controls_.push(h.msg);
+        if (!cur_ || !cur_->ok)
+            continue;
+        const uint64_t at = t0 + std::min<uint64_t>(h.offset, frames ? frames - 1 : 0);
+        for (const auto &[push, state] : cur_->midi_ins)
+            push(state, h.msg, at);
+    }
     if (!midi_)
         return;
-    const uint64_t t0 = time_.load(std::memory_order_relaxed);
     const int64_t  now = frames ? (midi_now_ ? midi_now_() : steady_ns()) : 0;
     midi::Msg      m;
     for (midi::Inbox &box : *midi_)
@@ -556,6 +579,7 @@ void Engine::send_midi(uint64_t block_t0)
             m.slot = buf[i].slot;
             m.len = buf[i].len;
             std::memcpy(m.bytes, buf[i].bytes, 3);
+            m.offset = (uint32_t)(block_t0 + buf[i].offset - call_t0_);
             if (call_ns_)
             {
                 const double into = (double)(block_t0 + buf[i].offset - call_t0_ + call_frames_);
@@ -584,16 +608,76 @@ namespace
 
 void Engine::render(size_t frames, float *left, float *right)
 {
-    size_t done = 0;
+    render(frames, left, right, HostCall { });
+}
+
+void Engine::apply_macro(const MacroChange &c)
+{
+    if (!cur_ || !cur_->ok || c.index >= kMacros)
+        return;
+    const auto &m = cur_->macros[c.index];
+    if (!m.desc)
+        return; // (a macro that turns nothing)
+    const float t = std::clamp(c.travel, 0.0f, 1.0f);
+    const float v = travel_to_value ? travel_to_value(*m.desc, t)
+                                    : m.desc->min + t * (m.desc->max - m.desc->min);
+    if (!m.desc->apply(m.state, v))
+        apply_failures_.fetch_add(1, std::memory_order_relaxed);
+    host_params_.push(HostParam { m.node, m.param, v }); // (full: the model catches up next change)
+}
+
+void Engine::host_macros(std::span<const MacroChange> changes)
+{
+    if (!attached_)
+        begin_block(); // (no audio thread: this one is the audio side; the newest plan first)
+    for (const MacroChange &c : changes)
+        apply_macro(c);
+}
+
+bool Engine::take_host_param(HostParam &out)
+{
+    if (!host_params_.pop(out))
+        return false;
+    // (a node that is gone, or whose id is now another module's, is not touched)
+    auto it = live_.find(out.node);
+    if (Node *n = patch_.find(out.node);
+        n && it != live_.end() && it->second.desc == n->desc && out.param < n->params.size())
+        n->params[out.param] = out.value;
+    return true;
+}
+
+void Engine::render(size_t frames, float *left, float *right, const HostCall &host)
+{
+    // the extra outputs start silent; the Audio Outputs on them add to them block by block
+    for (size_t k = 0; k < kExtraOutputs; k++)
+        for (float *o : host.out[k])
+            if (o)
+                std::memset(o, 0, frames * sizeof(float));
+    const double beats_per_sample = host.tempo / 60.0 / (double)sample_rate_;
+    size_t       next_macro = 0;
+    size_t       done = 0;
     while (done < frames)
     {
         const size_t n = std::min<size_t>(frames - done, PCL_MAX_BLOCK);
         float       *l = left + done;
         float       *r = right + done;
         begin_block();
+        // the macros that change in this block, at its start
+        while (next_macro < host.macros.size() && host.macros[next_macro].offset < done + n)
+            apply_macro(host.macros[next_macro++]);
+        HostBlock hb;
+        hb.transport = host.transport;
+        hb.playing = host.playing;
+        hb.tempo = host.tempo;
+        hb.beat = host.beat + (host.playing ? (double)done * beats_per_sample : 0.0);
+        for (int c = 0; c < 2; c++)
+            hb.in[c] = host.in[c] ? host.in[c] + done : nullptr;
+        for (size_t k = 0; k < kExtraOutputs; k++)
+            for (int c = 0; c < 2; c++)
+                hb.out[k][c] = host.out[k][c] ? host.out[k][c] + done : nullptr;
         if (done == 0)
         {
-            feed_midi(frames); // once per device call, after the plan for it is in place
+            feed_midi(frames, host.midi); // once per device call, after the plan for it is in place
             if (outbox_)
             {
                 call_ns_ = attached_ ? (midi_now_ ? midi_now_() : steady_ns()) : 0;
@@ -607,7 +691,7 @@ void Engine::render(size_t frames, float *left, float *right)
         if (cur_ && cur_->ok)
         {
             feed_script(t + n);
-            cur_->plan.run(t, n, l, r, cur_->activity.data());
+            cur_->plan.run(t, n, l, r, cur_->activity.data(), &hb);
             if (outbox_ && !cur_->midi_outs.empty())
                 send_midi(t);
             for (size_t i = 0; i < cur_->probes.size(); i++)
@@ -643,6 +727,18 @@ void Engine::render(size_t frames, float *left, float *right)
         }
         raise_to(telemetry_.peak[0], pl);
         raise_to(telemetry_.peak[1], pr);
+        for (size_t k = 0; k < kExtraOutputs; k++) // the same clamp on the extra outputs
+            for (float *o : hb.out[k])
+                if (o)
+                    for (size_t i = 0; i < n; i++)
+                    {
+                        if (!std::isfinite(o[i]))
+                        {
+                            o[i] = 0.0f;
+                            nonfinite_.fetch_add(1, std::memory_order_relaxed);
+                        }
+                        o[i] = std::clamp(o[i], -1.0f, 1.0f);
+                    }
         time_.store(t + n, std::memory_order_relaxed);
         done += n;
     }
