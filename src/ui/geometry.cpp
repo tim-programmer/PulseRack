@@ -21,6 +21,8 @@ CellSize control_cell(Control c)
         return { 52, 48 }; // the switch with its LED, the name
     case Control::Selector:
         return { 0, 40 }; // the name, then "< value >"; as wide as the panel
+    case Control::Hidden:
+        return { 0, 0 };
     }
     return { 52, 72 };
 }
@@ -76,12 +78,21 @@ namespace
 
         std::vector<CellSize> cells;
         std::vector<bool>     own;
-        for (const ParamDesc &p : d.params)
+        std::vector<size_t>   shown; // the params with a control of their own (not Hidden)
+        for (size_t i = 0; i < d.params.size(); i++)
         {
+            const ParamDesc &p = d.params[i];
+            if (p.control == Control::Hidden)
+                continue;
+            shown.push_back(i);
             cells.push_back(control_cell(p.control));
             own.push_back(p.control == Control::Selector);
         }
-        L.params = flow(cells, own, kPad, inner_w, kTitleHeight + kPad, &L.controls_bottom);
+        const std::vector<Rect> cell_rects
+            = flow(cells, own, kPad, inner_w, kTitleHeight + kPad, &L.controls_bottom);
+        L.params.assign(d.params.size(), Rect { }); // a Hidden param has an empty rectangle
+        for (size_t k = 0; k < shown.size(); k++)
+            L.params[shown[k]] = cell_rects[k];
         if (d.params.empty())
             L.controls_bottom = kTitleHeight;
 
@@ -403,6 +414,99 @@ Rect scope_display(const PanelLayout &L)
 {
     return { kPad, L.controls_bottom + 6, L.width - 2 * kPad,
         L.jacks_top - 8 - (L.controls_bottom + 6) };
+}
+
+EnvelopeEditor envelope_editor(const PanelLayout &L)
+{
+    EnvelopeEditor e;
+    e.area = scope_display(L);
+    const float button_h = (e.area.h - 3 * kEnvButtonGap) / 4;
+    for (int i = 0; i < 4; i++)
+        e.buttons[i] = { e.area.x, e.area.y + (float)i * (button_h + kEnvButtonGap), kEnvButtonW,
+            button_h };
+    e.lcd = { e.area.x + kEnvButtonW + 8, e.area.y, e.area.w - kEnvButtonW - 8, e.area.h };
+    e.readout = { e.lcd.x + 8, e.lcd.y + 4, e.lcd.w - 16, kEnvReadoutH };
+    e.graph = { e.lcd.x + 10, e.readout.bottom() + 6, e.lcd.w - 20,
+        e.lcd.bottom() - 8 - (e.readout.bottom() + 6) };
+    return e;
+}
+
+namespace
+{
+    // a time's share of its segment's room: 5 % at the shortest, all of it at the longest, even
+    // in octaves between (so a 2 ms attack and a 2 s one are both easy to set)
+    float time_share(float ms, float lo, float hi)
+    {
+        const float t = std::log(std::clamp(ms, lo, hi) / lo) / std::log(hi / lo);
+        return 0.05f + 0.95f * t;
+    }
+    float share_time(float share, float lo, float hi)
+    {
+        const float t = std::clamp((share - 0.05f) / 0.95f, 0.f, 1.f);
+        return lo * std::pow(hi / lo, t);
+    }
+} // namespace
+
+float EnvelopeEditor::room(int segment) const
+{
+    static const float kShare[] = { 0.24f, 0.26f, 0.16f, 0.30f }; // attack, decay, hold, release
+    return graph.w * kShare[segment];
+}
+
+std::array<Pt, 5> EnvelopeEditor::points(const Env &v) const
+{
+    const float bottom = graph.bottom(), top = graph.y;
+    const float sustain_y = bottom - std::clamp(v.sustain, 0.f, 1.f) * graph.h;
+    std::array<Pt, 5> p;
+    p[0] = { graph.x, bottom };
+    p[1] = { p[0].x + room(0) * time_share(v.attack, v.attack_lo, v.attack_hi), top };
+    p[2] = { p[1].x + room(1) * time_share(v.decay, v.decay_lo, v.decay_hi), sustain_y };
+    p[3] = { p[2].x + room(2), sustain_y };
+    p[4] = { p[3].x + room(3) * time_share(v.release, v.release_lo, v.release_hi), bottom };
+    return p;
+}
+
+int EnvelopeEditor::handle_at(const Env &v, float x, float y) const
+{
+    const auto p = points(v);
+    int        best = -1;
+    float      best_d = kEnvGrab * kEnvGrab;
+    for (int i = 1; i <= 4; i++)
+    {
+        const float dx = p[(size_t)i].x - x, dy = p[(size_t)i].y - y, d = dx * dx + dy * dy;
+        if (d <= best_d)
+        {
+            best = i;
+            best_d = d;
+        }
+    }
+    return best;
+}
+
+EnvelopeEditor::Env EnvelopeEditor::drag(const Env &v, int handle, float x, float y) const
+{
+    const auto p = points(v);
+    Env        out = v;
+    const float level = std::clamp((graph.bottom() - y) / graph.h, 0.f, 1.f);
+    switch (handle)
+    {
+    case 1:
+        out.attack = share_time((x - p[0].x) / room(0), v.attack_lo, v.attack_hi);
+        break;
+    case 2:
+        out.decay = share_time((x - p[1].x) / room(1), v.decay_lo, v.decay_hi);
+        out.sustain = level;
+        break;
+    case 3:
+        out.sustain = level;
+        break;
+    case 4:
+        out.release = share_time((x - p[3].x) / room(3), v.release_lo, v.release_hi);
+        break;
+    default:
+        break;
+    }
+    return out;
 }
 
 Pt jack_center(const Node &n, size_t port)

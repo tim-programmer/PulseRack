@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <span>
 #include <string_view>
+#include <vector>
 
 namespace rack
 {
@@ -32,7 +33,8 @@ enum class Control : uint8_t
     Slider,
     Switch,
     Button,
-    Selector
+    Selector,
+    Hidden // no control of its own: the panel sets it some other way (FM Synth's envelope graph)
 };
 
 struct PortDesc
@@ -54,6 +56,20 @@ struct ParamDesc
     // A setting the library fixes when the module is made (a reverb's size): a change makes the
     // module again from the patch (its sound starts over); `apply` is not used for it.
     bool rebuild = false;
+};
+
+// A module's own sound, chosen on its panel (FM Synth): the settings it changes, by parameter
+// id; every other setting goes back to its default. The module's "preset" parameter (an Enum
+// whose labels are the presets' names) records which was chosen last.
+struct PresetValue
+{
+    std::string_view param;
+    float            value;
+};
+struct Preset
+{
+    std::string_view              name;
+    std::span<const PresetValue> values;
 };
 
 struct StepData
@@ -124,6 +140,7 @@ struct ModuleDesc
     // Frees what init allocated (a delay line), or null when init allocates nothing. Called on the
     // UI thread when the state is let go, also after a failed init (the state was zeroed first).
     void (*destroy)(void *state) = nullptr;
+    std::span<const Preset> presets = { }; // its own sounds, or none
 };
 
 // Where a port sits among the ports of its kind and direction (the index a wrapper uses).
@@ -132,6 +149,12 @@ struct PortSlots
     size_t sig_in = 0, sig_out = 0, evt_in = 0, evt_out = 0; // counts
 };
 PortSlots count_slots(const ModuleDesc &d);
+
+// The index of the module's "preset" parameter, or -1 when it has none (or no presets).
+int preset_param(const ModuleDesc &d);
+// Every parameter's value for preset `index` (clamped to the presets there are): the preset's
+// own values, the defaults for the rest, and `index` for the preset parameter itself.
+std::vector<float> preset_values(const ModuleDesc &d, size_t index);
 size_t    slot_of(const ModuleDesc &d, size_t port_index);
 
 } // namespace rack

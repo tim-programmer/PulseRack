@@ -493,10 +493,71 @@ struct Driver
             o().y + nd->y * kHp + kPanelBorder + r.y + r.h / 2 - v.y };
     }
     StepGrid grid(uint32_t n) { return step_grid(panel_layout(*node(n)->desc)); }
+
+    // ---- FM Synth: the envelope graph's points drag (one undo step each), the operator buttons
+    // choose which envelope, and the Preset selector sets every control as one undo step
+    void fm_envelope()
+    {
+        const uint32_t fm = e().add_module(cx(), *find_module("fm_synth"));
+        wait();
+        const PanelLayout   &L = panel_layout(*node(fm)->desc);
+        const EnvelopeEditor E = envelope_editor(L);
+        auto env = [&](int op)
+        {
+            const std::string o = "op" + std::to_string(op) + "_";
+            const ModuleDesc &d = *node(fm)->desc;
+            auto range = [&](const char *what)
+            { return d.params[(size_t)find_param(d, (o + what).c_str())]; };
+            return EnvelopeEditor::Env { param(fm, (o + "attack").c_str()),
+                param(fm, (o + "decay").c_str()), param(fm, (o + "sustain").c_str()),
+                param(fm, (o + "release").c_str()), range("attack").min, range("attack").max,
+                range("decay").min, range("decay").max, range("release").min,
+                range("release").max };
+        };
+        auto at = [&](const Pt &p) { return in_panel(fm, Rect { p.x, p.y, 0, 0 }); };
+
+        // operator 1's corner: right and down is a longer decay and a lower sustain, one step
+        const auto before = env(1);
+        const Pt   corner = E.points(before)[2];
+        size_t     u = undos();
+        drag(at(corner), at({ corner.x + 40, corner.y + 20 }), 10);
+        const auto after = env(1);
+        CHECK(after.decay > before.decay * 1.5f && after.sustain < before.sustain - 0.1f);
+        CHECK(after.attack == before.attack && after.release == before.release);
+        CHECK(undos() == u + 1 && hint_has("FM Synth"));
+        click(undo_btn());
+        CHECK(env(1).decay == before.decay && env(1).sustain == before.sustain);
+
+        // OP 3, then its peak to the left: a shorter attack on operator 3 only
+        click(in_panel(fm, E.buttons[2]));
+        const auto three = env(3), one = env(1);
+        const Pt   peak = E.points(three)[1];
+        drag(at(peak), at({ peak.x + 60, peak.y }), 10);
+        CHECK(env(3).attack > three.attack * 2 && env(1).attack == one.attack);
+        // a press away from every point changes nothing
+        u = undos();
+        drag(at({ E.graph.x + 4, E.graph.y + 4 }), at({ E.graph.x + 80, E.graph.y + 40 }), 6);
+        CHECK(undos() == u);
+
+        // the Preset selector's right half: the next preset (Bell), every control, one undo step
+        const Rect sel = L.params[(size_t)find_param(*node(fm)->desc, "preset")];
+        u = undos();
+        click(in_panel(fm, Rect { sel.right() - 30, sel.y + sel.h - 14, 10, 10 }));
+        CHECK(param(fm, "preset") == 1 && undos() == u + 1);
+        CHECK(param(fm, "op2_ratio") == preset_values(*node(fm)->desc, 1)[(size_t)find_param(
+                  *node(fm)->desc, "op2_ratio")]
+            && param(fm, "op1_decay") == 3000);
+        click(undo_btn());
+        CHECK(param(fm, "preset") == 0 && env(3).attack > three.attack * 2); // (as before Bell)
+        CHECK(e().engine.apply_failures() == 0);
+        e().remove_module(cx(), fm); // (the step grid's test that follows wants an empty rack)
+        wait();
+    }
     StepData step(uint32_t n, size_t i) { return node(n)->steps[i]; }
     void     steps()
     {
         wait(0.3);
+        fm_envelope();
         const uint32_t clk = e().add_module(cx(), *find_module("clock"));
         const uint32_t seq = e().add_module(cx(), *find_module("seq"));
         const uint32_t gate = e().add_module(cx(), *find_module("note_to_gate"));

@@ -84,6 +84,9 @@ namespace
         case Control::Button:
             how = "click to switch, right-click: menu";
             break;
+        case Control::Hidden:
+            how = "drag its point on the graph";
+            break;
         }
         return std::string(d.name) + "  ·  " + std::string(p.name) + ": " + format_value(p, value)
             + "      " + how;
@@ -424,6 +427,8 @@ struct PanelView
     std::vector<int>   strip_held_;       // copied at render: the notes the computer keys hold
     Editor::Led        led_;              // copied from the editor at render: what the LED shows
     std::array<int, 2> meter_ { };        // and the output level (Audio Output panels)
+    int                env_op = 0;        // FM Synth: the operator whose envelope the graph shows
+    int                env_handle = -1;   // and its point being dragged (1 .. 4), or -1
 
     // a press on the title or the face: the menu (right button) or a move
     void press_face(Ctx cx, const gp_mouse_event &ev)
@@ -630,6 +635,238 @@ struct PanelView
                 .flex_row()
                 .justify_end()
                 .child(label(corner, 9, with_alpha(faint, 0.7f))));
+        return w;
+    }
+
+    // ---- FM Synth's envelope editor: four operator buttons and an LCD graph whose points drag
+    struct EnvIndex
+    {
+        int attack, decay, sustain, release;
+    };
+    static EnvIndex env_index(const ModuleDesc &d, int op)
+    {
+        const std::string o = "op" + std::to_string(op + 1) + "_";
+        return { find_param(d, (o + "attack").c_str()), find_param(d, (o + "decay").c_str()),
+            find_param(d, (o + "sustain").c_str()), find_param(d, (o + "release").c_str()) };
+    }
+    static EnvelopeEditor::Env env_of(const Node &n, int op)
+    {
+        const EnvIndex   x = env_index(*n.desc, op);
+        const auto      &P = n.desc->params;
+        auto             at = [&](int i) { return n.params[(size_t)i]; };
+        return { at(x.attack), at(x.decay), at(x.sustain), at(x.release), P[(size_t)x.attack].min,
+            P[(size_t)x.attack].max, P[(size_t)x.decay].min, P[(size_t)x.decay].max,
+            P[(size_t)x.release].min, P[(size_t)x.release].max };
+    }
+    void env_move(Ctx cx, float x, float y) // (x, y) in panel pixels
+    {
+        const Node *n = find(cx);
+        Editor     *e = ed.get(cx);
+        if (!n || !e || env_handle < 1)
+            return;
+        const EnvelopeEditor E = envelope_editor(panel_layout(*n->desc));
+        const auto           now = env_of(*n, env_op);
+        const auto           to = E.drag(now, env_handle, x, y);
+        const EnvIndex       ix = env_index(*n->desc, env_op);
+        // one undo step for the whole drag of a point, though it may set two controls
+        const uint64_t merge
+            = (uint64_t)1 << 62 | (uint64_t)node << 16 | (uint64_t)(env_op * 8 + env_handle);
+        const uint32_t id = node;
+        auto put = [&](int i, float before, float after)
+        {
+            if (after != before)
+                e->set_param(cx, id, (size_t)i, after, merge);
+        };
+        put(ix.attack, now.attack, to.attack);
+        put(ix.decay, now.decay, to.decay);
+        put(ix.sustain, now.sustain, to.sustain);
+        put(ix.release, now.release, to.release);
+    }
+    void env_press(Ctx cx, const gp_mouse_event &ev)
+    {
+        const Node *n = find(cx);
+        if (!n || ev.button != GP_MOUSE_LEFT)
+            return;
+        const EnvelopeEditor E = envelope_editor(panel_layout(*n->desc));
+        const float          x = E.lcd.x + ev.local.x, y = E.lcd.y + ev.local.y;
+        env_handle = E.handle_at(env_of(*n, env_op), x, y);
+        cx.notify();
+    }
+    void env_drag(Ctx cx, const gp_mouse_event &ev)
+    {
+        const Node *n = find(cx);
+        if (!n || ev.button != GP_MOUSE_LEFT || env_handle < 1)
+            return;
+        const EnvelopeEditor E = envelope_editor(panel_layout(*n->desc));
+        env_move(cx, E.lcd.x + ev.local.x, E.lcd.y + ev.local.y);
+    }
+    void env_release(Ctx cx, const gp_mouse_event &ev)
+    {
+        if (ev.button != GP_MOUSE_LEFT)
+            return;
+        env_handle = -1;
+        cx.notify();
+    }
+    static std::string ms_text(float ms)
+    {
+        char buf[24];
+        if (ms >= 1000)
+            std::snprintf(buf, sizeof buf, "%.2fs", (double)ms / 1000);
+        else if (ms >= 100)
+            std::snprintf(buf, sizeof buf, "%.0fms", (double)ms);
+        else
+            std::snprintf(buf, sizeof buf, "%.1fms", (double)ms);
+        return buf;
+    }
+    Element envelope_element(const Node &n, const PanelLayout &L) const
+    {
+        // a reflective LCD: pale green glass, dark segments, a black bezel
+        const Color glass_top = rgb(0xbccfa0), glass_bottom = rgb(0xa3b886), ink = rgb(0x1f2a1b);
+        const EnvelopeEditor E = envelope_editor(L);
+        Element              w = div().absolute().left(0).top(0);
+
+        for (int op = 0; op < 4; op++)
+        {
+            const Rect r = E.buttons[op];
+            const bool on = op == env_op;
+            w.child(div()
+                    .absolute()
+                    .left(r.x)
+                    .top(r.y)
+                    .w(r.w)
+                    .h(r.h)
+                    .rounded(3)
+                    .border(1)
+                    .border_color(on ? rgb(0x0c0f0b) : st::kKnobEdge)
+                    .bg_gradient(180,
+                        on ? std::initializer_list<gp_color_stop> { stop(glass_top, 0),
+                                 stop(glass_bottom, 1) }
+                           : std::initializer_list<gp_color_stop> { stop(rgb(0x34363d), 0),
+                                 stop(rgb(0x22242a), 1) })
+                    .shadow(0, on ? 0.f : 2.f, on ? 6.f : 3.f,
+                        on ? with_alpha(glass_top, 0.45f) : with_alpha(kBlack, 0.5f))
+                    .flex_row()
+                    .items_center()
+                    .justify_center()
+                    .cursor_pointer()
+                    .child(label("OP " + std::to_string(op + 1), 10, on ? ink : st::kSubtext)
+                            .font_bold())
+                    .on_mouse_down(
+                        [op](PanelView &self, Ctx cx, const gp_mouse_event &ev)
+                        {
+                            if (ev.button != GP_MOUSE_LEFT)
+                                return;
+                            self.env_op = op;
+                            self.env_handle = -1;
+                            cx.notify();
+                        })
+                    .on_hover([](PanelView &self, Ctx cx, bool inside)
+                        { self.ed.get(cx)->hover(cx, self.node, Editor::kHoverEnvelope, inside); }));
+        }
+
+        // the bezel and the glass
+        const Rect g = E.lcd;
+        w.child(div()
+                .absolute()
+                .left(g.x - 3)
+                .top(g.y - 3)
+                .w(g.w + 6)
+                .h(g.h + 6)
+                .rounded(5)
+                .bg(rgb(0x101210))
+                .border(1)
+                .border_color(st::kKnobEdge));
+        w.child(div()
+                .absolute()
+                .left(g.x)
+                .top(g.y)
+                .w(g.w)
+                .h(g.h)
+                .rounded(2)
+                .bg_gradient(170, { stop(glass_top, 0), stop(glass_bottom, 1) })
+                .shadow(0, 1, 4, with_alpha(kBlack, 0.35f)));
+
+        // the readout: the operator and its four values; the one being dragged is shown solid
+        const auto        v = env_of(n, env_op);
+        const std::string fields[4] = { "A " + ms_text(v.attack), "D " + ms_text(v.decay),
+            "S " + std::to_string((int)std::lround(v.sustain * 100)) + "%", "R " + ms_text(v.release) };
+        const int         lit[5] = { -1, 0, 1, 1, 3 }; // a point's field (2 also sets sustain)
+        Element           row = div()
+                          .absolute()
+                          .left(E.readout.x)
+                          .top(E.readout.y)
+                          .w(E.readout.w)
+                          .h(E.readout.h)
+                          .flex_row()
+                          .items_center()
+                          .gap(14)
+                          .child(label("OP" + std::to_string(env_op + 1), 10, ink).font_bold());
+        for (int f = 0; f < 4; f++)
+        {
+            const bool solid = env_handle > 0
+                && (lit[env_handle] == f || (env_handle == 2 && f == 2) || (env_handle == 3 && f == 2));
+            row.child(label(fields[f], 10, with_alpha(ink, solid || env_handle < 1 ? 0.95f : 0.45f))
+                    .font_bold());
+        }
+        w.child(std::move(row));
+
+        // a faint grid, as an LCD's unlit segments
+        const Rect gr = E.graph;
+        for (int k = 0; k <= 4; k++)
+            w.child(div()
+                    .absolute()
+                    .left(gr.x)
+                    .top(gr.y + gr.h * (float)k / 4)
+                    .w(gr.w)
+                    .h(1)
+                    .bg(with_alpha(ink, k == 4 ? 0.3f : 0.07f)));
+
+        // the other operators faintly, then the chosen one with its area and its points
+        auto path = [&](const std::array<Pt, 5> &pt)
+        {
+            std::vector<gp_point> out;
+            for (const Pt &q : pt)
+                out.push_back({ q.x, q.y });
+            return out;
+        };
+        for (int op = 0; op < 4; op++)
+            if (op != env_op)
+                w.child(polyline(path(E.points(env_of(n, op))))
+                        .stroke_width(1)
+                        .stroke_color(with_alpha(ink, 0.18f)));
+        const auto pts = E.points(v);
+        w.child(polyline(path(pts)).stroke_width(2).stroke_color(ink));
+        for (int k = 1; k <= 4; k++)
+        {
+            const float sz = k == env_handle ? 10.f : 7.f;
+            const Pt    q = pts[(size_t)k];
+            w.child(div()
+                    .absolute()
+                    .left(q.x - sz / 2)
+                    .top(q.y - sz / 2)
+                    .w(sz)
+                    .h(sz)
+                    .bg(k == env_handle ? ink : glass_top)
+                    .border(2)
+                    .border_color(ink));
+        }
+
+        // one element over the glass takes the presses and the drags
+        w.child(div()
+                .absolute()
+                .left(g.x)
+                .top(g.y)
+                .w(g.w)
+                .h(g.h)
+                .cursor_pointer()
+                .on_mouse_down([](PanelView &self, Ctx cx, const gp_mouse_event &ev)
+                    { self.env_press(cx, ev); })
+                .on_drag([](PanelView &self, Ctx cx, const gp_mouse_event &ev)
+                    { self.env_drag(cx, ev); })
+                .on_mouse_up([](PanelView &self, Ctx cx, const gp_mouse_event &ev)
+                    { self.env_release(cx, ev); })
+                .on_hover([](PanelView &self, Ctx cx, bool inside)
+                    { self.ed.get(cx)->hover(cx, self.node, Editor::kHoverEnvelope, inside); }));
         return w;
     }
 
@@ -1250,6 +1487,8 @@ struct PanelView
                     { self.click(cx, i, ev, w); });
             break;
         }
+        case Control::Hidden: // (not drawn: render skips it)
+            break;
         }
         cell.on_hover([i](PanelView &self, Ctx cx, bool inside)
             { self.ed.get(cx)->hover(cx, self.node, (int)i, inside); });
@@ -1395,7 +1634,8 @@ struct PanelView
                     { self.ed.get(cx)->hover(cx, self.node, Editor::kHoverTitle, inside); }));
 
         for (size_t i = 0; i < d.params.size(); i++)
-            p.child(control(d, i, n->params[i], L.params[i], cc.chip));
+            if (d.params[i].control != Control::Hidden)
+                p.child(control(d, i, n->params[i], L.params[i], cc.chip));
         for (size_t i = 0; i < d.ports.size(); i++)
             p.child(jack(d, i, L.ports[i], L.jacks[i]));
         p.child(activity_led());
@@ -1410,6 +1650,8 @@ struct PanelView
             p.child(scope_element(
                 *n, L, it == e->scopes.end() ? nullptr : &it->second, e->audio_running()));
         }
+        if (d.id == "fm_synth") // the operators' envelopes, between its controls and its jacks
+            p.child(envelope_element(*n, L));
         if (d.id == "out") // the output level, between its controls and its jacks
             p.child(meters(L));
         if (has_midi_device(d)) // the MIDI device it listens or sends to, under its controls
@@ -2468,6 +2710,10 @@ std::string Editor::describe_item(uint32_t node, int item) const
                                  : n->sample + (why.empty() ? "" : "  (not loaded: " + why + ")"))
             + "      click to choose a WAV file";
     }
+    if (item == kHoverEnvelope)
+        return std::string(d.name)
+            + "  ·  the envelope of the operator chosen on the left: drag its points (the peak: "
+              "attack; the corner: decay and sustain; the end: release)";
     if (item == kHoverStrip)
         return std::string(d.name)
             + "  ·  press the keys to play, drag across them to glide; the computer keys "
@@ -3887,7 +4133,7 @@ bool Editor::move_module(Ctx cx, uint32_t node, int x, int y)
     return true;
 }
 
-void Editor::set_param(Ctx cx, uint32_t node, size_t param, float value)
+void Editor::set_param(Ctx cx, uint32_t node, size_t param, float value, uint64_t merge)
 {
     const Node *n = engine.patch().find(node);
     if (!n || param >= n->params.size())
@@ -3895,9 +4141,19 @@ void Editor::set_param(Ctx cx, uint32_t node, size_t param, float value)
     last_ctrl_node = node;
     last_ctrl_param = (int)param;
     checkpoint(cx, std::string(n->desc->name) + " " + std::string(n->desc->params[param].name),
-        (uint64_t)1 << 63 | (uint64_t)node << 16
-            | param); // a drag or a run of wheel notches: one step
-    engine.set_param(node, param, value);
+        merge ? merge
+              : (uint64_t)1 << 63 | (uint64_t)node << 16
+                | param); // a drag or a run of wheel notches: one step
+    if ((int)param == preset_param(*n->desc))
+    { // a preset sets every control of the module (in the same undo step)
+        const std::vector<float> values
+            = preset_values(*n->desc, (size_t)std::max(0l, std::lround(value)));
+        for (size_t i = 0; i < values.size(); i++)
+            engine.set_param(node, i, values[i]);
+        n = engine.patch().find(node);
+    }
+    else
+        engine.set_param(node, param, value);
     touch(cx);
     auto it = panels.find(node);
     if (it != panels.end())

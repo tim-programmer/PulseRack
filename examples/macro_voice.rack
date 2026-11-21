@@ -1,0 +1,21 @@
+# A sequence of bells with the body on the left and the metallic partials on the right.
+pulserack 1
+node 1 melody x=0 y=0
+param 1 bpm 104
+param 1 division 12
+param 1 root 45
+param 1 scale 3
+param 1 seed 23
+node 2 macro_voice x=16 y=0
+param 2 model 3
+param 2 spread 0.58
+param 2 color 0.8
+param 2 morph 0.43
+param 2 decay 480
+node 3 lfo x=16 y=26
+param 3 frequency 0.19
+node 4 out x=32 y=0
+cable 1.note -> 2.note
+cable 3.out -> 2.morph
+cable 2.out -> 4.l
+cable 2.aux -> 4.r

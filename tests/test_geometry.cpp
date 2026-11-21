@@ -22,7 +22,12 @@ TEST(geometry_every_panel_fits_and_nothing_overlaps)
         CHECK(L.params.size() == d->params.size() && L.ports.size() == d->ports.size());
         CHECK(L.fits()); // controls end above the jacks
         const Rect        panel { 0, kTitleHeight, L.width, L.height - kTitleHeight };
-        std::vector<Rect> all = L.params;
+        std::vector<Rect> all; // the controls drawn (a Hidden param has none) and the jacks
+        for (size_t i = 0; i < d->params.size(); i++)
+            if (d->params[i].control != Control::Hidden)
+                all.push_back(L.params[i]);
+            else
+                CHECK(L.params[i].w == 0 && L.params[i].h == 0);
         all.insert(all.end(), L.ports.begin(), L.ports.end());
         for (size_t i = 0; i < all.size(); i++)
         {
@@ -49,13 +54,17 @@ TEST(geometry_selectors_take_a_row_and_rows_are_in_descriptor_order)
     for (const ModuleDesc *d : all_modules())
     {
         const PanelLayout &L = panel_layout(*d);
+        const Rect        *before = nullptr; // the last control drawn
         for (size_t i = 0; i < d->params.size(); i++)
         {
+            if (d->params[i].control == Control::Hidden)
+                continue;
             if (d->params[i].control == Control::Selector)
                 CHECK(std::fabs(L.params[i].w - (L.width - 2 * kPad)) < 0.01f);
-            if (i > 0) // reading order: same row to the right, or a lower row
-                CHECK(L.params[i].y > L.params[i - 1].y
-                    || (L.params[i].y == L.params[i - 1].y && L.params[i].x > L.params[i - 1].x));
+            if (before) // reading order: same row to the right, or a lower row
+                CHECK(L.params[i].y > before->y
+                    || (L.params[i].y == before->y && L.params[i].x > before->x));
+            before = &L.params[i];
         }
     }
 }
@@ -327,3 +336,41 @@ TEST(geometry_the_scope_screen_fits)
         CHECK(!r.overlaps(p));
 }
 
+
+TEST(geometry_fm_synth_envelope_editor_fits_and_its_points_drag)
+{
+    const ModuleDesc  &d = *find_module("fm_synth");
+    const PanelLayout &L = panel_layout(d);
+    const EnvelopeEditor E = envelope_editor(L);
+    // between the knobs and the jacks, with room for a readable graph
+    CHECK(E.area.y > L.controls_bottom && E.area.bottom() < L.jacks_top);
+    CHECK(E.graph.h >= 60 && E.graph.w >= 400);
+    for (const Rect &b : E.buttons)
+        CHECK(b.h >= 20 && !b.overlaps(E.lcd));
+
+    const EnvelopeEditor::Env v { 10, 500, 0.5f, 300, 1, 5000, 5, 10000, 5, 10000 };
+    const auto                p = E.points(v);
+    for (size_t k = 1; k < p.size(); k++) // left to right, inside the graph
+        CHECK(p[k].x > p[k - 1].x && p[k].x <= E.graph.right() && p[k].y >= E.graph.y
+            && p[k].y <= E.graph.bottom());
+    CHECK(std::fabs(p[2].y - (E.graph.y + E.graph.h / 2)) < 0.01f); // sustain half way up
+    // each point is found where it is drawn
+    for (int k = 1; k <= 4; k++)
+        CHECK(E.handle_at(v, p[(size_t)k].x + 2, p[(size_t)k].y - 2) == k);
+    CHECK(E.handle_at(v, E.graph.x + 1, E.graph.y + 1) == -1);
+    // dragging a point to where it is changes nothing (the mapping goes both ways)
+    for (int k = 1; k <= 4; k++)
+    {
+        const auto same = E.drag(v, k, p[(size_t)k].x, p[(size_t)k].y);
+        CHECK(std::fabs(same.attack - v.attack) < 0.01f && std::fabs(same.decay - v.decay) < 0.1f
+            && std::fabs(same.sustain - v.sustain) < 0.001f
+            && std::fabs(same.release - v.release) < 0.1f);
+    }
+    // right is longer, up is louder, and the ends are the settings' ranges
+    CHECK(E.drag(v, 1, p[1].x + 30, p[1].y).attack > v.attack);
+    CHECK(E.drag(v, 1, E.graph.x - 50, p[1].y).attack == 1);
+    CHECK(E.drag(v, 4, E.graph.right() + 200, p[4].y).release == 10000);
+    const auto corner = E.drag(v, 2, p[2].x - 20, E.graph.y - 30);
+    CHECK(corner.decay < v.decay && corner.sustain == 1);
+    CHECK(E.drag(v, 3, p[3].x, E.graph.bottom() + 5).sustain == 0);
+}

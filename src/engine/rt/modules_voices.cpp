@@ -11,9 +11,12 @@
 #include "engine/model/wav.h"
 #include "engine/rt/modules_common.h"
 
+#include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <type_traits>
 
 namespace rack
 {
@@ -970,6 +973,329 @@ namespace
     };
     static_assert(std::size(kGrainParams) == GR_COUNT);
 
+    constexpr std::string_view kChordShapes[]
+        = { "triad", "seventh", "sus2", "sus4", "add 9", "open" };
+    // Each shape's tones as scale degrees above the note's (-1: none). "open" is the root, the
+    // fifth and the tenth.
+    constexpr int kChordDegrees[][4] = {
+        { 0, 2, 4, -1 },
+        { 0, 2, 4, 6 },
+        { 0, 1, 4, -1 },
+        { 0, 3, 4, -1 },
+        { 0, 2, 4, 8 },
+        { 0, 4, 9, -1 },
+    };
+    constexpr std::string_view kKeys[]
+        = { "C", "Db", "D", "Eb", "E", "F", "Gb", "G", "Ab", "A", "Bb", "B" }; // (no "#": a comment in a patch file)
+
+    enum ChordParam
+    {
+        CH_KEY,
+        CH_SCALE,
+        CH_SHAPE,
+        CH_LEAD,
+        CH_STRUM,
+        CH_ARP,
+        CH_RATE,
+        CH_COLOR,
+        CH_ATTACK,
+        CH_RELEASE,
+    };
+
+    struct ChordNode
+    {
+        VoiceCore vc;
+        float     phase[4], gain[4];
+        float     strum, rate, color, attack, release;
+        double    age;
+        int       key, scale, shape, tones;
+        uint8_t   notes[4];
+        bool      arpeggiate, lead;
+    };
+
+    template <auto Member> bool chord_set(void *s, float value)
+    {
+        auto &field = as<ChordNode>(s)->*Member;
+        field = static_cast<std::remove_reference_t<decltype(field)>>(value);
+        return true;
+    }
+
+    const PortDesc kChordPorts[] = {
+        { "note", "NOTE", Kind::Event, false },
+        { "pitch", "PITCH", Kind::Signal, false },
+        { "out", "OUT", Kind::Signal, true },
+    };
+    const ParamDesc kChordParams[] = {
+        param("key", "Key", "", 0, 11, 0, Scale::Enum, Control::Selector, chord_set<&ChordNode::key>,
+            kKeys),
+        param("scale", "Scale", "", 0, 3, 0, Scale::Enum, Control::Selector,
+            chord_set<&ChordNode::scale>, kScaleNames),
+        param("shape", "Shape", "", 0, 5, 0, Scale::Enum, Control::Selector,
+            chord_set<&ChordNode::shape>, kChordShapes),
+        param("lead", "Voice leading", "", 0, 1, 1, Scale::Toggle, Control::Button,
+            chord_set<&ChordNode::lead>),
+        param("strum", "Strum", "ms", 0, 200, 0, Scale::Linear, Control::Knob,
+            chord_set<&ChordNode::strum>),
+        param("arp", "Arpeggiate", "", 0, 1, 0, Scale::Toggle, Control::Button,
+            chord_set<&ChordNode::arpeggiate>),
+        param("rate", "Arp rate", "notes/s", 1, 24, 8, Scale::Log, Control::Knob,
+            chord_set<&ChordNode::rate>),
+        param("color", "Brightness", "", 0, 1, 0.4f, Scale::Linear, Control::Knob,
+            chord_set<&ChordNode::color>),
+        param("attack", "Attack", "ms", 1, 500, 8, Scale::Log, Control::Knob, [](void *s, float v)
+            { return set_times<ChordNode, &ChordNode::attack, &ChordNode::release>(s, v, true); }),
+        param("release", "Release", "ms", 5, 4000, 260, Scale::Log, Control::Knob,
+            [](void *s, float v)
+            { return set_times<ChordNode, &ChordNode::attack, &ChordNode::release>(s, v, false); }),
+    };
+
+    // The chord for the note now sounding, led from the one before when Voice leading is on.
+    void chord_voice(ChordNode &n)
+    {
+        n.tones = chord_notes(n.vc.note, n.key, n.scale, n.shape, n.notes,
+            n.lead ? n.tones : 0, n.notes);
+    }
+
+    bool chord_init(void *s, const NodeContext &ctx, const float *p)
+    {
+        auto &n = *as<ChordNode>(s);
+        vc_init(n.vc, ctx.sample_rate, p[CH_ATTACK], p[CH_RELEASE]);
+        for (size_t i = 0; i < std::size(kChordParams); ++i)
+            kChordParams[i].apply(s, p[i]);
+        return true;
+    }
+
+    void chord_reset(void *s)
+    {
+        auto &n = *as<ChordNode>(s);
+        vc_reset(n.vc);
+        std::fill_n(n.phase, 4, 0.f);
+        std::fill_n(n.gain, 4, 0.f);
+        n.age = 0;
+        n.tones = 0;
+        chord_voice(n);
+    }
+
+    void chord_process(void *s, NodeIo &io)
+    {
+        auto       &n = *as<ChordNode>(s);
+        const float sr = static_cast<float>(n.vc.sr);
+        const float fade = std::min(1.f, 500.f / sr);
+        auto        render = [&](size_t begin, size_t end)
+        {
+            const int tones = n.tones;
+            float     frequency[4] { };
+            for (int tone = 0; tone < tones; ++tone)
+                frequency[tone] = note_hz(n.notes[tone]);
+            for (size_t i = begin; i < end; ++i)
+            {
+                const float envelope = vc_next(n.vc) * vc_level(n.vc);
+                const float pitch = io.sig_in[0] ? std::exp2(pitch_at(io.sig_in[0], i)) : 1.f;
+                const int   arpeggio
+                    = n.arpeggiate ? static_cast<int>(std::fmod(n.age * n.rate, tones)) : 0;
+                float mix = 0;
+                for (int tone = 0; tone < 4; ++tone)
+                {
+                    const bool playing = tone < tones
+                        && (n.arpeggiate ? tone == arpeggio : n.age * 1000 >= tone * n.strum);
+                    n.gain[tone] += ((playing ? 1.f : 0.f) - n.gain[tone]) * fade;
+                    if (tone >= tones)
+                        continue;
+                    const float hz = static_cast<float>(clamp_hz(frequency[tone] * pitch, n.vc.sr));
+                    const float angle = n.phase[tone] * kTwoPi;
+                    float       wave = std::sin(angle);
+                    if (hz * 2 < 0.45f * sr)
+                        wave += 0.32f * n.color * std::sin(2 * angle);
+                    mix += wave * n.gain[tone];
+                    n.phase[tone] += hz / sr;
+                    n.phase[tone] -= std::floor(n.phase[tone]);
+                }
+                if (io.sig_out[0])
+                    io.sig_out[0][i] = to_sample(mix * envelope * (n.arpeggiate ? 0.65f : 0.18f));
+                if (n.vc.stage == 1 || n.vc.stage == 2)
+                    n.age += 1.0 / sr;
+            }
+        };
+        voice_block(n.vc, *io.evt_in[0], io.frames, render,
+            [&](int event)
+            {
+                if (event == VC_STRIKE || event == VC_GLIDE)
+                    chord_voice(n);
+                if (event == VC_STRIKE)
+                    n.age = 0;
+            });
+    }
+
+    constexpr std::string_view kMacroModels[]
+        = { "Harmonic", "Phase modulation", "Cluster", "Bell" };
+
+    struct MacroNode
+    {
+        VoiceCore vc;
+        float     phase[8];
+        float     root, spread, color, morph, decay_coefficient, strike;
+        float     main_gain, aux_gain;
+        int       model;
+        bool      drone, trigger_high;
+    };
+
+    template <auto Member> bool macro_set(void *s, float value)
+    {
+        auto &field = as<MacroNode>(s)->*Member;
+        field = static_cast<std::remove_reference_t<decltype(field)>>(value);
+        return true;
+    }
+
+    const PortDesc kMacroPorts[] = {
+        { "note", "NOTE", Kind::Event, false },
+        { "pitch", "PITCH", Kind::Signal, false },
+        { "color", "COLOR", Kind::Signal, false },
+        { "morph", "MORPH", Kind::Signal, false },
+        { "trig", "TRIG", Kind::Signal, false },
+        { "out", "OUT", Kind::Signal, true },
+        { "aux", "AUX", Kind::Signal, true },
+    };
+    const ParamDesc kMacroParams[] = {
+        param("model", "Engine", "", 0, 3, 0, Scale::Enum, Control::Selector,
+            macro_set<&MacroNode::model>, kMacroModels),
+        param("root", "Root note", "note", 0, 127, 48, Scale::Int, Control::Knob,
+            macro_set<&MacroNode::root>),
+        param("spread", "Spread", "", 0, 1, 0.25f, Scale::Linear, Control::Knob,
+            macro_set<&MacroNode::spread>),
+        param("color", "Color", "", 0, 1, 0.4f, Scale::Linear, Control::Knob,
+            macro_set<&MacroNode::color>),
+        param("morph", "Morph", "", 0, 1, 0.35f, Scale::Linear, Control::Knob,
+            macro_set<&MacroNode::morph>),
+        param("decay", "Decay", "ms", 15, 4000, 320, Scale::Log, Control::Knob,
+            [](void *s, float v)
+            {
+                auto &n = *as<MacroNode>(s);
+                n.vc.release_k = n.decay_coefficient = fall_k(v, n.vc.sr);
+                return true;
+            }),
+        param("drone", "Drone", "", 0, 1, 0, Scale::Toggle, Control::Button,
+            macro_set<&MacroNode::drone>),
+    };
+
+    bool macro_init(void *s, const NodeContext &ctx, const float *p)
+    {
+        auto &n = *as<MacroNode>(s);
+        vc_init(n.vc, ctx.sample_rate, 3.f, 320.f);
+        for (size_t i = 0; i < std::size(kMacroParams); ++i)
+            kMacroParams[i].apply(s, p[i]);
+        return true;
+    }
+
+    void macro_reset(void *s)
+    {
+        auto &n = *as<MacroNode>(s);
+        vc_reset(n.vc);
+        std::fill_n(n.phase, std::size(n.phase), 0.f);
+        n.strike = n.main_gain = n.aux_gain = 0;
+        n.trigger_high = false;
+    }
+
+    void macro_process(void *s, NodeIo &io)
+    {
+        auto       &n = *as<MacroNode>(s);
+        const float sr = static_cast<float>(n.vc.sr);
+        const float slew = std::min(1.f, 900.f / sr);
+        auto        render = [&](size_t begin, size_t end)
+        {
+            const float root_hz = note_hz(static_cast<uint8_t>(n.root));
+            const float held_hz = note_hz(n.vc.note);
+            for (size_t i = begin; i < end; ++i)
+            {
+                const float trigger = pitch_at(io.sig_in[3], i);
+                if (!n.trigger_high && trigger >= 0.5f)
+                    n.strike = 1.f;
+                n.trigger_high = n.trigger_high ? trigger > 0.25f : trigger >= 0.5f;
+                const float level = std::max(n.strike, vc_next(n.vc) * vc_level(n.vc));
+                n.strike *= n.decay_coefficient;
+                n.main_gain += (std::max(level, n.drone ? 1.f : 0.f) - n.main_gain) * slew;
+                n.aux_gain += (std::sqrt(std::max(level, n.drone ? 1.f : 0.f)) - n.aux_gain) * slew;
+
+                const float base = n.vc.stage ? held_hz : root_hz;
+                const float hz = base * (io.sig_in[0] ? std::exp2(pitch_at(io.sig_in[0], i)) : 1.f);
+                const float color = std::clamp(n.color + pitch_at(io.sig_in[1], i), 0.f, 1.f);
+                const float morph = std::clamp(n.morph + pitch_at(io.sig_in[2], i), 0.f, 1.f);
+                // Fade partials as they approach Nyquist so pitch CV can sweep them smoothly.
+                auto angle = [&](size_t slot, float ratio)
+                {
+                    float      &p = n.phase[slot];
+                    const float radians = p * kTwoPi;
+                    p += std::min(hz * ratio / sr, 0.49f);
+                    p -= std::floor(p);
+                    return radians;
+                };
+                auto partial = [&](size_t slot, float ratio)
+                {
+                    const float weight = std::clamp((0.49f - hz * ratio / sr) * 20.f, 0.f, 1.f);
+                    return std::sin(angle(slot, ratio)) * weight;
+                };
+
+                float main = 0, aux = 0;
+                switch (n.model)
+                {
+                case 0: // Draw out a moving group of upper harmonics.
+                    main = 0.7f * partial(0, 1.f);
+                    aux = 0.65f * partial(7, 0.5f);
+                    for (size_t h = 2; h <= 7; ++h)
+                    {
+                        const float distance = (static_cast<float>(h) - 2.f - 5.f * morph);
+                        const float width = 1.f + 2.f * n.spread;
+                        const float weight = color * 0.35f / (1.f + distance * distance / width);
+                        const float tone = partial(h - 1, static_cast<float>(h)) * weight;
+                        main += tone;
+                        aux += (h % 2 ? -tone : tone) * 0.35f * n.spread;
+                    }
+                    break;
+                case 1: // Quadrature carrier taps give two views of a shared phase modulation.
+                {
+                    const float ratio = 1.f + std::round(n.spread * 6.f);
+                    const float mod = partial(1, ratio);
+                    const float width
+                        = std::clamp((0.45f * sr / std::max(hz, 1.f) - 1.f) / ratio, 0.f, 3.f);
+                    const float carrier = angle(0, 1.f);
+                    const float phase = carrier + color * width * mod;
+                    const float gain = 0.8f * std::clamp((0.49f - hz / sr) * 20.f, 0.f, 1.f);
+                    main = gain * std::sin(phase);
+                    aux = gain * std::sin(phase + morph * 1.5707963f);
+                    break;
+                }
+                case 2: // A center oscillator with oppositely detuned, differently colored sides.
+                {
+                    const float delta = 0.002f + 0.035f * n.spread;
+                    const float center = partial(0, 1.f);
+                    const float low
+                        = partial(1, 1.f - delta) + 0.35f * color * partial(3, 2.f - 2.f * delta);
+                    const float high
+                        = partial(2, 1.f + delta) + 0.35f * color * partial(4, 3.f + 3.f * delta);
+                    main = 0.35f * center + 0.4f * std::lerp(low, high, morph);
+                    aux = 0.35f * center + 0.4f * std::lerp(high, low, morph);
+                    break;
+                }
+                case 3: // Stretch the partials of a bell, then mix body and strike separately.
+                {
+                    const float body
+                        = 0.65f * partial(0, 1.f) + 0.21f * partial(1, 2.f + 0.4f * n.spread);
+                    const float metal = 0.36f * partial(2, 3.f + 1.2f * n.spread)
+                        + 0.26f * partial(3, 5.f + 2.1f * n.spread);
+                    const float brightness = color * (n.drone ? 1.f : 0.25f + 0.75f * level);
+                    main = 0.75f * body + brightness * morph * metal;
+                    aux = 0.3f * body + brightness * metal;
+                    break;
+                }
+                }
+                if (io.sig_out[0])
+                    io.sig_out[0][i] = to_sample(std::clamp(main * n.main_gain * 0.72f, -1.f, 1.f));
+                if (io.sig_out[1])
+                    io.sig_out[1][i] = to_sample(std::clamp(aux * n.aux_gain * 0.72f, -1.f, 1.f));
+            }
+        };
+        voice_block(n.vc, *io.evt_in[0], io.frames, render, [](int) { });
+    }
+
 } // namespace
 
 RACK_DESC(kSyncVoiceDesc, "sync_voice", "Sync voice", kVoice, 8, SyncNode, kSyncPorts,
@@ -991,6 +1317,14 @@ RACK_DESC_D(kGrainVoiceDesc, "grain_voice", "Grain voice", kVoice, 12, GrainNode
     kGrainParams, grain_init, grain_reset, grain_process, grain_destroy,
     "Clouds of short grains of a WAV file, at the pitch of each note");
 
+RACK_DESC(kChordVoiceDesc, "chord_voice", "Chord Voice", kVoice, 16, ChordNode, kChordPorts,
+    kChordParams, false, chord_init, chord_reset, chord_process, nullptr, nullptr,
+    "A chord in key from one note, led smoothly from the last; strum it or play it as an arpeggio");
+
+RACK_DESC(kMacroVoiceDesc, "macro_voice", "Macro Voice", kVoice, 16, MacroNode, kMacroPorts,
+    kMacroParams, false, macro_init, macro_reset, macro_process, nullptr, nullptr,
+    "Four synthesis engines with shared sound controls, CV, and two related outputs");
+
 bool grain_load(void *state, const SampleData &d)
 {
     auto *n = as<GrainNode>(state);
@@ -1005,6 +1339,75 @@ bool grain_load(void *state, const SampleData &d)
     n->frames = (uint32_t)d.frames.size();
     n->rate = d.rate;
     return true;
+}
+
+
+int chord_notes(int note, int key, int scale, int shape, const uint8_t *previous, int count,
+    uint8_t out[4])
+{
+    scale = std::clamp(scale, 0, static_cast<int>(std::size(kScaleSize)) - 1);
+    shape = std::clamp(shape, 0, static_cast<int>(std::size(kChordDegrees)) - 1);
+    const int  size = kScaleSize[scale];
+    const int *steps = kScaleSteps[scale];
+    // The note's degree: down to the nearest note of the scale.
+    const int  above = note - key;
+    const int  octave = above >= 0 ? above / 12 : -((11 - above) / 12);
+    const int  semitone = above - 12 * octave;
+    int        index = 0;
+    while (index + 1 < size && steps[index + 1] <= semitone)
+        ++index;
+    const int base = octave * size + index;
+
+    int root[4], tones = 0;
+    for (const int offset : kChordDegrees[shape])
+    {
+        if (offset < 0)
+            continue;
+        const int d = base + offset;
+        const int o = d >= 0 ? d / size : -((size - 1 - d) / size);
+        root[tones++] = key + 12 * o + steps[d - o * size];
+    }
+
+    int best[4];
+    std::copy_n(root, tones, best);
+    if (count > 0)
+    {
+        // Every inversion, at the octave nearest the chord before and an octave either side:
+        // the one whose notes are each nearest a note of the chord before. A light pull towards
+        // the note played keeps the chords from drifting far from the melody.
+        int best_cost = INT32_MAX;
+        for (int inversion = 0; inversion < tones; ++inversion)
+        {
+            int voiced[4];
+            for (int t = 0; t < tones; ++t)
+                voiced[t] = root[t] + (t < inversion ? 12 : 0);
+            std::sort(voiced, voiced + tones);
+            const int gap = previous[0] - voiced[0];
+            const int nearest_octave = 12 * ((gap + (gap >= 0 ? 6 : -6)) / 12);
+            for (int shift = nearest_octave - 12; shift <= nearest_octave + 12; shift += 12)
+            {
+                int candidate[4];
+                for (int t = 0; t < tones; ++t)
+                    candidate[t] = voiced[t] + shift;
+                int cost = std::abs(candidate[0] + candidate[tones - 1] - 2 * note) / 6;
+                for (int t = 0; t < tones; ++t)
+                {
+                    int nearest = INT32_MAX;
+                    for (int p = 0; p < count; ++p)
+                        nearest = std::min(nearest, std::abs(candidate[t] - previous[p]));
+                    cost += nearest;
+                }
+                if (cost < best_cost)
+                {
+                    best_cost = cost;
+                    std::copy_n(candidate, tones, best);
+                }
+            }
+        }
+    }
+    for (int t = 0; t < tones; ++t)
+        out[t] = static_cast<uint8_t>(std::clamp(best[t], 0, 127));
+    return tones;
 }
 
 } // namespace rack

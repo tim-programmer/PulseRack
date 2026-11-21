@@ -422,3 +422,133 @@ envelope and amplifier, so it sounds with nothing else patched.
 
 **Not done** (milestone 1 stops here): the real-time protocol, any GUI, panel layout, undo, a `reset`-less "panic" for stuck notes, WAV
 comparison of the three sample types (they are each exact against the library, not against each other), MSVC `/W4 /WX`.
+
+## Generative Melody and Chord Voice
+
+**Generative Melody** loops up to 32 steps of a melody in a scale. Root and Scale set
+the pitches. The loop is a walk through the scale from the root: most notes move to a
+neighbouring degree or repeat, some move a third, and a few leap (at most a fifth, or a
+minor sixth in the pentatonic scale) or go back to the root. The walk is pulled towards
+the middle of its range, which runs from three degrees below the root to four above the
+octave. The first step is always the root.
+
+Density sets how many steps play: lower, and more steps rest, the off-beats first. Accent
+sets how many notes are louder (velocity 118 rather than 82), the beats first. Both take
+steps away or add them in a fixed order, so turning them keeps the loop's shape. Gate
+length is the share of each step a note is held; at 100 % the notes join up.
+
+Mutation is the chance that a step changes when it plays. A changed step moves one or two
+degrees and sometimes gets a new rest or accent, so the loop drifts rather than jumps;
+the default 5 % changes about one step every three times round an 8-step loop. Lock holds
+the current loop. The patch saves the seed and controls. Reopening it starts from the
+seeded loop.
+
+The internal clock runs at 24 pulses per quarter note. Division sets the pulses per
+step, so 6 gives sixteenth notes and 24 gives quarter notes. To follow the rack or DAW
+transport, patch Clock, MIDI Clock, or Host Clock into CLOCK and turn on External
+clock. A start event rewinds the loop and a stop event releases the current note.
+
+**Chord Voice** plays a chord in a key from the latest held input note. Key and Scale
+(the same scales as Generative Melody) set the key; a note outside the scale moves down to
+the nearest note in it. Shape stacks the chord from that scale's notes: a triad, a seventh,
+sus2, sus4, add 9, or open (root, fifth and tenth). So in C major, C plays C major, D plays
+D minor and B plays B diminished. In the pentatonic scale the shapes stack the pentatonic
+notes, which gives open, fourth-based chords.
+
+With Voice leading on (the default), each chord is the inversion and octave whose notes are
+nearest the chord before, with a light pull towards the note played, so the voices move by
+small steps even when the melody leaps. Off, every chord is in root position on its note.
+A key is saved by name with flats (Db, Eb, Gb, Ab, Bb), as `#` starts a comment in a patch
+file.
+
+Strum delays each successive tone, from the lowest up. Switch on Arpeggiate to cycle upward
+through the tones at Arp rate. Brightness adds a second harmonic, and Attack and Release
+shape the output. PITCH shifts all tones together in octaves.
+
+Open `examples/generative_chords.rack` to hear the two modules through a reverb.
+
+## Macro Voice
+
+Macro Voice shares a set of controls across four synthesis engines. Spread adjusts
+the relationship between oscillators or partials, Color controls upper spectral
+content, and Morph changes the balance or phase relationship between the two outputs.
+COLOR and MORPH CV add to their knobs. PITCH shifts the frequency by one octave per
+signal unit.
+
+| Engine | OUT | AUX |
+| --- | --- | --- |
+| Harmonic | Fundamental and a moving band of harmonics | Lower octave with alternating upper harmonics |
+| Phase modulation | Carrier shaped by an integer-ratio modulator | Phase-shifted carrier |
+| Cluster | Center and two detuned oscillators | Detuned oscillators with their blend reversed |
+| Bell | Bell body with a variable amount of metallic partials | More of the metallic partials |
+
+Patch note events into NOTE for a velocity-sensitive voice with a held envelope.
+A rising edge at TRIG fires a one-shot at the root pitch or current note. Decay sets
+the one-shot length and note release. Drone keeps the oscillator audible for
+continuous modulation. The `examples/macro_voice.rack` factory patch places the Bell
+engine's two outputs in stereo.
+
+## FM Synth
+
+**FM Synth** (`fm_synth`, 46 HP) is a complete polyphonic instrument in one module: four FM
+operators, eight voices, its own presets, a chorus, a ping-pong delay and an arpeggiator.
+It is the one exception to *No polyphony* above: its voices are allocated inside the module,
+and everything around it in the rack stays monophonic. Its sound processing is PulseRack's
+own (`src/engine/rt/modules_fm_synth.cpp`); the arpeggiator and its clock are PulseCoreLib's.
+
+**Operators.** Each of the four has Ratio (a multiple of the note: x0.5 to x16, then the
+inharmonic x1.41, x2.76, x3.5 and x5.4 for bells and metal), Level, and an envelope
+(Attack, Decay to Sustain, Release). An operator that is heard is as loud as its Level; one
+that modulates another adds up to about 7 radians of phase at full Level (the square of the
+Level, so the knob is even to the ear). Operator 4 can modulate itself (Op 4 feedback).
+
+**The envelope editor.** The envelopes have no knobs. Under the knobs, four buttons (OP 1 to
+OP 4) choose an operator, and an LCD shows its envelope: the values on the top line and the
+shape below, with the other three operators' envelopes drawn faintly behind it. Four points
+drag: the peak (left and right: Attack), the corner (Decay, and up and down: Sustain), the end
+of the sustain (Sustain only) and the end (Release). Each time takes up to its own share of the
+graph's width, from 5 % at its shortest setting to all of its share at its longest, evenly in
+octaves between, so 2 ms and 2 s are both easy to set. A drag of one point is one undo step,
+though it may change two settings. The envelope settings are still ordinary settings (saved,
+set by presets, able to be automated); their control is `Control::Hidden`, which takes no
+place in the panel's layout (`src/ui/geometry.h`, *EnvelopeEditor*).
+
+**Algorithms** (which operators modulate which, always a higher number into a lower one; the
+operators after the last `>` of each chain are heard):
+
+| Algorithm | Wiring | Heard |
+| --- | --- | --- |
+| `4>3>2>1` | one stack | 1 |
+| `4+3>2>1` | 4 and 3 both into 2 | 1 |
+| `4>3,2>1` | 4 into 3; 3 and 2 into 1 | 1 |
+| `4>3 2>1` | two pairs | 1, 3 |
+| `4>3,2,1` | 4 into each of the others | 1, 2, 3 |
+| `4>3>2 1` | a stack of three, and a sine | 1, 2 |
+| `4>3 2 1` | one pair, and two sines | 1, 2, 3 |
+| `4 3 2 1` | four sines (an organ) | all |
+
+**Sound.** Brightness scales every modulator together (0 to 2; the BRIGHT input adds to
+it). Velocity sets how much the key's velocity changes both the loudness and the
+brightness. Modulation is lessened above about 400 Hz, where it would only add harshness and
+aliasing. Vibrato (up to a semitone, at Vibrato rate) and PITCH (an octave a unit) move every
+voice. Chorus is two taps 7 to 15 ms back, moving against each other, one to each side.
+Delay is a ping-pong echo of up to 1.5 s, darker on each repeat; Delay time glides when
+changed. A gentle limiter on the output keeps a full chord from clipping hard.
+
+**Voices.** A new note takes the voice already playing it, then a silent voice, then the
+oldest released one, then the oldest held one. Envelopes restart from where they are, so a
+stolen voice does not click.
+
+**Arpeggiator.** Arpeggiate plays the held keys one at a time (Arp mode: up, down, up-down,
+random, as played; Arp octaves 1 to 4) at Arp rate (1/4 to 1/32, triplets included) of its own
+Tempo, or of the CLOCK input with External clock on (patch Clock, MIDI Clock or Host Clock).
+It always hears the keys, so switching it on mid-chord plays the chord already held.
+
+**Presets.** The Preset selector sets every control to one of twelve sounds (E. piano, Bell,
+FM bass, Brass, Organ, Glass pad, Harp, Marimba, Lead, Clav, Arp pluck, and Init: one sine to
+start from), as one undo step. The defaults are the E. piano. A patch file saves every
+control and the name of the preset chosen last; opening it does not apply the preset again,
+so changes made after choosing it are kept. Presets are a general part of a module's
+descriptor (`ModuleDesc::presets`, `preset_values`), for any module with a `preset` setting.
+
+Open `examples/fm_synth.rack` to hear four seventh chords on the E. piano.

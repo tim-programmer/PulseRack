@@ -96,7 +96,26 @@ extern const ModuleDesc kLadderDesc, kUnisonDesc, kDelayDesc, kReverbDesc, kSamp
 extern const ModuleDesc kKickDesc, kSnareDesc, kMetalDesc;
 extern const ModuleDesc kSyncVoiceDesc, kStackVoiceDesc, kFmVoiceDesc, kAirVoiceDesc,
     kStringVoiceDesc, kGrainVoiceDesc;
+extern const ModuleDesc kChordVoiceDesc, kMelodyDesc, kMacroVoiceDesc, kFmSynthDesc;
 bool grain_load(void *state, const SampleData &data); // (modules_voices.cpp)
+
+// The scales the note modules share (Generative Melody, Chord Voice): their names, the
+// semitones of each degree above the key, and how many degrees an octave has.
+inline constexpr std::string_view kScaleNames[] = { "major", "minor", "dorian", "minor pentatonic" };
+inline constexpr int              kScaleSteps[][7] = {
+    { 0, 2, 4, 5, 7, 9, 11 },
+    { 0, 2, 3, 5, 7, 8, 10 },
+    { 0, 2, 3, 5, 7, 9, 10 },
+    { 0, 3, 5, 7, 10, 0, 0 },
+};
+inline constexpr int kScaleSize[] = { 7, 7, 7, 5 };
+
+// Chord Voice's chord for a note (modules_voices.cpp): the note is moved down to the scale of
+// `key` (0 C .. 11 B), and the chord `shape` is stacked on it from that scale's degrees. With
+// `previous` (its `count` notes, sorted) the chord is the inversion and octave nearest to it;
+// without, it is in root position on the note. Writes the notes sorted, returns how many.
+int chord_notes(int note, int key, int scale, int shape, const uint8_t *previous, int count,
+    uint8_t out[4]);
 extern const ModuleDesc kKeyboardDesc, kAudioOutDesc, kMixerDesc, kAttenuverterDesc,
     kNoteToGateDesc, kMergeDesc, kScopeDesc, kMidiInDesc, kMidiCcDesc, kMidiClockDesc, kMidiOutDesc,
     kAudioInDesc, kHostClockDesc;

@@ -9,6 +9,8 @@ add_library(rack_engine STATIC
     engine/rt/modules_fx.cpp
     engine/rt/modules_drums.cpp
     engine/rt/modules_voices.cpp
+    engine/rt/modules_melody.cpp
+    engine/rt/modules_fm_synth.cpp
     engine/engine.cpp
 )
 target_include_directories(rack_engine PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})

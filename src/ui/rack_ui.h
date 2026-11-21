@@ -171,7 +171,8 @@ public:
     static constexpr int kHoverTitle = -1, kHoverPort = -2, kHoverCable = -1000, kHoverStep = -2000,
                          kHoverStrip = -3000, // the Keyboard panel's piano
         kHoverDevice = -4000,                 // a MIDI module's Device box
-        kHoverSample = -5000;                 // a Sampler's Sample box
+        kHoverSample = -5000,                 // a Sampler's Sample box
+        kHoverEnvelope = -6000;               // FM Synth's envelope editor
     uint32_t    hover_node = 0;
     int         hover_item = 0;
     std::string hover_text;
@@ -262,7 +263,9 @@ public:
     uint32_t add_module_at(gpuic::Ctx cx, const ModuleDesc &d, int x, int y);
     void     remove_module(gpuic::Ctx cx, uint32_t node);
     bool     move_module(gpuic::Ctx cx, uint32_t node, int x, int y); // false: would overlap
-    void     set_param(gpuic::Ctx cx, uint32_t node, size_t param, float value);
+    // `merge`: the undo step it joins while the next change has the same (0: one step for a drag
+    // of this control)
+    void set_param(gpuic::Ctx cx, uint32_t node, size_t param, float value, uint64_t merge = 0);
     // A sequencer's step (milestone 6): the model, the running module, one undo step per step
     // edited.
     void set_step(gpuic::Ctx cx, uint32_t node, size_t index, const StepData &step);

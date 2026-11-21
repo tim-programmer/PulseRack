@@ -1,0 +1,40 @@
+# FM Synth's electric piano (its first preset) playing four seventh chords from a Keyboard.
+pulserack 1
+node 1 keyboard x=0 y=0
+node 2 fm_synth x=12 y=0
+node 3 out x=60 y=0
+key 1 0 on 48 96
+key 1 0.02 on 55 90
+key 1 0.04 on 64 84
+key 1 0.06 on 71 78
+key 1 1.8 off 48 0
+key 1 1.8 off 55 0
+key 1 1.8 off 64 0
+key 1 1.8 off 71 0
+key 1 2 on 45 96
+key 1 2.02 on 52 90
+key 1 2.04 on 60 84
+key 1 2.06 on 67 78
+key 1 3.8 off 45 0
+key 1 3.8 off 52 0
+key 1 3.8 off 60 0
+key 1 3.8 off 67 0
+key 1 4 on 41 96
+key 1 4.02 on 48 90
+key 1 4.04 on 57 84
+key 1 4.06 on 64 78
+key 1 5.8 off 41 0
+key 1 5.8 off 48 0
+key 1 5.8 off 57 0
+key 1 5.8 off 64 0
+key 1 6 on 43 96
+key 1 6.02 on 50 90
+key 1 6.04 on 59 84
+key 1 6.06 on 65 78
+key 1 7.8 off 43 0
+key 1 7.8 off 50 0
+key 1 7.8 off 59 0
+key 1 7.8 off 65 0
+cable 1.notes -> 2.note
+cable 2.l -> 3.l
+cable 2.r -> 3.r

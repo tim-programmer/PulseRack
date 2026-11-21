@@ -142,12 +142,36 @@ KeyStrip keyboard_strip(const PanelLayout &L); // for the Keyboard module
 // ---- the oscilloscope's screen: between its controls and its jacks (panel pixels).
 Rect scope_display(const PanelLayout &L);
 
-// ---- cables (milestone 3). Everything in rack pixels, from the model alone, so a cable follows a
-// panel while it is dragged without waiting for a layout pass.
 struct Pt
 {
     float x = 0, y = 0;
 };
+
+// ---- FM Synth's envelope editor, in the same place: four operator buttons down the left, and an
+// LCD with a readout line over a graph of the chosen operator's envelope. Its points can be
+// dragged: 1 the peak (attack time), 2 the end of the decay (decay time and sustain level),
+// 3 the end of the sustain (its level), 4 the end of the release (release time). Panel pixels.
+inline constexpr float kEnvButtonW = 56, kEnvButtonGap = 4, kEnvReadoutH = 14, kEnvGrab = 12;
+struct EnvelopeEditor
+{
+    struct Env // times in ms, each with its setting's range; sustain 0 .. 1
+    {
+        float attack, decay, sustain, release;
+        float attack_lo, attack_hi, decay_lo, decay_hi, release_lo, release_hi;
+    };
+    Rect area, lcd, readout, graph;
+    Rect buttons[4];
+    float             room(int segment) const; // the most width a segment can take
+    std::array<Pt, 5> points(const Env &v) const; // the start, then points 1 to 4
+    // the point within kEnvGrab of (x, y), the nearest, or -1
+    int handle_at(const Env &v, float x, float y) const;
+    // the envelope with point `handle` moved to (x, y): each time from its own segment's start
+    Env drag(const Env &v, int handle, float x, float y) const;
+};
+EnvelopeEditor envelope_editor(const PanelLayout &L);
+
+// ---- cables (milestone 3). Everything in rack pixels, from the model alone, so a cable follows a
+// panel while it is dragged without waiting for a layout pass.
 Pt jack_center(const Node &n, size_t port); // where a cable plugs in
 // The jack under a rack point (within `slack` pixels of its edge), if any.
 std::optional<PortRef> jack_at(const Patch &p, float x, float y, float slack = 4);

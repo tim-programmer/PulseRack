@@ -2,6 +2,7 @@
 
 #include "engine/rt/modules_common.h"
 
+#include <algorithm>
 #include <array>
 
 namespace rack
@@ -9,7 +10,7 @@ namespace rack
 
 std::span<const ModuleDesc *const> all_modules()
 {
-    static const std::array<const ModuleDesc *, 38> table = {
+    static const std::array<const ModuleDesc *, 42> table = {
         &kOscDesc,
         &kUnisonDesc,
         &kSamplerDesc,
@@ -23,6 +24,9 @@ std::span<const ModuleDesc *const> all_modules()
         &kAirVoiceDesc,
         &kStringVoiceDesc,
         &kGrainVoiceDesc,
+        &kChordVoiceDesc,
+        &kMacroVoiceDesc,
+        &kFmSynthDesc,
         &kSahDesc,
         &kLfoDesc,
         &kAdsrDesc,
@@ -35,6 +39,7 @@ std::span<const ModuleDesc *const> all_modules()
         &kClockDesc,
         &kArpDesc,
         &kSeqDesc,
+        &kMelodyDesc,
         &kKeyboardDesc,
         &kMidiInDesc,
         &kMidiCcDesc,
@@ -74,6 +79,33 @@ int find_param(const ModuleDesc &d, std::string_view id)
         if (d.params[i].id == id)
             return (int)i;
     return -1;
+}
+
+int preset_param(const ModuleDesc &d)
+{
+    if (d.presets.empty())
+        return -1;
+    for (size_t i = 0; i < d.params.size(); i++)
+        if (d.params[i].id == "preset")
+            return (int)i;
+    return -1;
+}
+
+std::vector<float> preset_values(const ModuleDesc &d, size_t index)
+{
+    std::vector<float> values;
+    for (const ParamDesc &p : d.params)
+        values.push_back(p.def);
+    if (d.presets.empty())
+        return values;
+    index = std::min(index, d.presets.size() - 1);
+    for (const PresetValue &v : d.presets[index].values)
+        for (size_t i = 0; i < d.params.size(); i++)
+            if (d.params[i].id == v.param)
+                values[i] = std::clamp(v.value, d.params[i].min, d.params[i].max);
+    if (const int p = preset_param(d); p >= 0)
+        values[(size_t)p] = (float)index;
+    return values;
 }
 
 PortSlots count_slots(const ModuleDesc &d)

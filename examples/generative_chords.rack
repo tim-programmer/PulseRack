@@ -1,0 +1,23 @@
+# A slowly changing D minor pentatonic melody, harmonised as strummed seventh chords in D minor.
+pulserack 1
+node 1 melody x=0 y=0
+param 1 bpm 92
+param 1 division 24
+param 1 length 8
+param 1 root 50
+param 1 scale 3
+param 1 mutation 6
+param 1 seed 42
+node 2 chord_voice x=16 y=0
+param 2 key D
+param 2 scale minor
+param 2 shape seventh
+param 2 strum 36
+param 2 release 380
+node 3 reverb x=32 y=0
+param 3 mix 0.23
+node 4 out x=44 y=0
+cable 1.note -> 2.note
+cable 2.out -> 3.in
+cable 3.l -> 4.l
+cable 3.r -> 4.r
