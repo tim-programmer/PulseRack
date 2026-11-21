@@ -3,3 +3,5 @@ build-*/
 *.wav
 compile_commands.json
 .cache/
+out/
+worklist.md
