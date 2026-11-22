@@ -1,0 +1,404 @@
+# A slow R&B groove at 76 bpm in F: Gm9 C9 Fmaj9 Dm9 on the FM Synth's electric piano, each chord pushed a sixteenth early; an FM bass under it, a soft kick, a snare and clap with ghost notes and swung hats; a bell melody from Generative Melody with a dotted-eighth echo.
+pulserack 1
+node 1 clock x=0 y=0
+param 1 bpm 76
+param 1 ppqn 24
+param 1 run 1
+node 2 seq x=6 y=0
+param 2 length 64
+param 2 division 6
+param 2 gate 3
+param 2 swing 2
+param 2 direction forward
+param 2 transpose 0
+step 2 0 note=58 vel=96 gate=33 tie=0
+step 2 6 note=58 vel=64 gate=4 tie=0
+step 2 10 note=58 vel=76 gate=20 tie=0
+step 2 15 note=58 vel=96 gate=39 tie=0
+step 2 22 note=58 vel=64 gate=4 tie=0
+step 2 26 note=58 vel=76 gate=20 tie=0
+step 2 31 note=57 vel=96 gate=39 tie=0
+step 2 38 note=57 vel=64 gate=4 tie=0
+step 2 42 note=57 vel=76 gate=20 tie=0
+step 2 47 note=60 vel=96 gate=39 tie=0
+step 2 54 note=60 vel=64 gate=4 tie=0
+step 2 58 note=60 vel=76 gate=20 tie=0
+node 3 seq x=22 y=0
+param 3 length 64
+param 3 division 6
+param 3 gate 3
+param 3 swing 2
+param 3 direction forward
+param 3 transpose 0
+step 3 0 note=62 vel=92 gate=33 tie=0
+step 3 6 note=62 vel=61 gate=4 tie=0
+step 3 10 note=62 vel=73 gate=20 tie=0
+step 3 15 note=62 vel=92 gate=39 tie=0
+step 3 22 note=62 vel=61 gate=4 tie=0
+step 3 26 note=62 vel=73 gate=20 tie=0
+step 3 31 note=60 vel=92 gate=39 tie=0
+step 3 38 note=60 vel=61 gate=4 tie=0
+step 3 42 note=60 vel=73 gate=20 tie=0
+step 3 47 note=64 vel=92 gate=39 tie=0
+step 3 54 note=64 vel=61 gate=4 tie=0
+step 3 58 note=64 vel=73 gate=20 tie=0
+node 4 seq x=38 y=0
+param 4 length 64
+param 4 division 6
+param 4 gate 3
+param 4 swing 2
+param 4 direction forward
+param 4 transpose 0
+step 4 0 note=65 vel=88 gate=33 tie=0
+step 4 6 note=65 vel=58 gate=4 tie=0
+step 4 10 note=65 vel=70 gate=20 tie=0
+step 4 15 note=64 vel=88 gate=39 tie=0
+step 4 22 note=64 vel=58 gate=4 tie=0
+step 4 26 note=64 vel=70 gate=20 tie=0
+step 4 31 note=64 vel=88 gate=39 tie=0
+step 4 38 note=64 vel=58 gate=4 tie=0
+step 4 42 note=64 vel=70 gate=20 tie=0
+step 4 47 note=65 vel=88 gate=39 tie=0
+step 4 54 note=65 vel=58 gate=4 tie=0
+step 4 58 note=65 vel=70 gate=20 tie=0
+node 5 seq x=54 y=0
+param 5 length 64
+param 5 division 6
+param 5 gate 3
+param 5 swing 2
+param 5 direction forward
+param 5 transpose 0
+step 5 0 note=69 vel=84 gate=33 tie=0
+step 5 6 note=69 vel=55 gate=4 tie=0
+step 5 10 note=69 vel=67 gate=20 tie=0
+step 5 15 note=69 vel=84 gate=39 tie=0
+step 5 22 note=69 vel=55 gate=4 tie=0
+step 5 26 note=69 vel=67 gate=20 tie=0
+step 5 31 note=67 vel=84 gate=39 tie=0
+step 5 38 note=67 vel=55 gate=4 tie=0
+step 5 42 note=67 vel=67 gate=20 tie=0
+step 5 47 note=69 vel=84 gate=39 tie=0
+step 5 54 note=69 vel=55 gate=4 tie=0
+step 5 58 note=69 vel=67 gate=20 tie=0
+node 6 merge x=70 y=0
+node 7 merge x=74 y=0
+node 8 merge x=78 y=0
+node 9 fm_synth x=82 y=0
+param 9 preset E._piano
+param 9 op1_ratio x1
+param 9 op1_level 0.800000012
+param 9 op2_ratio x1
+param 9 op2_level 0.349999994
+param 9 op3_ratio x1
+param 9 op3_level 0.449999988
+param 9 op4_ratio x14
+param 9 op4_level 0.300000012
+param 9 algorithm 4>3_2>1
+param 9 feedback 0
+param 9 brightness 0.800000012
+param 9 velocity 0.800000012
+param 9 volume 0.5
+param 9 vibrato 0
+param 9 vibrato_rate 5
+param 9 chorus 0.5
+param 9 delay_mix 0.140000001
+param 9 delay_time 592
+param 9 delay_feedback 0.300000012
+param 9 arp 0
+param 9 arp_mode up
+param 9 arp_rate 1/16
+param 9 arp_octaves 1
+param 9 bpm 120
+param 9 external 0
+param 9 op1_attack 2
+param 9 op1_decay 2500
+param 9 op1_sustain 0.25
+param 9 op1_release 400
+param 9 op2_attack 2
+param 9 op2_decay 900
+param 9 op2_sustain 0.150000006
+param 9 op2_release 400
+param 9 op3_attack 1
+param 9 op3_decay 700
+param 9 op3_sustain 0
+param 9 op3_release 300
+param 9 op4_attack 1
+param 9 op4_decay 120
+param 9 op4_sustain 0
+param 9 op4_release 120
+node 10 seq x=0 y=26
+param 10 length 64
+param 10 division 6
+param 10 gate 3
+param 10 swing 2
+param 10 direction forward
+param 10 transpose 0
+step 10 0 note=43 vel=112 gate=33 tie=0
+step 10 7 note=55 vel=62 gate=4 tie=0
+step 10 10 note=46 vel=88 gate=8 tie=0
+step 10 13 note=45 vel=80 gate=6 tie=0
+step 10 15 note=48 vel=108 gate=39 tie=0
+step 10 22 note=48 vel=64 gate=4 tie=0
+step 10 26 note=52 vel=86 gate=8 tie=0
+step 10 29 note=43 vel=78 gate=6 tie=0
+step 10 31 note=41 vel=108 gate=39 tie=0
+step 10 38 note=53 vel=64 gate=4 tie=0
+step 10 42 note=45 vel=86 gate=8 tie=0
+step 10 45 note=48 vel=78 gate=6 tie=0
+step 10 47 note=50 vel=108 gate=39 tie=0
+step 10 54 note=45 vel=64 gate=4 tie=0
+step 10 58 note=48 vel=86 gate=8 tie=0
+step 10 62 note=53 vel=80 gate=4 tie=0
+step 10 63 note=54 vel=92 gate=4 tie=0
+node 11 fm_synth x=16 y=26
+param 11 preset FM_bass
+param 11 op1_ratio x1
+param 11 op1_level 0.899999976
+param 11 op2_ratio x1
+param 11 op2_level 0.550000012
+param 11 op3_ratio x2
+param 11 op3_level 0.200000003
+param 11 op4_ratio x1
+param 11 op4_level 0.150000006
+param 11 algorithm 4>3>2>1
+param 11 feedback 0.349999994
+param 11 brightness 0.699999988
+param 11 velocity 0.5
+param 11 volume 0.800000012
+param 11 vibrato 0
+param 11 vibrato_rate 5
+param 11 chorus 0
+param 11 delay_mix 0
+param 11 delay_time 375
+param 11 delay_feedback 0.300000012
+param 11 arp 0
+param 11 arp_mode up
+param 11 arp_rate 1/16
+param 11 arp_octaves 1
+param 11 bpm 120
+param 11 external 0
+param 11 op1_attack 1
+param 11 op1_decay 600
+param 11 op1_sustain 0.5
+param 11 op1_release 80
+param 11 op2_attack 1
+param 11 op2_decay 300
+param 11 op2_sustain 0.25
+param 11 op2_release 80
+param 11 op3_attack 1
+param 11 op3_decay 150
+param 11 op3_sustain 0
+param 11 op3_release 80
+param 11 op4_attack 1
+param 11 op4_decay 100
+param 11 op4_sustain 0
+param 11 op4_release 80
+node 12 melody x=62 y=26
+param 12 external 1
+param 12 bpm 110
+param 12 division 12
+param 12 length 16
+param 12 root 62
+param 12 scale minor_pentatonic
+param 12 density 55
+param 12 accent 30
+param 12 gate 45
+param 12 mutation 3
+param 12 lock 0
+param 12 seed 11
+node 13 fm_synth x=78 y=26
+param 13 preset Bell
+param 13 op1_ratio x1
+param 13 op1_level 0.699999988
+param 13 op2_ratio x3.5
+param 13 op2_level 0.449999988
+param 13 op3_ratio x4
+param 13 op3_level 0.25
+param 13 op4_ratio x5.4
+param 13 op4_level 0.300000012
+param 13 algorithm 4>3_2>1
+param 13 feedback 0
+param 13 brightness 0.699999988
+param 13 velocity 0.600000024
+param 13 volume 0.319999993
+param 13 vibrato 0
+param 13 vibrato_rate 5
+param 13 chorus 0.300000012
+param 13 delay_mix 0.300000012
+param 13 delay_time 592
+param 13 delay_feedback 0.400000006
+param 13 arp 0
+param 13 arp_mode up
+param 13 arp_rate 1/16
+param 13 arp_octaves 1
+param 13 bpm 120
+param 13 external 0
+param 13 op1_attack 1
+param 13 op1_decay 3000
+param 13 op1_sustain 0
+param 13 op1_release 2500
+param 13 op2_attack 1
+param 13 op2_decay 2500
+param 13 op2_sustain 0
+param 13 op2_release 2000
+param 13 op3_attack 1
+param 13 op3_decay 1500
+param 13 op3_sustain 0
+param 13 op3_release 1500
+param 13 op4_attack 1
+param 13 op4_decay 1200
+param 13 op4_sustain 0
+param 13 op4_release 1000
+node 14 seq x=0 y=52
+param 14 length 32
+param 14 division 6
+param 14 gate 3
+param 14 swing 2
+param 14 direction forward
+param 14 transpose 0
+step 14 0 note=36 vel=120 gate=0 tie=0
+step 14 7 note=36 vel=82 gate=0 tie=0
+step 14 10 note=36 vel=104 gate=0 tie=0
+step 14 16 note=36 vel=120 gate=0 tie=0
+step 14 23 note=36 vel=78 gate=0 tie=0
+step 14 26 note=36 vel=104 gate=0 tie=0
+step 14 29 note=36 vel=66 gate=0 tie=0
+node 15 kick x=16 y=52
+param 15 tune 47
+param 15 sweep 1.89999998
+param 15 sweep_time 40
+param 15 decay 520
+param 15 punch 0.300000012
+param 15 drive 0.119999997
+param 15 accent 0.600000024
+node 16 seq x=24 y=52
+param 16 length 32
+param 16 division 6
+param 16 gate 3
+param 16 swing 2
+param 16 direction forward
+param 16 transpose 0
+step 16 4 note=38 vel=115 gate=0 tie=0
+step 16 12 note=38 vel=118 gate=0 tie=0
+step 16 15 note=38 vel=34 gate=0 tie=0
+step 16 20 note=38 vel=115 gate=0 tie=0
+step 16 22 note=38 vel=30 gate=0 tie=0
+step 16 28 note=38 vel=120 gate=0 tie=0
+step 16 31 note=38 vel=40 gate=0 tie=0
+node 17 snare x=40 y=52
+param 17 tune 180
+param 17 body 100
+param 17 tone 2800
+param 17 snap 0.550000012
+param 17 decay 230
+param 17 clap 0.600000024
+param 17 spread 12
+param 17 accent 0.800000012
+node 18 seq x=48 y=52
+param 18 length 32
+param 18 division 6
+param 18 gate 3
+param 18 swing 2
+param 18 direction forward
+param 18 transpose 0
+step 18 0 note=42 vel=88 gate=0 tie=0
+step 18 1 note=42 vel=48 gate=0 tie=0
+step 18 2 note=42 vel=72 gate=0 tie=0
+step 18 3 note=42 vel=40 gate=0 tie=0
+step 18 4 note=42 vel=88 gate=0 tie=0
+step 18 5 note=42 vel=56 gate=0 tie=0
+step 18 6 note=42 vel=72 gate=0 tie=0
+step 18 7 note=42 vel=48 gate=0 tie=0
+step 18 8 note=42 vel=88 gate=0 tie=0
+step 18 10 note=42 vel=72 gate=0 tie=0
+step 18 11 note=42 vel=56 gate=0 tie=0
+step 18 12 note=42 vel=88 gate=0 tie=0
+step 18 13 note=42 vel=48 gate=0 tie=0
+step 18 14 note=46 vel=92 gate=0 tie=0
+step 18 15 note=42 vel=40 gate=0 tie=0
+step 18 16 note=42 vel=88 gate=0 tie=0
+step 18 17 note=42 vel=56 gate=0 tie=0
+step 18 18 note=42 vel=72 gate=0 tie=0
+step 18 19 note=42 vel=48 gate=0 tie=0
+step 18 20 note=42 vel=88 gate=0 tie=0
+step 18 21 note=42 vel=40 gate=0 tie=0
+step 18 22 note=42 vel=72 gate=0 tie=0
+step 18 23 note=42 vel=56 gate=0 tie=0
+step 18 24 note=42 vel=88 gate=0 tie=0
+step 18 26 note=42 vel=72 gate=0 tie=0
+step 18 27 note=42 vel=40 gate=0 tie=0
+step 18 28 note=42 vel=88 gate=0 tie=0
+step 18 29 note=42 vel=56 gate=0 tie=0
+step 18 30 note=46 vel=92 gate=0 tie=0
+step 18 31 note=42 vel=48 gate=0 tie=0
+node 19 metal x=64 y=52
+param 19 tune 1
+param 19 noise 0.349999994
+param 19 tone 9000
+param 19 closed 45
+param 19 open 420
+param 19 accent 0.800000012
+node 20 mixer x=72 y=52
+param 20 level1 0.800000012
+param 20 level2 0.550000012
+param 20 level3 0.219999999
+param 20 level4 0.5
+node 21 reverb x=78 y=52
+param 21 algorithm small
+param 21 size 0.449999988
+param 21 decay 0.899999976
+param 21 predelay 10
+param 21 damping 0.5
+param 21 damping_hz 5000
+param 21 width 1
+param 21 mix 0.140000001
+param 21 modulation 0.300000012
+param 21 freeze 0
+node 22 mixer x=90 y=52
+param 22 level1 0.899999976
+param 22 level2 0.899999976
+param 22 level3 0.899999976
+param 22 level4 0.620000005
+node 23 mixer x=96 y=52
+param 23 level1 0.899999976
+param 23 level2 0.899999976
+param 23 level3 0.899999976
+param 23 level4 0.620000005
+node 24 out x=102 y=52
+param 24 level 0.75
+param 24 output 1
+cable 1.clock -> 2.in
+cable 1.clock -> 3.in
+cable 1.clock -> 4.in
+cable 1.clock -> 5.in
+cable 2.out -> 6.a
+cable 3.out -> 6.b
+cable 4.out -> 7.a
+cable 5.out -> 7.b
+cable 6.out -> 8.a
+cable 7.out -> 8.b
+cable 8.out -> 9.note
+cable 1.clock -> 10.in
+cable 10.out -> 11.note
+cable 1.clock -> 12.clock
+cable 12.note -> 13.note
+cable 1.clock -> 14.in
+cable 14.out -> 15.note
+cable 1.clock -> 16.in
+cable 16.out -> 17.note
+cable 1.clock -> 18.in
+cable 18.out -> 19.note
+cable 15.out -> 20.in1
+cable 17.out -> 20.in2
+cable 19.out -> 20.in3
+cable 20.out -> 21.in
+cable 9.l -> 22.in1
+cable 11.l -> 22.in2
+cable 13.l -> 22.in3
+cable 21.l -> 22.in4
+cable 9.r -> 23.in1
+cable 11.r -> 23.in2
+cable 13.r -> 23.in3
+cable 21.r -> 23.in4
+cable 22.out -> 24.l
+cable 23.out -> 24.r
