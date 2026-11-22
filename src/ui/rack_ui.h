@@ -230,6 +230,8 @@ public:
     gpuic::Entity<Overlay>
          overlay; // the Open menu and the unsaved-changes question, over the window
     bool file_menu_open = false;
+    gpuic::Scroll examples_scroll; // the Open menu's examples, which scroll when the window is short
+    gpuic::Scroll device_scroll; // the device menu's rows, likewise
     enum class Then : uint8_t // what to do once unsaved changes are dealt with
     {
         Nothing,

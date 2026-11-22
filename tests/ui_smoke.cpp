@@ -869,7 +869,19 @@ struct Driver
         // the Open menu: an example, opened at once (nothing unsaved), untitled
         click(btn(style::kOpenX, style::kOpenW));
         CHECK(e().file_menu_open);
-        click(menu_row(1 + factory_index("sequence"), false));
+        // (the examples scroll inside the menu, which ends at the window's bottom: the list is
+        // scrolled toward the row first, so the click finds it however many examples there are)
+        {
+            const int row = factory_index("sequence");
+            e().examples_scroll.to(cx(), 0, (float)row * style::kFileExampleH);
+            wait(0.05);
+            const gp_point off = e().examples_scroll.offset(cx()); // (clamped near the end)
+            CHECK(off.y > 0);
+            gp_point at = menu_row(1 + row, false);
+            at.y -= off.y;
+            CHECK(at.y < style::kWindowH - style::kFileExampleH);
+            click(at);
+        }
         CHECK(
             !e().file_menu_open && e().patch_name == "Sequence (example)" && e().file_path.empty());
         CHECK(patch.nodes().size() == 8 && patch.cables().size() == 8 && !e().dirty);

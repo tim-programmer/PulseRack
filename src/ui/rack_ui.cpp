@@ -173,6 +173,8 @@ struct Toolbar
                 {
                     Editor *e = self.ed.get(cx);
                     e->file_menu_open = !e->file_menu_open;
+                    if (e->file_menu_open)
+                        e->examples_scroll.to(cx, 0, 0); // each opening starts at the top
                     e->overlay.update(cx, [](Overlay &, Ctx c) { c.notify(); });
                 }))
             .child(button(
@@ -2508,6 +2510,12 @@ struct Overlay
             return layer;
         }
         layer.on_mouse_down([](Overlay &self, Ctx c) { self.ed.get(c)->close_overlays(c); });
+        // a menu ends at the window's bottom (what does not fit scrolls inside it)
+        float avail = st::kWindowH - st::kToolbarH - st::kHintH;
+        if (RackView *r = e->rack.get(cx))
+            if (const gp_size vp = r->scroll.viewport(cx); vp.h > 0)
+                avail = vp.h; // the rack's height, as of the last layout (the window may be resized)
+        const float menu_h = std::max(120.f, avail + st::kHintH - 6);
         if (e->device_menu_open)
         { // the output devices, under the audio status
             Element menu = div()
@@ -2521,14 +2529,21 @@ struct Overlay
                                .bg(st::kSurfaceHi)
                                .border(1)
                                .border_color(st::kBorder)
-                               .shadow(0, 8, 20, with_alpha(rgb(0x000000), 0.5f));
+                               .shadow(0, 8, 20, with_alpha(rgb(0x000000), 0.5f))
+                               .max_h(menu_h);
             menu.on_mouse_down([](Overlay &) { });
+            Element rows = div()
+                               .flex_col()
+                               .min_h(0)
+                               .overflow_y_scroll()
+                               .scrollbar_autohide()
+                               .track_scroll(e->device_scroll);
             auto mark = [&](const std::string &name)
             { return std::string(e->audio_device == name ? "*  " : "   "); };
-            menu.child(item(mark("") + "System default", "",
+            rows.child(item(mark("") + "System default", "",
                 [](Overlay &self, Ctx c) { self.ed.get(c)->choose_device(c, ""); }));
             for (size_t k = 0; k < e->devices.size(); k++)
-                menu.child(item(mark(e->devices[k].name) + e->devices[k].name, "",
+                rows.child(item(mark(e->devices[k].name) + e->devices[k].name, "",
                     [k](Overlay &self, Ctx c)
                     {
                         Editor *ed2 = self.ed.get(c);
@@ -2537,7 +2552,7 @@ struct Overlay
                             ed2->choose_device(c, std::string(ed2->devices[k].name));
                     }));
             // the MIDI inputs: each is switched on or off (several may be on); the menu stays open
-            menu.child(div()
+            rows.child(div()
                     .h(st::kFileHeaderH)
                     .flex_shrink_0()
                     .px(10)
@@ -2554,7 +2569,7 @@ struct Overlay
                     != e->settings.midi_inputs.end();
                 const bool here = std::find(e->midi_available.begin(), e->midi_available.end(), n)
                     != e->midi_available.end();
-                menu.child(item(std::string(on ? "*  " : "   ") + n
+                rows.child(item(std::string(on ? "*  " : "   ") + n
                         + (here ? (on && !e->midi_input_open(n) ? "   (could not be opened)" : "")
                                 : "   (not connected)"),
                     "",
@@ -2567,8 +2582,9 @@ struct Overlay
                     }));
             }
             if (names.empty())
-                menu.child(div()
+                rows.child(div()
                         .h(st::kFileItemH)
+                        .flex_shrink_0()
                         .px(10)
                         .flex_row()
                         .items_center()
@@ -2577,18 +2593,20 @@ struct Overlay
                                                         : e->midi_error,
                                 12, st::kSubtext)));
             if (!e->settings.learn.empty())
-                menu.child(item("Forget the MIDI learn mappings  ("
+                rows.child(item("Forget the MIDI learn mappings  ("
                         + std::to_string(e->settings.learn.size()) + ")",
                     "", [](Overlay &self, Ctx c) { self.ed.get(c)->forget_learned(c); }));
+            menu.child(std::move(rows));
             layer.child(std::move(menu));
             return layer;
         }
-        // the Open menu, under its button
+        // the Open menu, under its button, no taller than the window: the examples scroll inside it
         Element menu = div()
                            .absolute()
                            .left(st::kOpenX)
                            .top(st::kToolbarH - 2)
                            .w(st::kFileMenuW)
+                           .max_h(menu_h)
                            .p(4)
                            .flex_col()
                            .rounded(5)
@@ -2611,11 +2629,18 @@ struct Overlay
                 .items_end()
                 .pb(3)
                 .child(label("Examples", 10, st::kDim)));
+        Element    examples = div()
+                               .flex_col()
+                               .min_h(0)
+                               .overflow_y_scroll()
+                               .scrollbar_autohide()
+                               .track_scroll(e->examples_scroll);
         const auto f = factory_patches();
         for (size_t i = 0; i < f.size(); i++)
-            menu.child(
+            examples.child(
                 item(std::string(f[i].title), std::string(f[i].about), [i](Overlay &self, Ctx c)
                     { self.ed.get(c)->request(c, Editor::Then::Factory, (int)i); }));
+        menu.child(std::move(examples));
         layer.child(std::move(menu));
         return layer;
     }
@@ -3316,6 +3341,7 @@ void Editor::open_device_menu(Ctx cx)
     devices = audio::AudioOut::outputs(&err);
     device_menu_open = true;
     file_menu_open = false;
+    device_scroll.to(cx, 0, 0); // each opening starts at the top
     overlay.update(cx, [](Overlay &, Ctx c) { c.notify(); });
     if (!err.empty())
         say(cx, err + ".");
@@ -4734,6 +4760,8 @@ Entity<Editor> open_rack(App app, const Options &opt, std::string *error)
     e->chip = app.new_view<PointerChip>();
     app.get(e->chip)->ed = ed;
     e->overlay = app.new_view<Overlay>();
+    e->examples_scroll = app.new_scroll();
+    e->device_scroll = app.new_scroll();
     app.get(e->overlay)->ed = ed;
     e->state_dir = opt.state_dir;
     e->config_dir = opt.config_dir;
