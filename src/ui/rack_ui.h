@@ -236,7 +236,8 @@ public:
         New,
         OpenDialog,
         Factory,
-        Recover
+        Recover,
+        Close // the window's close button: close it (no recovery file: saved, or not wanted)
     };
     struct Ask
     {
@@ -405,6 +406,8 @@ public:
     // The unsaved patch, kept in state_dir when the window closes (gpuic cannot ask before it
     // does).
     void write_recovery() const;
+    bool unsaved() const { return dirty && !engine.patch().nodes().empty(); } // worth asking about
+    bool closing = false; // closed by the close button's question: nothing to keep
     bool has_recovery() const;
     void close_overlays(gpuic::Ctx cx);
 

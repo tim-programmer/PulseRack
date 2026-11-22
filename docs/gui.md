@@ -351,11 +351,14 @@ says why. A file that does not load changes nothing and says why; a module whose
 back. The view forgets what it held about the old patch (selection, drags, menus, scroll, cable colours, which are given again in
 file order).
 
-**Closing the window with unsaved changes.** gpuic has no way to ask before a window closes, so the patch is **kept** instead:
-when the window closes, the editor writes it to `$XDG_STATE_HOME/pulserack/unsaved.rack` (or `~/.local/state/pulserack/`); a
-crash does not get that far (no autosave while working). The next start
-says so on the hint line, and *Open > Recover the unsaved patch* brings it back (unsaved, untitled), after which the kept copy is
-removed.
+**Closing the window with unsaved changes.** The window's close button **asks** (gpuic `34262aa`,
+`Window::on_close_request`; since 2026-11-23): with unsaved changes it shows the same question as New and Open (`Then::Close`),
+and *Save* (the chooser first for an untitled patch) or *Don't save* then closes the window; *Cancel*, or a cancelled chooser, keeps
+it. A saved or empty patch closes at once. A window closed that way writes no recovery file. Quitting any other way (Ctrl+C in the
+terminal, the session ending) does not ask, so the patch is then **kept** instead: the editor writes it to
+`$XDG_STATE_HOME/pulserack/unsaved.rack` (or `~/.local/state/pulserack/`); a crash does not get that far (no autosave while
+working). The next start says so on the hint line, and *Open > Recover the unsaved patch* brings it back (unsaved, untitled), after
+which the kept copy is removed. In a plugin the host closes the window, and nothing asks.
 
 **Code.** `src/ui/files.{h,cpp}` (reading, the atomic write, the state directory; no window) and the generated
 `factory_patches.cpp` (from `examples/*.rack` at configure time; a changed example reconfigures); `src/ui/dialog.cpp` (SDL's
@@ -368,10 +371,12 @@ overlapping panels; the atomic write round-trips, replaces, leaves nothing behin
 directory follows `XDG_STATE_HOME`. `ui_files` (32 checks) drives the toolbar and the menu with the test's own chooser: Ctrl+S on an
 untitled patch, the Save button, an example from the menu, the question answered Cancel, Don't save and Save (with and without a
 file), Save as cancelled, recovery through the menu, a damaged file, a failed save, Escape, and, after the window has really
-closed, the kept patch on disk. `ui_smoke --pose-ask PATCH` shows the question for a screenshot.
+closed, the kept patch on disk. `ui_close` presses the close button (`gp_simulate_close_request`) in three runs: Cancel keeps the
+window and every press asks again, then Don't save closes it; Save on an untitled patch asks where, writes it and closes; a saved
+patch closes without a question. None leaves a recovery file. `ui_smoke --pose-ask PATCH` shows the question for a screenshot.
 
 **Decisions (mine, for your review).**
-1. **Unsaved changes are kept at close, not asked about** (gpuic cannot intercept the close; see below).
+1. **The close button asks about unsaved changes**; any other quit keeps them in the recovery file (see below).
 2. **Examples open untitled**; **New** is an empty patch (no template).
 3. Cable colours are not saved (as in milestone 3); module positions are, as whole rack units.
 4. No list of recent files.
@@ -380,8 +385,8 @@ closed, the kept patch on disk. `ui_smoke --pose-ask PATCH` shows the question f
 `b72da8d`, `gp_window_set_title`), and used since 2026-11-23: the title is `name - PulseRack`, with `*` first while there are
 unsaved changes (`Editor::show_title`, called when the toolbar is redrawn, which it is whenever the name or the mark changes; not
 in a plugin, whose window is embedded). `ui_smoke` checks it for an untitled patch, after an edit and after a save. A **close
-request** a program can answer ("save changes?"), so that keeping the patch is the fallback rather than the only answer: **not in
-gpuic yet**; `gpuic-prompt-5.md` is the prompt for it.
+request** a program can answer ("save changes?"), so that keeping the patch is the fallback rather than the only answer: **done**
+(gpuic `34262aa`), and used since 2026-11-23 (above).
 
 **Not done:** recent files; a choice of folder for the examples (they are in the program); autosave while working; undo (milestone 6).
 

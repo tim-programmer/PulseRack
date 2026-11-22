@@ -1947,6 +1947,98 @@ int main(int argc, char **argv)
         std::printf("%d checks, %d failed\n", checks, failures);
         return failures ? 1 : 0;
     }
+    if (argc == 2 && !std::strcmp(argv[1], "--close"))
+    { // the window's close button, in three runs (each ends with the window closed, or not)
+#ifndef _WIN32
+        if (!std::getenv("DISPLAY") && !std::getenv("WAYLAND_DISPLAY"))
+        {
+            std::printf("no display: skipped\n");
+            return 77;
+        }
+#endif
+        setenv("GPUIC_IGNORE_REAL_MOUSE", "1", 1);
+        namespace fs = std::filesystem;
+        static std::string dir = (fs::temp_directory_path() / "pulserack_ui_close").string();
+        static int         mode;
+        static bool        still_open;
+        fs::remove_all(dir);
+        fs::create_directories(dir);
+        const std::string recovery = recovery_path(dir + "/state");
+        for (mode = 0; mode < 3; mode++)
+        {
+            still_open = false;
+            gpuic::run(
+                [](App app)
+                {
+                    std::string error;
+                    Options     opt;
+                    opt.audio = false;
+                    opt.state_dir = dir + "/state";
+                    auto ed = open_rack(app, opt, &error);
+                    CHECK((bool)ed);
+                    app.ctx(ed).spawn(
+                        [app, ed](Co &co)
+                        {
+                            Driver   d { co, app, ed };
+                            Editor  &e = *app.get(ed);
+                            gp_window *w = e.window.raw();
+                            int      asked_save = 0;
+                            e.chooser = [&](Ctx c, bool save, const std::string &)
+                            {
+                                asked_save += save;
+                                e.file_chosen(c, save, dir + "/closed");
+                            };
+                            d.wait(0.2);
+                            e.add_module(d.cx(), *find_module("noise"));
+                            d.wait(0.1);
+                            if (mode == 0)
+                            { // Cancel keeps it; every press asks; Don't save closes, nothing kept
+                                gp_simulate_close_request(w);
+                                d.wait(0.1);
+                                CHECK(e.ask.shown && e.ask.then == Editor::Then::Close);
+                                CHECK(d.hint_has("Unsaved changes"));
+                                d.click(d.ask_button(2));
+                                CHECK(!e.ask.shown && e.dirty && d.hint_has("Cancelled"));
+                                gp_simulate_close_request(w);
+                                gp_simulate_close_request(w);
+                                d.wait(0.1);
+                                CHECK(e.ask.shown);
+                                d.click(d.ask_button(1));
+                            }
+                            else if (mode == 1)
+                            { // Save on an untitled patch: where to, then it closes
+                                gp_simulate_close_request(w);
+                                d.wait(0.1);
+                                CHECK(e.ask.shown);
+                                d.click(d.ask_button(0));
+                                CHECK(asked_save == 1);
+                            }
+                            else
+                            { // saved: the close button closes at once, no question
+                                CHECK(e.save_to(d.cx(), dir + "/clean.rack") && !e.dirty);
+                                gp_simulate_close_request(w);
+                                CHECK(!e.ask.shown);
+                            }
+                            if (co.sleep(1.0)) // (cancelled at once if the window has gone)
+                            {
+                                still_open = true;
+                                app.quit();
+                            }
+                        });
+                });
+            CHECK(!still_open);
+            CHECK(!fs::exists(recovery)); // closed on purpose: nothing to recover
+            if (mode == 1)
+            {
+                std::string text, err;
+                CHECK(read_file(dir + "/closed.rack", &text, &err)
+                    && text.find("noise") != std::string::npos);
+            }
+        }
+        fs::remove_all(dir);
+        std::printf("%d checks, %d failed\n", checks, failures);
+        return failures ? 1 : 0;
+    }
     static bool sound = false, files = false, undo = false, steps = false, gaps = false;
     sound = argc == 2 && !std::strcmp(argv[1], "--sound");
     files = argc == 2 && !std::strcmp(argv[1], "--files");

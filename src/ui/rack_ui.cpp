@@ -4297,7 +4297,8 @@ Editor::~Editor()
 {
     try
     {
-        write_recovery();
+        if (!closing)
+            write_recovery();
     }
     catch (...)
     { // a destructor must not throw; the patch is lost, as it would have been without this
@@ -4448,7 +4449,7 @@ void Editor::close_overlays(Ctx cx)
 void Editor::request(Ctx cx, Then then, int factory)
 {
     file_menu_open = false;
-    if (dirty && !engine.patch().nodes().empty())
+    if (unsaved())
     {
         ask = Ask { true, then, factory };
         overlay.update(cx, [](Overlay &, Ctx c) { c.notify(); });
@@ -4531,6 +4532,10 @@ void Editor::perform(Ctx cx, Then then, int factory)
             "it.");
         break;
     }
+    case Then::Close: // (at the next turn of the loop)
+        closing = true;
+        window.close();
+        break;
     }
 }
 
@@ -4688,7 +4693,7 @@ bool Editor::open_text(Ctx cx, const std::string &text, const std::string &name,
 void Editor::write_recovery() const
 {
     const std::string path = recovery_path(state_dir);
-    if (path.empty() || !dirty || engine.patch().nodes().empty())
+    if (path.empty() || !unsaved())
         return;
     std::error_code ec;
     std::filesystem::create_directories(state_dir, ec);
@@ -4866,6 +4871,18 @@ Entity<Editor> open_rack(App app, const Options &opt, std::string *error)
         e->meter_task = app.ctx(ed).every(1.0 / 30, [](Editor &ee, Ctx c) { ee.tick(c); });
         return ed;
     }
+    // The window's close button asks first when there are unsaved changes (Save, Don't save,
+    // Cancel); a saved or empty patch closes at once. (Quitting another way, from the terminal or
+    // the session ending, does not ask: the recovery file keeps the patch then.)
+    e->window.on_close_request(
+        [ed](Ctx cx) -> bool
+        {
+            Editor *ee = ed.get(cx);
+            if (!ee || !ee->unsaved())
+                return true;
+            ee->request(cx, Editor::Then::Close);
+            return false;
+        });
     e->engine.set_midi(e->midi_boxes.get()); // (no audio thread yet)
     e->engine.set_midi_out(e->midi_outbox.get());
     if (opt.midi)
