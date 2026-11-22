@@ -872,6 +872,18 @@ struct Driver
         // (the examples scroll inside the menu, which ends at the window's bottom: the list is
         // scrolled toward the row first, so the click finds it however many examples there are)
         {
+            // the wheel over the menu scrolls it, also where the menu lies over the rack (which
+            // has a wheel handler of its own, for zooming); beside the menu, nothing moves
+            const float z0 = e().zoom;
+            const float mx = style::kOpenX + style::kFileMenuW - 40; // over the rack
+            CHECK(mx > style::kBrowserW);
+            gp_simulate_wheel(app, mx, 400, 0, -1, 0); // a notch down
+            wait(0.05);
+            CHECK(e().examples_scroll.offset(cx()).y > 0 && e().zoom == z0);
+            gp_simulate_wheel(app, 60, 400, 0, -1, 0); // over the browser
+            gp_simulate_wheel(app, style::kWindowW - 100, 400, 0, -1, 0); // over the rack only
+            wait(0.05);
+            CHECK(e().file_menu_open && e().zoom == z0);
             const int row = factory_index("sequence");
             e().examples_scroll.to(cx(), 0, (float)row * style::kFileExampleH);
             wait(0.05);

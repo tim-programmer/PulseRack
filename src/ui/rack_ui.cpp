@@ -2476,6 +2476,10 @@ struct Overlay
         if (!e || (!e->file_menu_open && !e->ask.shown && !e->device_menu_open))
             return div();
         Element layer = div().absolute().left(0).top(0).w(8000).h(8000);
+        // gpuic offers the wheel to the innermost handler under the pointer before any scroller, and
+        // the layer does not hide the handlers under it: the rack would zoom (or a knob turn) under
+        // an open menu. The layer uses the wheel up; over a menu, the menu scrolls its rows itself.
+        layer.on_wheel([](Overlay &, const gp_wheel_event &) { });
         if (e->ask.shown)
         {
             layer.bg(with_alpha(rgb(0x000000), 0.45f));
@@ -2532,6 +2536,8 @@ struct Overlay
                                .shadow(0, 8, 20, with_alpha(rgb(0x000000), 0.5f))
                                .max_h(menu_h);
             menu.on_mouse_down([](Overlay &) { });
+            menu.on_wheel([](Overlay &self, Ctx c, const gp_wheel_event &ev)
+                { self.ed.get(c)->device_scroll.by(c, 0, ev.dy); });
             Element rows = div()
                                .flex_col()
                                .min_h(0)
@@ -2615,6 +2621,8 @@ struct Overlay
                            .border_color(st::kBorder)
                            .shadow(0, 8, 20, with_alpha(rgb(0x000000), 0.5f));
         menu.on_mouse_down([](Overlay &) { }); // a press in the menu does not close it
+        menu.on_wheel([](Overlay &self, Ctx c, const gp_wheel_event &ev)
+            { self.ed.get(c)->examples_scroll.by(c, 0, ev.dy); });
         menu.child(item("Open a file...      Ctrl+O", "",
             [](Overlay &self, Ctx c) { self.ed.get(c)->request(c, Editor::Then::OpenDialog); }));
         if (e->has_recovery())
