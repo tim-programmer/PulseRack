@@ -843,15 +843,19 @@ struct Driver
         }
 
         CHECK(e().patch_name == "untitled" && !e().dirty && e().file_path.empty());
+        CHECK(e().window_title == "untitled - PulseRack");
 
         // an edit makes the patch unsaved; Ctrl+S on an untitled patch asks where (".rack" added)
         const uint32_t osc = e().add_module(cx(), *find_module("osc"));
         CHECK(e().dirty);
+        wait(0.05);
+        CHECK(e().window_title == "*untitled - PulseRack");
         next = dir + "/one";
         gp_simulate_keystrokes(app, "ctrl-s");
         wait(0.15);
         CHECK(asked_save == 1 && !e().dirty && e().file_path == dir + "/one.rack"
             && e().patch_name == "one.rack");
+        CHECK(e().window_title == "one.rack - PulseRack");
         std::string text, err;
         CHECK(read_file(dir + "/one.rack", &text, &err) && text == save_patch(patch));
         // a knob turned, then the Save button: the same file, without asking

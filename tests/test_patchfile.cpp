@@ -81,6 +81,21 @@ TEST(patchfile_golden_text)
     CHECK(save_patch(p) == expected);
 }
 
+TEST(patchfile_keeps_the_description_line)
+{
+    Patch p;
+    CHECK(load_patch("# A short tune\r\npulserack 1\n# another comment\nnode 1 clock x=0 y=0\n", p).ok);
+    CHECK(p.about == "A short tune");
+    const std::string text = save_patch(p);
+    CHECK(text.starts_with("# A short tune\npulserack 1\n"));
+    CHECK(text.find("another comment") == std::string::npos); // (only the first line is kept)
+    Patch q;
+    CHECK(load_patch(text, q).ok && q.about == "A short tune" && save_patch(q) == text);
+    Patch none; // no description: no comment line
+    CHECK(load_patch("pulserack 1\n# not the first line\n", none).ok && none.about.empty()
+        && save_patch(none).starts_with("pulserack 1\n"));
+}
+
 TEST(patchfile_round_trip_and_identical_audio)
 {
     for (uint32_t seed = 1; seed <= 12; seed++)

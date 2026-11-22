@@ -115,6 +115,8 @@ public:
     std::vector<KeyScript> keys;
     std::vector<Mapping>   mappings; // a module's go with it
     std::vector<Macro>     macros;   // the same; one per macro, one macro per control
+    std::string            about;    // the description: the file's first line, "# <about>" (kept by
+                                     // Save; the factory patches' menu shows it)
 
 private:
     std::vector<Node>  nodes_;

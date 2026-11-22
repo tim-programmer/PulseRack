@@ -373,7 +373,9 @@ int main(int argc, char **argv)
     { // the state: the patch file's text; another instance plays it the same
         Instance          a(f, id);
         const std::string text = a.save();
-        CHECK(text.rfind("pulserack 1", 0) == 0);
+        // (a patch file, after its description line if it has one)
+        CHECK(text.rfind("pulserack 1", 0) == 0
+            || (text.rfind("# ", 0) == 0 && text.find("\npulserack 1\n") == text.find('\n')));
         CHECK(text.find("midi_in") != std::string::npos);
         Instance b(f, id);
         CHECK(b.load(text));

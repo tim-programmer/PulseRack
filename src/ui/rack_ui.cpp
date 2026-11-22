@@ -142,6 +142,8 @@ struct Toolbar
         Editor      *e = ed.get(cx);
         const size_t n = e ? e->engine.patch().nodes().size() : 0;
         const bool   dirty = e && e->dirty;
+        if (e) // (the toolbar is redrawn whenever the name or the mark changes)
+            e->show_title();
         return div()
             .w_full()
             .h(st::kToolbarH)
@@ -4300,6 +4302,17 @@ Editor::~Editor()
     catch (...)
     { // a destructor must not throw; the patch is lost, as it would have been without this
     }
+}
+
+void Editor::show_title()
+{
+    if (hosted) // (an embedded window has no title bar; the host names the plugin)
+        return;
+    std::string t = (dirty ? "*" : "") + patch_name + " - PulseRack";
+    if (t == window_title)
+        return;
+    window_title = std::move(t);
+    window.set_title(window_title.c_str());
 }
 
 void Editor::touch(Ctx cx)

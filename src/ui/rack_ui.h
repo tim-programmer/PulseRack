@@ -167,6 +167,7 @@ public:
     std::string patch_name = "untitled";
     std::string file_path;     // where Save writes; empty: untitled (Save asks)
     bool        dirty = false; // changed since it was opened or saved
+    std::string window_title;  // the title last given to the window ("*" first while unsaved)
     std::string state_dir;     // where an unsaved patch is kept at close; empty: nowhere
     std::string config_dir;    // where the settings file is; empty: none (the tests)
     Settings    settings;      // this machine's (ui/settings.h); saved whenever one changes
@@ -400,6 +401,7 @@ public:
     bool open_text(gpuic::Ctx cx, const std::string &text, const std::string &name,
         const std::string &path, bool dirty_after, std::string *error);
     void touch(gpuic::Ctx cx); // something changed: the patch is unsaved
+    void show_title();         // the window's title from the name and the unsaved mark
     // The unsaved patch, kept in state_dir when the window closes (gpuic cannot ask before it
     // does).
     void write_recovery() const;

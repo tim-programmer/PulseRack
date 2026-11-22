@@ -8,6 +8,9 @@ node 2 seq x=6 y=0
 param 2 length 4
 param 2 division 24
 param 2 gate 3
+param 2 swing 0
+param 2 direction forward
+param 2 transpose 0
 step 2 0 note=36 vel=127 gate=0 tie=0
 step 2 1 note=36 vel=127 gate=0 tie=0
 step 2 2 note=36 vel=127 gate=0 tie=0
@@ -17,15 +20,18 @@ param 3 tune 50
 param 3 sweep 3
 param 3 sweep_time 25
 param 3 decay 320
-param 3 punch 0.8
+param 3 punch 0.800000012
 param 3 drive 0.75
-param 3 accent 0.2
+param 3 accent 0.200000003
 node 4 adsr x=30 y=0
 param 4 attack 1
 param 4 decay 230
 param 4 sustain 0
 param 4 release 40
-param 4 decay_curve 0.6
+param 4 attack_curve 0.300000012
+param 4 decay_curve 0.600000024
+param 4 release_curve 0.300000012
+param 4 run_through 0
 node 5 attenuverter x=38 y=0
 param 5 scale -1
 param 5 offset 1
@@ -36,37 +42,58 @@ node 7 seq x=48 y=0
 param 7 length 4
 param 7 division 24
 param 7 gate 3
+param 7 swing 0
+param 7 direction forward
+param 7 transpose 0
 step 7 1 note=60 vel=100 gate=0 tie=0
 step 7 3 note=60 vel=100 gate=0 tie=0
 node 8 svf x=64 y=0
 param 8 cutoff 1800
 param 8 resonance 0.5
+param 8 mod_depth 2
+param 8 saturate 0
 node 9 adsr x=72 y=0
 param 9 attack 1
 param 9 decay 200
 param 9 sustain 0
 param 9 release 120
+param 9 attack_curve 0.300000012
+param 9 decay_curve 0.300000012
+param 9 release_curve 0.300000012
+param 9 run_through 0
 node 10 vca x=80 y=0
-param 10 gain 1.8
+param 10 gain 1.79999995
 node 11 seq x=84 y=0
 param 11 length 1
 param 11 division 6
 param 11 gate 1
+param 11 swing 0
+param 11 direction forward
+param 11 transpose 0
 step 11 0 note=60 vel=100 gate=0 tie=0
 node 12 svf x=100 y=0
 param 12 cutoff 8000
-param 12 resonance 0.3
+param 12 resonance 0.300000012
+param 12 mod_depth 2
+param 12 saturate 0
 node 13 adsr x=108 y=0
 param 13 attack 1
 param 13 decay 30
 param 13 sustain 0
 param 13 release 20
+param 13 attack_curve 0.300000012
+param 13 decay_curve 0.300000012
+param 13 release_curve 0.300000012
+param 13 run_through 0
 node 14 vca x=116 y=0
 param 14 gain 1
 node 15 seq x=0 y=26
-param 15 length 64
+param 15 length 63
 param 15 division 6
 param 15 gate 4
+param 15 swing 0
+param 15 direction forward
+param 15 transpose 0
 step 15 1 note=29 vel=100 gate=0 tie=0
 step 15 2 note=29 vel=100 gate=0 tie=0
 step 15 3 note=41 vel=100 gate=0 tie=0
@@ -117,24 +144,37 @@ step 15 62 note=27 vel=100 gate=0 tie=0
 step 15 63 note=39 vel=100 gate=0 tie=0
 node 16 unison x=16 y=26
 param 16 waveform saw
+param 16 frequency 220
 param 16 voices 5
 param 16 detune 25
 param 16 width 0
+param 16 pitch_depth 1
+param 16 pulse_width 0.5
+param 16 pwm_depth 0
 node 17 lfo x=28 y=26
 param 17 shape sine
-param 17 frequency 4.2667
+param 17 frequency 4.26669979
+param 17 rate_depth 0
+param 17 pulse_width 0.5
+param 17 unipolar 0
+param 17 seed 0
 node 18 ladder x=36 y=26
 param 18 mode LP_24
 param 18 cutoff 350
-param 18 resonance 0.55
+param 18 resonance 0.550000012
 param 18 drive 5
 param 18 mod_depth 3
 param 18 saturate 1
+param 18 bass_comp 0
 node 19 adsr x=46 y=26
 param 19 attack 2
 param 19 decay 120
-param 19 sustain 0.8
-param 19 release 40
+param 19 sustain 0.800000012
+param 19 release 30.3431091
+param 19 attack_curve 0.300000012
+param 19 decay_curve 0.300000012
+param 19 release_curve 0.300000012
+param 19 run_through 0
 node 20 vca x=54 y=26
 param 20 gain 1
 node 21 vca x=58 y=26
@@ -143,6 +183,9 @@ node 22 seq x=62 y=26
 param 22 length 64
 param 22 division 6
 param 22 gate 3
+param 22 swing 0
+param 22 direction forward
+param 22 transpose 0
 step 22 0 note=77 vel=100 gate=0 tie=0
 step 22 2 note=80 vel=100 gate=0 tie=0
 step 22 3 note=77 vel=100 gate=0 tie=0
@@ -185,88 +228,107 @@ step 22 61 note=70 vel=100 gate=0 tie=0
 step 22 62 note=75 vel=100 gate=0 tie=0
 node 23 unison x=78 y=26
 param 23 waveform saw
+param 23 frequency 220
 param 23 voices 8
 param 23 detune 40
 param 23 width 0
+param 23 pitch_depth 1
+param 23 pulse_width 0.5
+param 23 pwm_depth 0
 node 24 svf x=90 y=26
 param 24 cutoff 7000
-param 24 resonance 0.15
+param 24 resonance 0.150000006
+param 24 mod_depth 2
+param 24 saturate 0
 node 25 adsr x=98 y=26
 param 25 attack 2
 param 25 decay 180
-param 25 sustain 0.4
+param 25 sustain 0.400000006
 param 25 release 150
+param 25 attack_curve 0.300000012
+param 25 decay_curve 0.300000012
+param 25 release_curve 0.300000012
+param 25 run_through 0
 node 26 vca x=106 y=26
 param 26 gain 1
 node 27 vca x=110 y=26
 param 27 gain 1
 node 28 delay x=114 y=26
 param 28 time 352
-param 28 feedback 0.35
+param 28 feedback 0.349999994
 param 28 tone 4000
-param 28 mix 0.2
+param 28 mix 0.200000003
+param 28 mod_depth 0
 param 28 glide 0
+param 28 saturate 0
 node 29 lfo x=0 y=52
 param 29 shape saw_up
-param 29 frequency 0.0667
+param 29 frequency 0.0666999966
+param 29 rate_depth 0
+param 29 pulse_width 0.5
 param 29 unipolar 1
+param 29 seed 0
 node 30 svf x=8 y=52
 param 30 cutoff 300
-param 30 resonance 0.7
+param 30 resonance 0.699999988
 param 30 mod_depth 4
+param 30 saturate 0
 node 31 mixer x=16 y=52
-param 31 level1 0.9
-param 31 level2 0.9
-param 31 level3 0.15
+param 31 level1 0.899999976
+param 31 level2 0.899999976
+param 31 level3 0.150000006
+param 31 level4 0.5
 node 32 reverb x=22 y=52
 param 32 algorithm quality
-param 32 size 0.8
+param 32 size 0.800000012
 param 32 decay 2.5
 param 32 predelay 20
 param 32 damping 0.5
 param 32 damping_hz 7000
 param 32 width 1
-param 32 mix 0.3
-param 32 modulation 0.3
+param 32 mix 0.300000012
+param 32 modulation 0.300000012
+param 32 freeze 0
 node 33 mixer x=34 y=52
-param 33 level1 0.8
+param 33 level1 0.800000012
 param 33 level2 0.5
 param 33 level3 0.5
-param 33 level4 0.4
+param 33 level4 0.400000006
 node 34 mixer x=40 y=52
-param 34 level1 0.8
+param 34 level1 0.800000012
 param 34 level2 0.5
 param 34 level3 0.5
-param 34 level4 0.4
+param 34 level4 0.400000006
 node 35 out x=46 y=52
-param 35 level 0.55
+param 35 level 0.550000012
+param 35 output 1
 cable 1.clock -> 2.in
-cable 1.clock -> 7.in
-cable 1.clock -> 11.in
-cable 1.clock -> 15.in
-cable 1.clock -> 22.in
 cable 2.out -> 3.note
 cable 2.out -> 4.note
 cable 4.out -> 5.in
+cable 1.clock -> 7.in
 cable 6.out -> 8.in
-cable 8.bp -> 10.in
 cable 7.out -> 9.note
+cable 8.bp -> 10.in
 cable 9.out -> 10.gain
+cable 1.clock -> 11.in
 cable 6.out -> 12.in
-cable 12.hp -> 14.in
 cable 11.out -> 13.note
+cable 12.hp -> 14.in
 cable 13.out -> 14.gain
+cable 1.clock -> 15.in
 cable 15.out -> 16.note
-cable 15.out -> 19.note
 cable 16.l -> 18.in
 cable 17.out -> 18.cutoff
+cable 15.out -> 19.note
 cable 18.out -> 20.in
 cable 19.out -> 20.gain
 cable 20.out -> 21.in
 cable 5.out -> 21.gain
+cable 1.clock -> 22.in
 cable 22.out -> 23.note
-cable 22.out -> 25.note
 cable 23.l -> 24.in
+cable 22.out -> 25.note
 cable 24.lp -> 26.in
 cable 25.out -> 26.gain
 cable 26.out -> 27.in

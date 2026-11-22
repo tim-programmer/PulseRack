@@ -208,7 +208,9 @@ cable 2.out   -> 3.note
 cable 3.out   -> 4.l
 ```
 
-* The first line carries the format version; an unknown version is refused, an unknown type or port is a
+* A first line `# <text>` is the patch's **description** (the factory patches' menu shows it). It is kept as `Patch::about`
+  and written back by Save (until 2026-11-23 Save dropped it, as it drops every other comment).
+* The first record carries the format version; an unknown version is refused, an unknown type or port is a
   warning and the node/cable is skipped (a patch from a newer rack still opens).
 * Names are the descriptors' `id`s and never change; positions are rack units.
 * Parameter values are natural units, `printf("%.9g")` so that a round trip is exact.

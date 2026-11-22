@@ -376,9 +376,12 @@ closed, the kept patch on disk. `ui_smoke --pose-ask PATCH` shows the question f
 3. Cable colours are not saved (as in milestone 3); module positions are, as whole rack units.
 4. No list of recent files.
 
-**Requests for gpuic** (not sent; for a later prompt): a way to **set a window's title** (the patch name and its unsaved mark belong
-there), and a **close request** a program can answer ("save changes?"), so that keeping the patch is the fallback rather than the
-only answer.
+**Requests for gpuic**: a way to **set a window's title** (the patch name and its unsaved mark belong there): **done** (gpuic
+`b72da8d`, `gp_window_set_title`), and used since 2026-11-23: the title is `name - PulseRack`, with `*` first while there are
+unsaved changes (`Editor::show_title`, called when the toolbar is redrawn, which it is whenever the name or the mark changes; not
+in a plugin, whose window is embedded). `ui_smoke` checks it for an untitled patch, after an edit and after a save. A **close
+request** a program can answer ("save changes?"), so that keeping the patch is the fallback rather than the only answer: **not in
+gpuic yet**; `gpuic-prompt-5.md` is the prompt for it.
 
 **Not done:** recent files; a choice of folder for the examples (they are in the program); autosave while working; undo (milestone 6).
 

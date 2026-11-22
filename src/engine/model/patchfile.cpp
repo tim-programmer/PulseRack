@@ -78,7 +78,16 @@ namespace
 
 std::string save_patch(const Patch &patch)
 {
-    std::string               s = "pulserack " + std::to_string(kPatchFileVersion) + "\n";
+    std::string s;
+    if (!patch.about.empty()) // (one line: a newline in it would end the comment)
+    {
+        std::string about = patch.about;
+        for (char &c : about)
+            if (c == '\n' || c == '\r')
+                c = ' ';
+        s += "# " + about + "\n";
+    }
+    s += "pulserack " + std::to_string(kPatchFileVersion) + "\n";
     std::vector<const Node *> nodes;
     for (const Node &n : patch.nodes())
         nodes.push_back(&n);
@@ -191,6 +200,13 @@ LoadResult load_patch(std::string_view text, Patch &out)
                 device_name = line.substr(from, to - from);
                 line = line.substr(0, from); // "device <id>"
             }
+        }
+        if (lineno == 1 && line.starts_with("# ")) // the description, kept for Save
+        {
+            std::string_view about = line.substr(2);
+            while (!about.empty() && (about.back() == '\r' || about.back() == ' '))
+                about.remove_suffix(1);
+            p.about = std::string(about);
         }
         const size_t hash = is_device ? std::string_view::npos : line.find('#');
         if (hash != std::string_view::npos)

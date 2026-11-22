@@ -1,5 +1,6 @@
 // The patch file: a text file, one record per line, no third-party parser (docs/patch-engine.md).
 //
+//   # A short description             optional, the first line only: kept as Patch::about
 //   pulserack 1
 //   node 1 clock x=12 y=0
 //   param 1 bpm 120                   a number; an enumerated choice by its name, a space as _
