@@ -151,7 +151,10 @@ TEST(chord_voice_strums_and_arpeggiates_from_a_single_note)
         r.param(voice, "arp", arp ? 1 : 0);
         r.param(voice, "strum", strum);
         r.param(voice, "rate", 10);
-        r.param(voice, "color", 0);
+        // a near-pure tone to measure: the filter just above A4, no detune, no pluck
+        r.param(voice, "color", 0.2f);
+        r.param(voice, "detune", 0);
+        r.param(voice, "pluck", 0);
         r.key(keys, 0, true, 69);
         r.key(keys, 0.4, false, 69);
         CHECK(r.compile());
@@ -161,7 +164,7 @@ TEST(chord_voice_strums_and_arpeggiates_from_a_single_note)
     const auto chord = render(false, 0);
     const auto strum = render(false, 100);
     const auto arp = render(true, 0);
-    CHECK(rms(chord, 14400, 18000) > 0.05);
+    CHECK(rms(chord, 14400, 18000) > 0.02); // (A4 to E5, through the filter at about 500 Hz)
     CHECK(std::abs(frequency(strum, 1440, 3840) - 440) < 2);
     CHECK(std::abs(frequency(arp, 1440, 3840) - 440) < 2);
     CHECK(std::abs(frequency(arp, 6240, 8640) - 523.25) < 2); // A minor: C major's chord on A
@@ -223,4 +226,37 @@ TEST(chord_voice_builds_chords_in_key_and_leads_them_smoothly)
         std::copy_n(chord, n, previous);
         count = n;
     }
+}
+
+TEST(chord_voice_brightness_and_pluck_open_its_filter)
+{
+    // the upper harmonics, as the share of sign changes beyond what the notes alone make
+    auto crossings = [](const std::vector<float> &v, size_t from, size_t to)
+    {
+        int c = 0;
+        for (size_t i = from + 1; i < to; i++)
+            c += (v[i - 1] < 0) != (v[i] < 0);
+        return c;
+    };
+    auto render = [](float bright, float pluck)
+    {
+        Rig        r;
+        const auto keys = r.add("keyboard");
+        const auto voice = r.add("chord_voice");
+        const auto output = r.add("out");
+        CHECK(r.cable(keys, "notes", voice, "note") == Err::Ok);
+        CHECK(r.cable(voice, "out", output, "l") == Err::Ok);
+        r.param(voice, "color", bright);
+        r.param(voice, "pluck", pluck);
+        r.key(keys, 0, true, 45);
+        CHECK(r.compile());
+        r.render(kRate);
+        return r.L;
+    };
+    const auto dark = render(0.1f, 0), bright = render(0.9f, 0), plucked = render(0.1f, 3);
+    CHECK(crossings(bright, 24000, 33600) > crossings(dark, 24000, 33600) * 2);
+    // Pluck: bright at the start, back to the dark sound once it has closed (500 ms)
+    CHECK(crossings(plucked, 480, 4800) * 10 > crossings(dark, 480, 4800) * 14);
+    CHECK(std::abs(crossings(plucked, 38400, 48000) - crossings(dark, 38400, 48000))
+        <= crossings(dark, 38400, 48000) / 4 + 4);
 }

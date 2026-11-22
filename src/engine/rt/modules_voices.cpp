@@ -998,19 +998,28 @@ namespace
         CH_ARP,
         CH_RATE,
         CH_COLOR,
+        CH_DETUNE,
+        CH_PLUCK,
         CH_ATTACK,
         CH_RELEASE,
     };
+    constexpr float kChordPluckMs = 500; // how fast Pluck's opening of the filter closes again
 
+    // Each chord tone is a stack of three detuned saws (pcl_unison); the chord goes through one
+    // ladder low-pass, which Brightness sets and Pluck opens at each new chord.
     struct ChordNode
     {
-        VoiceCore vc;
-        float     phase[4], gain[4];
-        float     strum, rate, color, attack, release;
-        double    age;
-        int       key, scale, shape, tones;
-        uint8_t   notes[4];
-        bool      arpeggiate, lead;
+        VoiceCore    vc;
+        pcl_unison_t stack[4];
+        pcl_ladder_t filter;
+        float        gain[4];
+        float        strum, rate, color, pluck, pluck_env, pluck_k, attack, release;
+        double       age;
+        int          key, scale, shape, tones;
+        uint8_t      notes[4];
+        bool         arpeggiate, lead;
+        pcl_sample_t pm[PCL_MAX_BLOCK], cm[PCL_MAX_BLOCK], tone[PCL_MAX_BLOCK], mix[PCL_MAX_BLOCK];
+        float        env[PCL_MAX_BLOCK];
     };
 
     template <auto Member> bool chord_set(void *s, float value)
@@ -1041,7 +1050,25 @@ namespace
         param("rate", "Arp rate", "notes/s", 1, 24, 8, Scale::Log, Control::Knob,
             chord_set<&ChordNode::rate>),
         param("color", "Brightness", "", 0, 1, 0.4f, Scale::Linear, Control::Knob,
-            chord_set<&ChordNode::color>),
+            [](void *s, float v)
+            {
+                auto &n = *as<ChordNode>(s);
+                n.color = v;
+                // 250 Hz to 8 kHz, evenly in octaves
+                const double hz = clamp_hz(250.0 * std::exp2(5.0 * v), n.vc.sr);
+                return ok(pcl_ladder_set_cutoff(&n.filter, to_hz(hz)));
+            }),
+        param("detune", "Detune", "cents", 0, 50, 12, Scale::Linear, Control::Knob,
+            [](void *s, float v)
+            {
+                auto &n = *as<ChordNode>(s);
+                bool  good = true;
+                for (auto &u : n.stack)
+                    good = ok(pcl_unison_set_detune(&u, to_oct(v / 1200.0))) && good;
+                return good;
+            }),
+        param("pluck", "Pluck", "oct", 0, 4, 1.5f, Scale::Linear, Control::Knob,
+            chord_set<&ChordNode::pluck>),
         param("attack", "Attack", "ms", 1, 500, 8, Scale::Log, Control::Knob, [](void *s, float v)
             { return set_times<ChordNode, &ChordNode::attack, &ChordNode::release>(s, v, true); }),
         param("release", "Release", "ms", 5, 4000, 260, Scale::Log, Control::Knob,
@@ -1060,8 +1087,32 @@ namespace
     {
         auto &n = *as<ChordNode>(s);
         vc_init(n.vc, ctx.sample_rate, p[CH_ATTACK], p[CH_RELEASE]);
+        pcl_unison_config_t u { };
+        u.osc.sample_rate_hz = ctx.sample_rate;
+        u.osc.waveform = PCL_OSC_SAW;
+        u.osc.frequency = to_hz(note_hz(60));
+        u.osc.pitch_depth_oct = to_oct(kModOct);
+        u.osc.pulse_width = to_coef(0.5);
+        u.voices = 3;
+        u.detune_oct = to_oct(p[CH_DETUNE] / 1200.0);
+        u.stereo_width = to_coef(0);
+        for (auto &stack : n.stack)
+            if (!ok(pcl_unison_init(&stack, &u)))
+                return false;
+        pcl_ladder_config_t l { };
+        l.sample_rate_hz = ctx.sample_rate;
+        l.cutoff_hz = to_hz(1000);
+        l.resonance = to_coef(0.15);
+        l.mod_depth_oct = to_oct(kModOct);
+        l.mode = PCL_LADDER_LP24;
+        l.saturate = 1;
+        l.drive = PCL_WIDE(1.2);
+        if (!ok(pcl_ladder_init(&n.filter, &l)))
+            return false;
+        n.pluck_k = fall_k(kChordPluckMs, ctx.sample_rate);
         for (size_t i = 0; i < std::size(kChordParams); ++i)
-            kChordParams[i].apply(s, p[i]);
+            if (!kChordParams[i].apply(s, p[i]))
+                return false;
         return true;
     }
 
@@ -1069,11 +1120,16 @@ namespace
     {
         auto &n = *as<ChordNode>(s);
         vc_reset(n.vc);
-        std::fill_n(n.phase, 4, 0.f);
+        for (auto &stack : n.stack)
+            pcl_unison_reset(&stack);
+        pcl_ladder_reset(&n.filter);
+        n.pluck_env = 0;
         std::fill_n(n.gain, 4, 0.f);
         n.age = 0;
         n.tones = 0;
         chord_voice(n);
+        for (int t = 0; t < n.tones; ++t)
+            (void)pcl_unison_set_frequency(&n.stack[t], to_hz(clamp_hz(note_hz(n.notes[t]), n.vc.sr)));
     }
 
     void chord_process(void *s, NodeIo &io)
@@ -1083,121 +1139,209 @@ namespace
         const float fade = std::min(1.f, 500.f / sr);
         auto        render = [&](size_t begin, size_t end)
         {
-            const int tones = n.tones;
-            float     frequency[4] { };
-            for (int tone = 0; tone < tones; ++tone)
-                frequency[tone] = note_hz(n.notes[tone]);
-            for (size_t i = begin; i < end; ++i)
+            const size_t len = end - begin;
+            const int    tones = n.tones;
+            float        mix[PCL_MAX_BLOCK] { };
+            float        gains[4][PCL_MAX_BLOCK];
+            for (size_t i = 0; i < len; ++i)
             {
-                const float envelope = vc_next(n.vc) * vc_level(n.vc);
-                const float pitch = io.sig_in[0] ? std::exp2(pitch_at(io.sig_in[0], i)) : 1.f;
-                const int   arpeggio
-                    = n.arpeggiate ? static_cast<int>(std::fmod(n.age * n.rate, tones)) : 0;
-                float mix = 0;
-                for (int tone = 0; tone < 4; ++tone)
+                n.env[i] = vc_next(n.vc) * vc_level(n.vc);
+                n.pm[i] = to_sample(std::clamp(pitch_at(io.sig_in[0], begin + i) / kModOct, -1.f, 1.f));
+                n.cm[i] = to_sample(std::clamp(n.pluck * n.pluck_env / kModOct, -1.f, 1.f));
+                n.pluck_env *= n.pluck_k;
+                const int arpeggio
+                    = n.arpeggiate && tones ? static_cast<int>(std::fmod(n.age * n.rate, tones)) : 0;
+                for (int t = 0; t < 4; ++t)
                 {
-                    const bool playing = tone < tones
-                        && (n.arpeggiate ? tone == arpeggio : n.age * 1000 >= tone * n.strum);
-                    n.gain[tone] += ((playing ? 1.f : 0.f) - n.gain[tone]) * fade;
-                    if (tone >= tones)
-                        continue;
-                    const float hz = static_cast<float>(clamp_hz(frequency[tone] * pitch, n.vc.sr));
-                    const float angle = n.phase[tone] * kTwoPi;
-                    float       wave = std::sin(angle);
-                    if (hz * 2 < 0.45f * sr)
-                        wave += 0.32f * n.color * std::sin(2 * angle);
-                    mix += wave * n.gain[tone];
-                    n.phase[tone] += hz / sr;
-                    n.phase[tone] -= std::floor(n.phase[tone]);
+                    const bool playing = t < tones
+                        && (n.arpeggiate ? t == arpeggio : n.age * 1000 >= t * n.strum);
+                    n.gain[t] += ((playing ? 1.f : 0.f) - n.gain[t]) * fade;
+                    gains[t][i] = n.gain[t];
                 }
-                if (io.sig_out[0])
-                    io.sig_out[0][i] = to_sample(mix * envelope * (n.arpeggiate ? 0.65f : 0.18f));
                 if (n.vc.stage == 1 || n.vc.stage == 2)
                     n.age += 1.0 / sr;
             }
+            for (int t = 0; t < tones; ++t)
+            {
+                pcl_unison_process(&n.stack[t], n.tone, nullptr, n.pm, nullptr, nullptr, len);
+                for (size_t i = 0; i < len; ++i)
+                    mix[i] += sample_to_float(n.tone[i]) * gains[t][i];
+            }
+            const float level = n.arpeggiate ? 0.6f : 0.3f;
+            for (size_t i = 0; i < len; ++i)
+                n.mix[i] = to_sample(std::clamp(mix[i] * level, -1.f, 1.f));
+            pcl_ladder_process(&n.filter, n.mix, n.mix, n.cm, len);
+            if (io.sig_out[0])
+                for (size_t i = 0; i < len; ++i)
+                    io.sig_out[0][begin + i]
+                        = to_sample(std::clamp(sample_to_float(n.mix[i]) * n.env[i], -1.f, 1.f));
         };
         voice_block(n.vc, *io.evt_in[0], io.frames, render,
             [&](int event)
             {
-                if (event == VC_STRIKE || event == VC_GLIDE)
-                    chord_voice(n);
+                if (event != VC_STRIKE && event != VC_GLIDE)
+                    return;
+                chord_voice(n);
+                for (int t = 0; t < n.tones; ++t)
+                    (void)pcl_unison_set_frequency(
+                        &n.stack[t], to_hz(clamp_hz(note_hz(n.notes[t]), n.vc.sr)));
+                n.pluck_env = 1;
                 if (event == VC_STRIKE)
                     n.age = 0;
             });
     }
 
-    constexpr std::string_view kMacroModels[]
-        = { "Harmonic", "Phase modulation", "Cluster", "Bell" };
+    // ============================================================================================================
+    // Harmonic, Cluster and Bell voices: three sounds of additive sines, each its own module with
+    // its own controls (they share this core, not a panel). Each plays from NOTE (an envelope held
+    // with the key) or fires a one-shot at Root note from a rising edge at TRIG; Decay is the
+    // one-shot's length and the release. Harmonic and Cluster can Drone (always sound, for
+    // patching modulation into them). Two CV inputs add to the two main knobs.
+    enum class Tone
+    {
+        Harmonic,
+        Cluster,
+        Bell
+    };
 
-    struct MacroNode
+    struct ToneNode
     {
         VoiceCore vc;
         float     phase[8];
-        float     root, spread, color, morph, decay_coefficient, strike;
-        float     main_gain, aux_gain;
-        int       model;
-        bool      drone, trigger_high;
+        float     root, a, b, c; // the module's three sound knobs (see each table)
+        float     decay_coefficient, metal_coefficient, damp_coefficient;
+        float     strike, body, metal, main_gain, aux_gain;
+        bool      drone, trigger_high, struck_by_note;
     };
 
-    template <auto Member> bool macro_set(void *s, float value)
+    template <auto Member> bool tone_set(void *s, float value)
     {
-        auto &field = as<MacroNode>(s)->*Member;
+        auto &field = as<ToneNode>(s)->*Member;
         field = static_cast<std::remove_reference_t<decltype(field)>>(value);
         return true;
     }
+    bool tone_decay(void *s, float v)
+    {
+        auto &n = *as<ToneNode>(s);
+        n.vc.release_k = n.decay_coefficient = fall_k(v, n.vc.sr);
+        // a bell's upper partials die away faster than its body
+        n.metal_coefficient = std::pow(n.decay_coefficient, 2.5f);
+        return true;
+    }
+    ParamDesc root_param()
+    {
+        return param("root", "Root note", "note", 0, 127, 48, Scale::Int, Control::Knob,
+            tone_set<&ToneNode::root>);
+    }
+    ParamDesc decay_param(float def)
+    {
+        return param("decay", "Decay", "ms", 15, 4000, def, Scale::Log, Control::Knob, tone_decay);
+    }
+    ParamDesc drone_param()
+    {
+        return param("drone", "Drone", "", 0, 1, 0, Scale::Toggle, Control::Button,
+            tone_set<&ToneNode::drone>);
+    }
 
-    const PortDesc kMacroPorts[] = {
+    // Harmonic: the fundamental with a band of harmonics 2 to 7 that Band moves through
+    const PortDesc kHarmonicPorts[] = {
+        { "note", "NOTE", Kind::Event, false },
+        { "pitch", "PITCH", Kind::Signal, false },
+        { "amount", "AMOUNT", Kind::Signal, false },
+        { "band", "BAND", Kind::Signal, false },
+        { "trig", "TRIG", Kind::Signal, false },
+        { "out", "OUT", Kind::Signal, true },
+        { "sub", "SUB", Kind::Signal, true },
+    };
+    const ParamDesc kHarmonicParams[] = {
+        root_param(),
+        param("width", "Band width", "", 0, 1, 0.25f, Scale::Linear, Control::Knob,
+            tone_set<&ToneNode::a>),
+        param("amount", "Amount", "", 0, 1, 0.4f, Scale::Linear, Control::Knob,
+            tone_set<&ToneNode::b>),
+        param("band", "Band", "", 0, 1, 0.35f, Scale::Linear, Control::Knob,
+            tone_set<&ToneNode::c>),
+        decay_param(320),
+        drone_param(),
+    };
+
+    // Cluster: a centre oscillator and two detuned ones, one colored on each side
+    const PortDesc kClusterPorts[] = {
         { "note", "NOTE", Kind::Event, false },
         { "pitch", "PITCH", Kind::Signal, false },
         { "color", "COLOR", Kind::Signal, false },
-        { "morph", "MORPH", Kind::Signal, false },
+        { "balance", "BALANCE", Kind::Signal, false },
         { "trig", "TRIG", Kind::Signal, false },
-        { "out", "OUT", Kind::Signal, true },
-        { "aux", "AUX", Kind::Signal, true },
+        { "l", "L", Kind::Signal, true },
+        { "r", "R", Kind::Signal, true },
     };
-    const ParamDesc kMacroParams[] = {
-        param("model", "Engine", "", 0, 3, 0, Scale::Enum, Control::Selector,
-            macro_set<&MacroNode::model>, kMacroModels),
-        param("root", "Root note", "note", 0, 127, 48, Scale::Int, Control::Knob,
-            macro_set<&MacroNode::root>),
-        param("spread", "Spread", "", 0, 1, 0.25f, Scale::Linear, Control::Knob,
-            macro_set<&MacroNode::spread>),
+    const ParamDesc kClusterParams[] = {
+        root_param(),
+        param("detune", "Detune", "", 0, 1, 0.25f, Scale::Linear, Control::Knob,
+            tone_set<&ToneNode::a>),
         param("color", "Color", "", 0, 1, 0.4f, Scale::Linear, Control::Knob,
-            macro_set<&MacroNode::color>),
-        param("morph", "Morph", "", 0, 1, 0.35f, Scale::Linear, Control::Knob,
-            macro_set<&MacroNode::morph>),
-        param("decay", "Decay", "ms", 15, 4000, 320, Scale::Log, Control::Knob,
-            [](void *s, float v)
-            {
-                auto &n = *as<MacroNode>(s);
-                n.vc.release_k = n.decay_coefficient = fall_k(v, n.vc.sr);
-                return true;
-            }),
-        param("drone", "Drone", "", 0, 1, 0, Scale::Toggle, Control::Button,
-            macro_set<&MacroNode::drone>),
+            tone_set<&ToneNode::b>),
+        param("balance", "Balance", "", 0, 1, 0.35f, Scale::Linear, Control::Knob,
+            tone_set<&ToneNode::c>),
+        decay_param(320),
+        drone_param(),
     };
 
-    bool macro_init(void *s, const NodeContext &ctx, const float *p)
+    // Bell: stretched partials; the body on OUT with Strike's share of the metal, the metal on
+    // METAL. It always dies away (a held key does not hold a bell); letting go damps it.
+    const PortDesc kBellPorts[] = {
+        { "note", "NOTE", Kind::Event, false },
+        { "pitch", "PITCH", Kind::Signal, false },
+        { "bright", "BRIGHT", Kind::Signal, false },
+        { "strike", "STRIKE", Kind::Signal, false },
+        { "trig", "TRIG", Kind::Signal, false },
+        { "out", "OUT", Kind::Signal, true },
+        { "metal", "METAL", Kind::Signal, true },
+    };
+    const ParamDesc kBellParams[] = {
+        root_param(),
+        param("stretch", "Stretch", "", 0, 1, 0.5f, Scale::Linear, Control::Knob,
+            tone_set<&ToneNode::a>),
+        param("bright", "Brightness", "", 0, 1, 0.7f, Scale::Linear, Control::Knob,
+            tone_set<&ToneNode::b>),
+        param("strike", "Strike", "", 0, 1, 0.45f, Scale::Linear, Control::Knob,
+            tone_set<&ToneNode::c>),
+        decay_param(1800),
+    };
+
+    template <Tone T> constexpr std::span<const ParamDesc> tone_params()
     {
-        auto &n = *as<MacroNode>(s);
+        if constexpr (T == Tone::Harmonic)
+            return kHarmonicParams;
+        else if constexpr (T == Tone::Cluster)
+            return kClusterParams;
+        else
+            return kBellParams;
+    }
+
+    template <Tone T> bool tone_init(void *s, const NodeContext &ctx, const float *p)
+    {
+        auto &n = *as<ToneNode>(s);
         vc_init(n.vc, ctx.sample_rate, 3.f, 320.f);
-        for (size_t i = 0; i < std::size(kMacroParams); ++i)
-            kMacroParams[i].apply(s, p[i]);
+        n.damp_coefficient = fall_k(250, ctx.sample_rate);
+        const auto params = tone_params<T>();
+        for (size_t i = 0; i < params.size(); ++i)
+            params[i].apply(s, p[i]);
         return true;
     }
 
-    void macro_reset(void *s)
+    void tone_reset(void *s)
     {
-        auto &n = *as<MacroNode>(s);
+        auto &n = *as<ToneNode>(s);
         vc_reset(n.vc);
         std::fill_n(n.phase, std::size(n.phase), 0.f);
-        n.strike = n.main_gain = n.aux_gain = 0;
-        n.trigger_high = false;
+        n.strike = n.body = n.metal = n.main_gain = n.aux_gain = 0;
+        n.trigger_high = n.struck_by_note = false;
     }
 
-    void macro_process(void *s, NodeIo &io)
+    template <Tone T> void tone_process(void *s, NodeIo &io)
     {
-        auto       &n = *as<MacroNode>(s);
+        auto       &n = *as<ToneNode>(s);
         const float sr = static_cast<float>(n.vc.sr);
         const float slew = std::min(1.f, 900.f / sr);
         auto        render = [&](size_t begin, size_t end)
@@ -1207,93 +1351,106 @@ namespace
             for (size_t i = begin; i < end; ++i)
             {
                 const float trigger = pitch_at(io.sig_in[3], i);
-                if (!n.trigger_high && trigger >= 0.5f)
-                    n.strike = 1.f;
+                const bool  fired = !n.trigger_high && trigger >= 0.5f;
                 n.trigger_high = n.trigger_high ? trigger > 0.25f : trigger >= 0.5f;
-                const float level = std::max(n.strike, vc_next(n.vc) * vc_level(n.vc));
-                n.strike *= n.decay_coefficient;
-                n.main_gain += (std::max(level, n.drone ? 1.f : 0.f) - n.main_gain) * slew;
-                n.aux_gain += (std::sqrt(std::max(level, n.drone ? 1.f : 0.f)) - n.aux_gain) * slew;
-
-                const float base = n.vc.stage ? held_hz : root_hz;
-                const float hz = base * (io.sig_in[0] ? std::exp2(pitch_at(io.sig_in[0], i)) : 1.f);
-                const float color = std::clamp(n.color + pitch_at(io.sig_in[1], i), 0.f, 1.f);
-                const float morph = std::clamp(n.morph + pitch_at(io.sig_in[2], i), 0.f, 1.f);
-                // Fade partials as they approach Nyquist so pitch CV can sweep them smoothly.
-                auto angle = [&](size_t slot, float ratio)
+                float level;
+                if constexpr (T == Tone::Bell)
                 {
-                    float      &p = n.phase[slot];
-                    const float radians = p * kTwoPi;
-                    p += std::min(hz * ratio / sr, 0.49f);
-                    p -= std::floor(p);
-                    return radians;
-                };
+                    if (fired)
+                    {
+                        n.body = n.metal = 1.f;
+                        n.struck_by_note = false;
+                    }
+                    // let go of the key: damped, as a hand on the bell
+                    const float damp
+                        = n.struck_by_note && n.vc.stage != 1 && n.vc.stage != 2 ? n.damp_coefficient : 1.f;
+                    n.body *= n.decay_coefficient * damp;
+                    n.metal *= n.metal_coefficient * damp;
+                    level = n.body;
+                    n.main_gain += (level - n.main_gain) * slew;
+                    n.aux_gain += (n.metal - n.aux_gain) * slew;
+                }
+                else
+                {
+                    if (fired)
+                        n.strike = 1.f;
+                    level = std::max(n.strike, vc_next(n.vc) * vc_level(n.vc));
+                    n.strike *= n.decay_coefficient;
+                    const float target = std::max(level, n.drone ? 1.f : 0.f);
+                    n.main_gain += (target - n.main_gain) * slew;
+                    n.aux_gain += (std::sqrt(target) - n.aux_gain) * slew;
+                }
+
+                const bool  from_note = T == Tone::Bell ? n.struck_by_note : n.vc.stage != 0;
+                const float base = from_note ? held_hz : root_hz;
+                const float hz = base * (io.sig_in[0] ? std::exp2(pitch_at(io.sig_in[0], i)) : 1.f);
+                const float b = std::clamp(n.b + pitch_at(io.sig_in[1], i), 0.f, 1.f);
+                const float c = std::clamp(n.c + pitch_at(io.sig_in[2], i), 0.f, 1.f);
+                // partials fade as they near Nyquist, so pitch CV can sweep them smoothly
                 auto partial = [&](size_t slot, float ratio)
                 {
+                    float      &ph = n.phase[slot];
+                    const float radians = ph * kTwoPi;
+                    ph += std::min(hz * ratio / sr, 0.49f);
+                    ph -= std::floor(ph);
                     const float weight = std::clamp((0.49f - hz * ratio / sr) * 20.f, 0.f, 1.f);
-                    return std::sin(angle(slot, ratio)) * weight;
+                    return std::sin(radians) * weight;
                 };
 
                 float main = 0, aux = 0;
-                switch (n.model)
-                {
-                case 0: // Draw out a moving group of upper harmonics.
+                if constexpr (T == Tone::Harmonic)
+                { // a: width, b: amount, c: band
                     main = 0.7f * partial(0, 1.f);
                     aux = 0.65f * partial(7, 0.5f);
                     for (size_t h = 2; h <= 7; ++h)
                     {
-                        const float distance = (static_cast<float>(h) - 2.f - 5.f * morph);
-                        const float width = 1.f + 2.f * n.spread;
-                        const float weight = color * 0.35f / (1.f + distance * distance / width);
+                        const float distance = static_cast<float>(h) - 2.f - 5.f * c;
+                        const float width = 1.f + 2.f * n.a;
+                        const float weight = b * 0.35f / (1.f + distance * distance / width);
                         const float tone = partial(h - 1, static_cast<float>(h)) * weight;
                         main += tone;
-                        aux += (h % 2 ? -tone : tone) * 0.35f * n.spread;
+                        aux += (h % 2 ? -tone : tone) * 0.35f * n.a;
                     }
-                    break;
-                case 1: // Quadrature carrier taps give two views of a shared phase modulation.
-                {
-                    const float ratio = 1.f + std::round(n.spread * 6.f);
-                    const float mod = partial(1, ratio);
-                    const float width
-                        = std::clamp((0.45f * sr / std::max(hz, 1.f) - 1.f) / ratio, 0.f, 3.f);
-                    const float carrier = angle(0, 1.f);
-                    const float phase = carrier + color * width * mod;
-                    const float gain = 0.8f * std::clamp((0.49f - hz / sr) * 20.f, 0.f, 1.f);
-                    main = gain * std::sin(phase);
-                    aux = gain * std::sin(phase + morph * 1.5707963f);
-                    break;
                 }
-                case 2: // A center oscillator with oppositely detuned, differently colored sides.
-                {
-                    const float delta = 0.002f + 0.035f * n.spread;
+                else if constexpr (T == Tone::Cluster)
+                { // a: detune, b: color, c: balance
+                    const float delta = 0.002f + 0.035f * n.a;
                     const float center = partial(0, 1.f);
-                    const float low
-                        = partial(1, 1.f - delta) + 0.35f * color * partial(3, 2.f - 2.f * delta);
+                    const float low = partial(1, 1.f - delta) + 0.35f * b * partial(3, 2.f - 2.f * delta);
                     const float high
-                        = partial(2, 1.f + delta) + 0.35f * color * partial(4, 3.f + 3.f * delta);
-                    main = 0.35f * center + 0.4f * std::lerp(low, high, morph);
-                    aux = 0.35f * center + 0.4f * std::lerp(high, low, morph);
-                    break;
+                        = partial(2, 1.f + delta) + 0.35f * b * partial(4, 3.f + 3.f * delta);
+                    main = 0.35f * center + 0.4f * std::lerp(low, high, c);
+                    aux = 0.35f * center + 0.4f * std::lerp(high, low, c);
                 }
-                case 3: // Stretch the partials of a bell, then mix body and strike separately.
-                {
-                    const float body
-                        = 0.65f * partial(0, 1.f) + 0.21f * partial(1, 2.f + 0.4f * n.spread);
-                    const float metal = 0.36f * partial(2, 3.f + 1.2f * n.spread)
-                        + 0.26f * partial(3, 5.f + 2.1f * n.spread);
-                    const float brightness = color * (n.drone ? 1.f : 0.25f + 0.75f * level);
-                    main = 0.75f * body + brightness * morph * metal;
-                    aux = 0.3f * body + brightness * metal;
-                    break;
+                else
+                { // a: stretch, b: brightness, c: strike
+                    const float body = 0.65f * partial(0, 1.f) + 0.21f * partial(1, 2.f + 0.4f * n.a);
+                    const float metal = (0.36f * partial(2, 3.f + 1.2f * n.a)
+                                            + 0.26f * partial(3, 5.f + 2.1f * n.a))
+                        * (0.3f + 1.2f * b);
+                    // the body follows its envelope, the metal its faster one
+                    main = 0.75f * body * n.main_gain + c * metal * n.aux_gain;
+                    aux = metal * n.aux_gain + 0.2f * body * n.main_gain;
                 }
-                }
+                const float out_gain = T == Tone::Bell ? 0.72f * vc_level(n.vc) : 0.72f;
+                const float main_env = T == Tone::Bell ? 1.f : n.main_gain;
+                const float aux_env = T == Tone::Bell ? 1.f : n.aux_gain;
                 if (io.sig_out[0])
-                    io.sig_out[0][i] = to_sample(std::clamp(main * n.main_gain * 0.72f, -1.f, 1.f));
+                    io.sig_out[0][i] = to_sample(std::clamp(main * main_env * out_gain, -1.f, 1.f));
                 if (io.sig_out[1])
-                    io.sig_out[1][i] = to_sample(std::clamp(aux * n.aux_gain * 0.72f, -1.f, 1.f));
+                    io.sig_out[1][i] = to_sample(std::clamp(aux * aux_env * out_gain, -1.f, 1.f));
             }
         };
-        voice_block(n.vc, *io.evt_in[0], io.frames, render, [](int) { });
+        voice_block(n.vc, *io.evt_in[0], io.frames, render,
+            [&](int event)
+            {
+                if constexpr (T == Tone::Bell)
+                    if (event == VC_STRIKE)
+                    {
+                        n.body = n.metal = 1.f;
+                        n.struck_by_note = true;
+                    }
+            });
     }
 
 } // namespace
@@ -1317,13 +1474,21 @@ RACK_DESC_D(kGrainVoiceDesc, "grain_voice", "Grain voice", kVoice, 12, GrainNode
     kGrainParams, grain_init, grain_reset, grain_process, grain_destroy,
     "Clouds of short grains of a WAV file, at the pitch of each note");
 
-RACK_DESC(kChordVoiceDesc, "chord_voice", "Chord Voice", kVoice, 16, ChordNode, kChordPorts,
+RACK_DESC(kChordVoiceDesc, "chord_voice", "Chord Voice", kVoice, 20, ChordNode, kChordPorts,
     kChordParams, false, chord_init, chord_reset, chord_process, nullptr, nullptr,
     "A chord in key from one note, led smoothly from the last; strum it or play it as an arpeggio");
 
-RACK_DESC(kMacroVoiceDesc, "macro_voice", "Macro Voice", kVoice, 16, MacroNode, kMacroPorts,
-    kMacroParams, false, macro_init, macro_reset, macro_process, nullptr, nullptr,
-    "Four synthesis engines with shared sound controls, CV, and two related outputs");
+RACK_DESC(kHarmonicVoiceDesc, "harmonic_voice", "Harmonic Voice", kVoice, 12, ToneNode,
+    kHarmonicPorts, kHarmonicParams, false, tone_init<Tone::Harmonic>, tone_reset,
+    tone_process<Tone::Harmonic>, nullptr, nullptr,
+    "A fundamental with a band of harmonics to sweep, and a sub-octave output");
+RACK_DESC(kClusterVoiceDesc, "cluster_voice", "Cluster Voice", kVoice, 12, ToneNode,
+    kClusterPorts, kClusterParams, false, tone_init<Tone::Cluster>, tone_reset,
+    tone_process<Tone::Cluster>, nullptr, nullptr,
+    "Three detuned sines, spread to left and right; drones well");
+RACK_DESC(kBellVoiceDesc, "bell_voice", "Bell Voice", kVoice, 12, ToneNode, kBellPorts,
+    kBellParams, false, tone_init<Tone::Bell>, tone_reset, tone_process<Tone::Bell>, nullptr,
+    nullptr, "A struck bell whose high partials fade first; the metal on its own output too");
 
 bool grain_load(void *state, const SampleData &d)
 {

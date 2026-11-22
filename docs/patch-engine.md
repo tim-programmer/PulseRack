@@ -462,31 +462,38 @@ A key is saved by name with flats (Db, Eb, Gb, Ab, Bb), as `#` starts a comment 
 file.
 
 Strum delays each successive tone, from the lowest up. Switch on Arpeggiate to cycle upward
-through the tones at Arp rate. Brightness adds a second harmonic, and Attack and Release
-shape the output. PITCH shifts all tones together in octaves.
+through the tones at Arp rate. PITCH shifts all tones together in octaves.
+
+Each tone is a stack of three detuned saws (`pcl_unison`, Detune in cents), and the chord goes
+through one ladder low-pass (24 dB): Brightness sets its cutoff (250 Hz to 8 kHz, even in
+octaves), and Pluck opens it by up to four octaves at each new chord, closing again over 500 ms
+(a key's bite). Attack and Release shape the output. (Before 2026-11-22 its tones were sines
+with a little second harmonic, which sounded thin.)
 
 Open `examples/generative_chords.rack` to hear the two modules through a reverb.
 
-## Macro Voice
+## Harmonic, Cluster and Bell voices
 
-Macro Voice shares a set of controls across four synthesis engines. Spread adjusts
-the relationship between oscillators or partials, Color controls upper spectral
-content, and Morph changes the balance or phase relationship between the two outputs.
-COLOR and MORPH CV add to their knobs. PITCH shifts the frequency by one octave per
-signal unit.
+These replace Macro Voice (2026-11-22), whose Engine selector changed what its Spread, Color and
+Morph knobs meant, against the rule that a different sound is a different module. Each is now its
+own module with its own knobs and jack names; they share one core in `modules_voices.cpp`. Macro
+Voice's phase-modulation engine was dropped, as FM voice does that. A patch that still names
+`macro_voice` no longer loads it.
 
-| Engine | OUT | AUX |
+All three play from NOTE (velocity-sensitive), or fire a one-shot at Root note from a rising edge
+at TRIG. Decay sets the one-shot's length and the release. PITCH moves them an octave a unit, and
+the two CV inputs add to the two knobs named the same.
+
+| Module | Knobs | Outputs |
 | --- | --- | --- |
-| Harmonic | Fundamental and a moving band of harmonics | Lower octave with alternating upper harmonics |
-| Phase modulation | Carrier shaped by an integer-ratio modulator | Phase-shifted carrier |
-| Cluster | Center and two detuned oscillators | Detuned oscillators with their blend reversed |
-| Bell | Bell body with a variable amount of metallic partials | More of the metallic partials |
+| **Harmonic Voice** | Band width, Amount, Band (which of harmonics 2 to 7 the band is on), Drone | OUT: the fundamental and the band; SUB: an octave below, with alternating harmonics |
+| **Cluster Voice** | Detune, Color (upper partials on the detuned sides), Balance, Drone | L and R: the centre with the two sides blended against each other |
+| **Bell Voice** | Stretch (how inharmonic), Brightness, Strike (how much metal on OUT) | OUT: the body and Strike's share of the metal; METAL: the metal |
 
-Patch note events into NOTE for a velocity-sensitive voice with a held envelope.
-A rising edge at TRIG fires a one-shot at the root pitch or current note. Decay sets
-the one-shot length and note release. Drone keeps the oscillator audible for
-continuous modulation. The `examples/macro_voice.rack` factory patch places the Bell
-engine's two outputs in stereo.
+Drone (Harmonic and Cluster) keeps the voice sounding, for patching modulation into it. A bell
+always dies away, even while its key is held; its upper partials fade 2.5 times as fast as its
+body (in decibels), and letting go of the key damps it over 250 ms. `examples/bells.rack` puts the
+body on the left and the metal on the right.
 
 ## FM Synth
 
@@ -552,3 +559,29 @@ so changes made after choosing it are kept. Presets are a general part of a modu
 descriptor (`ModuleDesc::presets`, `preset_values`), for any module with a `preset` setting.
 
 Open `examples/fm_synth.rack` to hear four seventh chords on the E. piano.
+
+## Audio In
+
+**Audio In** (`audio_in`, 8 HP) brings a sound card input into the rack: a microphone, a line in,
+another program's output where the system offers it as an input. Its Device box chooses the input
+(*Default input*, the system's, or one by name), kept in the patch with a `device` line as MIDI
+In's is. L and R are its two channels times Level; a mono input plays on both. The box says
+*AUDIO IS OFF* while audio is off and *NOT CONNECTED* when the named input is not plugged in; it
+is heard again when it is. In PulseRack FX (the plugin as an effect) it reads the track's audio
+instead, whatever its device says (`docs/reaper.md`).
+
+How it is built: while audio runs, the output (`src/audio/audio_out.cpp`) opens up to four inputs
+(`kCaptureSlots`), each an SDL recording stream converted to the engine's rate in stereo. The
+output's callback reads each one's frames before it renders and passes them on (`HostCall::capture`,
+then `HostBlock::capture`); an input that has fewer frames ready than the block gives silence for
+the rest, and one with more than two device buffers waiting drops the oldest, so the delay from the
+microphone stays short as the two devices' clocks drift. A module's device becomes a capture slot
+as a MIDI device becomes a MIDI slot (`Engine::audio_in_slot_of`, the device codes in
+`modules_common.h`). The editor follows inputs being plugged in and out twice a second, and closes
+an input once no Audio In names it. An input is closed under the output stream's lock, which the
+callback holds while it runs, so it never reads one that is gone.
+
+**Not checked by ear:** the delay from the input to the output (the output's buffer, 256 frames,
+plus what waits in the input's), and a long run on two devices whose clocks drift (a USB microphone
+into the built-in output). Seen on Linux (PipeWire): the default input opens and runs while audio is
+on.

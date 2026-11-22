@@ -71,11 +71,11 @@ using rack::kMacros;
 // PulseRack FX's first patch: the track's audio through a delay on each side.
 constexpr const char *kDefaultFxPatch = R"(pulserack 1
 node 1 audio_in x=0 y=0
-node 2 delay x=4 y=0
+node 2 delay x=8 y=0
 param 2 time 350
-node 3 delay x=12 y=0
+node 3 delay x=16 y=0
 param 3 time 370
-node 4 out x=20 y=0
+node 4 out x=24 y=0
 cable 1.l -> 2.in
 cable 1.r -> 3.in
 cable 2.out -> 4.l

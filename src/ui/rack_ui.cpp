@@ -1149,11 +1149,26 @@ struct PanelView
         const char *caption = "DEVICE";
         bool        heard = true;
         const bool  out = sends_midi(*n.desc);
-        std::string shown = n.device.empty() ? std::string(out ? "No output" : "Any device") : n.device;
+        const bool  audio_in = takes_audio_in(*n.desc);
+        std::string shown = !n.device.empty() ? n.device
+            : audio_in                        ? std::string("Default input")
+            : out                             ? std::string("No output")
+                                              : std::string("Any device");
         if (e && e->hosted) // in a plugin every device is the host's track (and there is no menu)
         {
             caption = out ? "TO THE TRACK" : "FROM THE TRACK";
             shown = e->host_name.empty() ? std::string("the host") : e->host_name;
+        }
+        else if (audio_in)
+        {
+            caption = "INPUT";
+            if (e && !e->audio_running())
+                caption = "AUDIO IS OFF", heard = false;
+            else if (e && !n.device.empty()
+                && std::find(e->audio_inputs_available.begin(), e->audio_inputs_available.end(),
+                       n.device)
+                    == e->audio_inputs_available.end())
+                caption = "NOT CONNECTED", heard = false;
         }
         else if (out)
         {
@@ -1654,7 +1669,7 @@ struct PanelView
             p.child(envelope_element(*n, L));
         if (d.id == "out") // the output level, between its controls and its jacks
             p.child(meters(L));
-        if (has_midi_device(d)) // the MIDI device it listens or sends to, under its controls
+        if (has_device(d)) // the device it listens or sends to, under its controls
             p.child(device_element(cx, *n, L, cc.chip));
         if (takes_sample(d)) // the file it plays, there too
             p.child(sample_element(cx, *n, L, cc.chip));
@@ -2234,7 +2249,7 @@ struct RackView
             content.child(std::move(menu));
         }
         // a MIDI module's device menu, under its Device box: every input, or one of them
-        if (const Node *n = dev_node ? patch.find(dev_node) : nullptr; n && has_midi_device(*n->desc))
+        if (const Node *n = dev_node ? patch.find(dev_node) : nullptr; n && has_device(*n->desc))
         {
             const uint32_t id = dev_node;
             const Pt       at = device_menu_origin(*n);
@@ -2252,7 +2267,9 @@ struct RackView
                                       .on_mouse_down([](RackView &) { });
             // the one it has now is in the accent colour
             const std::vector<std::string> &present = e->midi_present(*n->desc);
-            menu.child(menu_item(sends_midi(*n->desc) ? "No output" : "Any device",
+            menu.child(menu_item(takes_audio_in(*n->desc) ? "Default input"
+                        : sends_midi(*n->desc)              ? "No output"
+                                                            : "Any device",
                 n->device.empty() ? st::kAccent : st::kText,
                 [id](RackView &self, Ctx cx)
                 {
@@ -2337,6 +2354,8 @@ void open_device_menu_of(Ctx cx, Editor &e, uint32_t node)
     if (e.midi) // what is plugged in now
         e.midi_available = e.midi->available();
 #endif
+    if (e.audio && e.audio->running())
+        e.audio_inputs_available = e.audio->inputs();
     e.rack.update(cx,
         [node](RackView &r, Ctx c)
         {
@@ -2694,6 +2713,10 @@ std::string Editor::describe_item(uint32_t node, int item) const
                              "plugged here"
                            : "      drag from it to an output to connect");
     }
+    if (item == kHoverDevice && takes_audio_in(d))
+        return std::string(d.name) + "  ·  reads "
+            + (n->device.empty() ? std::string("the default input") : n->device)
+            + "      click to choose a sound card input";
     if (item == kHoverDevice && sends_midi(d))
         return std::string(d.name) + "  ·  sends to "
             + (n->device.empty() ? std::string("no output") : n->device)
@@ -2790,6 +2813,10 @@ bool Editor::start_audio(Ctx cx)
     {
         meter_task.cancel();
         meter_task = cx.app().ctx(self).every(1.0 / 30, [](Editor &e, Ctx c) { e.tick(c); });
+        // the Audio In modules open their inputs now
+        audio_inputs_available = audio->inputs();
+        engine.refresh_devices();
+        refresh_midi_panels(cx);
         say(cx, "Audio on: " + audio_status() + ".");
     }
     else
@@ -2911,7 +2938,7 @@ void Editor::toggle_midi_input(Ctx cx, const std::string &name)
 void Editor::refresh_midi_panels(Ctx cx)
 {
     for (const Node &n : engine.patch().nodes())
-        if (has_midi_device(*n.desc))
+        if (has_device(*n.desc))
             if (auto it = panels.find(n.id); it != panels.end())
                 it->second.update(cx, [](PanelView &, Ctx c) { c.notify(); });
 }
@@ -2919,8 +2946,9 @@ void Editor::refresh_midi_panels(Ctx cx)
 std::vector<std::string> Editor::device_menu_names(uint32_t node) const
 {
     const Node              *n = engine.patch().find(node);
-    std::vector<std::string> names
-        = n && sends_midi(*n->desc) ? midi_out_available : midi_menu_names();
+    std::vector<std::string> names = n && takes_audio_in(*n->desc) ? audio_inputs_available
+        : n && sends_midi(*n->desc)                                 ? midi_out_available
+                                                                    : midi_menu_names();
     if (n && !n->device.empty() && std::find(names.begin(), names.end(), n->device) == names.end())
         names.push_back(n->device); // from a patch made on another machine, perhaps
     return names;
@@ -2929,9 +2957,27 @@ std::vector<std::string> Editor::device_menu_names(uint32_t node) const
 void Editor::set_midi_device(Ctx cx, uint32_t node, const std::string &name)
 {
     const Node *n = engine.patch().find(node);
-    if (!n || !has_midi_device(*n->desc) || n->device == name)
+    if (!n || !has_device(*n->desc) || n->device == name)
         return;
     checkpoint(cx, std::string(n->desc->name) + " device");
+    if (takes_audio_in(*n->desc))
+    { // a sound card input, opened while audio runs
+        engine.set_device(node, name);
+        keep_audio_inputs();
+        touch(cx);
+        if (auto it = panels.find(node); it != panels.end())
+            it->second.update(cx, [](PanelView &, Ctx c) { c.notify(); });
+        const bool here = name.empty()
+            || std::find(audio_inputs_available.begin(), audio_inputs_available.end(), name)
+                != audio_inputs_available.end();
+        say(cx,
+            std::string(n->desc->name) + " reads "
+                + (name.empty() ? std::string("the default input") : name)
+                + (!audio_running() ? "  (audio is off: it will when it is on)."
+                        : here      ? "."
+                                    : "  (not connected: it will when it is)."));
+        return;
+    }
     if (sends_midi(*n->desc))
     { // an output: nothing to switch on
         engine.set_device(node, name);
@@ -3290,7 +3336,10 @@ void Editor::stop_audio(Ctx cx)
 {
     meter_task.cancel();
     if (audio)
-        audio->stop();
+        audio->stop(); // (and the inputs it had open)
+    audio_inputs_available.clear();
+    engine.refresh_devices(); // the Audio In modules hear nothing now
+    refresh_midi_panels(cx);
     load_pct = -1;
     tick(cx); // the LEDs and meters go dark
     for (auto &[id, l] : leds)
@@ -3322,10 +3371,40 @@ std::string Editor::audio_status() const
     return buf;
 }
 
+void Editor::poll_audio_inputs(Ctx cx)
+{
+    if (!audio || !audio->running()) // (and in a plugin, which has no sound card of its own)
+        return;
+    std::vector<std::string> now = audio->inputs();
+    if (now != audio_inputs_available)
+    { // one plugged in or out: the modules naming it open it again, or hear nothing
+        audio_inputs_available = std::move(now);
+        engine.refresh_devices();
+        refresh_midi_panels(cx);
+    }
+    keep_audio_inputs();
+}
+
+void Editor::keep_audio_inputs()
+{
+    if (!audio || !audio->running())
+        return;
+    std::vector<std::string> used;
+    for (const Node &n : engine.patch().nodes())
+        if (takes_audio_in(*n.desc))
+            used.push_back(n.device);
+    audio->keep_inputs(used);
+}
+
 void Editor::tick(Ctx cx)
 {
     if (hosted)
         pump_host_params(cx);
+    if (++audio_input_poll >= 15) // twice a second
+    {
+        audio_input_poll = 0;
+        poll_audio_inputs(cx);
+    }
     Telemetry &t = engine.telemetry();
     for (auto &[id, view] : panels)
     {
@@ -4742,6 +4821,9 @@ Entity<Editor> open_rack(App app, const Options &opt, std::string *error)
 #endif
         return -1;
     };
+    if (!e->hosted) // (a plugin's Audio In reads the host's audio in: no slot)
+        e->engine.audio_in_slot_of = [e](const std::string &name) -> int
+    { return e->audio && e->audio->running() ? e->audio->capture_slot(name) : -1; };
     if (!opt.patch_path.empty() && !e->open_path(app.ctx(), opt.patch_path, error))
         return { };
     if (e->has_recovery())
@@ -4838,7 +4920,7 @@ gp_point device_box_center(Ctx cx, Entity<Editor> ed, uint32_t node)
 {
     Editor     *e = ed.get(cx);
     const Node *n = e ? e->engine.patch().find(node) : nullptr;
-    if (!n || !has_midi_device(*n->desc))
+    if (!n || !has_device(*n->desc))
         return { -1, -1 };
     const RackViewport vp = viewport_of(cx, *e);
     const gp_point     o = rack_origin();

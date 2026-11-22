@@ -1,0 +1,20 @@
+# Bells from a slowly changing melody: Bell Voice's body on the left and its metal on the right, an LFO moving how hard they are struck.
+pulserack 1
+node 1 melody x=0 y=0
+param 1 bpm 104
+param 1 division 12
+param 1 root 57
+param 1 scale 3
+param 1 seed 23
+node 2 bell_voice x=16 y=0
+param 2 stretch 0.58
+param 2 bright 0.8
+param 2 strike 0.43
+param 2 decay 1400
+node 3 lfo x=16 y=26
+param 3 frequency 0.19
+node 4 out x=32 y=0
+cable 1.note -> 2.note
+cable 3.out -> 2.strike
+cable 2.out -> 4.l
+cable 2.metal -> 4.r

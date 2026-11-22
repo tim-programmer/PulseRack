@@ -72,7 +72,13 @@ inline bool sends_midi(const ModuleDesc &desc) { return midi_source(desc) != nul
 // is not known on this machine); for a MIDI Out, the output it sends to (-1 and -2: none). False
 // for a module with no MIDI device. The audio thread.
 inline constexpr int kMidiAnyDevice = -1, kMidiNoDevice = -2;
+// For Audio In it is where it reads: a capture slot (0 .. kCaptureSlots-1), the host's audio in, or
+// nothing (its input is not there).
+inline constexpr int kAudioInHost = -1, kAudioInNone = -2;
 bool                 midi_set_device(const ModuleDesc &desc, void *state, int device);
+// Audio In: a device (Node::device) that is a sound card input.
+bool        takes_audio_in(const ModuleDesc &desc);
+inline bool has_device(const ModuleDesc &desc) { return has_midi_device(desc) || takes_audio_in(desc); }
 // How many events the sequencer, arpeggiator or clock dropped for lack of room (telemetry for the
 // panel's LED).
 uint32_t dropped_events(const ModuleDesc &desc, const void *state);
@@ -96,7 +102,8 @@ extern const ModuleDesc kLadderDesc, kUnisonDesc, kDelayDesc, kReverbDesc, kSamp
 extern const ModuleDesc kKickDesc, kSnareDesc, kMetalDesc;
 extern const ModuleDesc kSyncVoiceDesc, kStackVoiceDesc, kFmVoiceDesc, kAirVoiceDesc,
     kStringVoiceDesc, kGrainVoiceDesc;
-extern const ModuleDesc kChordVoiceDesc, kMelodyDesc, kMacroVoiceDesc, kFmSynthDesc;
+extern const ModuleDesc kChordVoiceDesc, kMelodyDesc, kFmSynthDesc;
+extern const ModuleDesc kHarmonicVoiceDesc, kClusterVoiceDesc, kBellVoiceDesc;
 bool grain_load(void *state, const SampleData &data); // (modules_voices.cpp)
 
 // The scales the note modules share (Generative Melody, Chord Voice): their names, the

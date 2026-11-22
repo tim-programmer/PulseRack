@@ -73,11 +73,20 @@ public:
     std::string              midi_error;
     std::vector<std::string> midi_available;     // the inputs, as listed when the device menu opened
     std::vector<std::string> midi_out_available; // the outputs, likewise
-    // The devices a module's Device box chooses from: the inputs, or for a MIDI Out the outputs.
+    // The devices a module's Device box chooses from: the inputs, or for a MIDI Out the outputs;
+    // for Audio In, the sound card's inputs.
     const std::vector<std::string> &midi_present(const ModuleDesc &d) const
     {
-        return sends_midi(d) ? midi_out_available : midi_available;
+        return takes_audio_in(d) ? audio_inputs_available
+            : sends_midi(d)      ? midi_out_available
+                                 : midi_available;
     }
+    // The sound card's inputs while audio runs (an Audio In module's Device box), followed twice a
+    // second: one plugged in or out is opened or closed for the modules that name it.
+    std::vector<std::string> audio_inputs_available;
+    int                      audio_input_poll = 0;
+    void                     poll_audio_inputs(gpuic::Ctx cx);
+    void                     keep_audio_inputs(); // closes the inputs no Audio In names
     gpuic::Task              midi_task;      // 4 Hz: follows devices being plugged in and out
     void                     start_midi(gpuic::Ctx cx); // opens the settings' inputs
     void                     poll_midi(gpuic::Ctx cx);

@@ -56,6 +56,9 @@ struct HostCall
     bool   transport = false, playing = false;
     double tempo = 120, beat = 0;
     const float *in[2] = { nullptr, nullptr }; // its audio in (an effect), the call's length
+    // the standalone rack's sound card inputs (AudioOut's capture slots), the call's length, or
+    // null
+    const float *capture[kCaptureSlots][2] = { };
     // the extra outputs 2 .. 8, the call's length (overwritten), or null
     float                        *out[kExtraOutputs][2] = { };
     std::span<const MacroChange> macros; // sorted by offset
@@ -122,6 +125,11 @@ public:
     // NoSuchParam for a module that takes no MIDI.
     Err                                     set_device(uint32_t node, const std::string &name);
     std::function<int(const std::string &)> midi_slot_of;
+    // An Audio In module's device (kept in the patch the same way) names a sound card input; empty
+    // is the system's default input. `audio_in_slot_of` gives its capture slot (HostCall::capture),
+    // or -1 when that input is not there. Unset (a plugin, rack-render, the tests), Audio In reads
+    // the host's audio in (HostCall::in).
+    std::function<int(const std::string &)> audio_in_slot_of;
     // MIDI out (step 9): a MIDI Out module's device names an output; `midi_out_slot_of` gives its
     // slot, for an empty name too (-1: none; a plugin sends every name, and none, to its host)
     // slot (the application's output manager), and what the modules send goes into the outbox,

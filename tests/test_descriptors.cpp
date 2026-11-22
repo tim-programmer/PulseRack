@@ -37,7 +37,7 @@ TEST(descriptors_ids_are_unique_and_well_formed)
                 CHECK(p.min == 0 && p.max == 1);
         }
     }
-    CHECK(ids.size() == 42);
+    CHECK(ids.size() == 44);
 }
 
 // The wrappers index their jacks by slot number; the descriptors list them by name. They must
@@ -64,7 +64,9 @@ TEST(descriptors_slot_counts_match_the_wrappers)
         { "string_voice", 1, 1, 1, 0 },
         { "grain_voice", 2, 1, 1, 0 },
         { "chord_voice", 1, 1, 1, 0 },
-        { "macro_voice", 4, 2, 1, 0 },
+        { "harmonic_voice", 4, 2, 1, 0 },
+        { "cluster_voice", 4, 2, 1, 0 },
+        { "bell_voice", 4, 2, 1, 0 },
         { "fm_synth", 2, 2, 2, 0 },
         { "sah", 1, 1, 1, 0 },
         { "lfo", 1, 1, 0, 0 },

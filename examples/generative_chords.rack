@@ -14,9 +14,9 @@ param 2 scale minor
 param 2 shape seventh
 param 2 strum 36
 param 2 release 380
-node 3 reverb x=32 y=0
+node 3 reverb x=36 y=0
 param 3 mix 0.23
-node 4 out x=44 y=0
+node 4 out x=48 y=0
 cable 1.note -> 2.note
 cable 2.out -> 3.in
 cable 3.l -> 4.l

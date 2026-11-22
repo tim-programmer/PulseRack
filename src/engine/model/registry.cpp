@@ -10,7 +10,7 @@ namespace rack
 
 std::span<const ModuleDesc *const> all_modules()
 {
-    static const std::array<const ModuleDesc *, 42> table = {
+    static const std::array<const ModuleDesc *, 44> table = {
         &kOscDesc,
         &kUnisonDesc,
         &kSamplerDesc,
@@ -25,7 +25,9 @@ std::span<const ModuleDesc *const> all_modules()
         &kStringVoiceDesc,
         &kGrainVoiceDesc,
         &kChordVoiceDesc,
-        &kMacroVoiceDesc,
+        &kHarmonicVoiceDesc,
+        &kClusterVoiceDesc,
+        &kBellVoiceDesc,
         &kFmSynthDesc,
         &kSahDesc,
         &kLfoDesc,

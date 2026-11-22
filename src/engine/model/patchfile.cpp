@@ -333,10 +333,10 @@ LoadResult load_patch(std::string_view text, Patch &out)
             Node *n = p.find(id);
             if (!n)
                 return fail("device for a module that is not defined yet");
-            if (!has_midi_device(*n->desc))
+            if (!has_device(*n->desc))
             {
                 r.warnings.push_back("line " + std::to_string(lineno) + ": "
-                    + std::string(n->desc->id) + " has no MIDI device, skipped");
+                    + std::string(n->desc->id) + " has no device, skipped");
                 continue;
             }
             n->device = std::string(device_name);

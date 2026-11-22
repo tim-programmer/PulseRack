@@ -93,8 +93,10 @@ struct EventBuf
 
 // What a plugin's host gives one block (docs/reaper.md), for the modules that take it: the Host
 // Clock (the transport), Audio In (the host's input) and an Audio Output on one of the extra
-// outputs. In the standalone rack there is no transport, no input and no extra output.
+// outputs. In the standalone rack there is no transport and no extra output; its Audio In modules
+// read the sound card's inputs instead (`capture`, one slot for each input in use).
 inline constexpr size_t kExtraOutputs = 7; // outputs 2 .. 8 (output 1 is the main one, `master`)
+inline constexpr size_t kCaptureSlots = 4; // the sound card's inputs open at once
 struct HostBlock
 {
     bool                transport = false; // the host says where it is (and whether it plays)
@@ -103,6 +105,7 @@ struct HostBlock
     double              beat = 0;    // where the block's first sample is, in beats from the start
     const float        *in[2] = { nullptr, nullptr }; // the host's audio in (an effect), or none
     float              *out[kExtraOutputs][2] = { }; // the extra outputs (accumulated), or none
+    const float        *capture[kCaptureSlots][2] = { }; // the sound card's inputs, or none
 };
 
 // What a wrapper sees for one block. Indexes are per kind and direction, in the order the ports are

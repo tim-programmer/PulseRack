@@ -14,7 +14,7 @@ something has not been tried with a real REAPER it says so. REAPER's own menus a
 | Tempo and transport (start, stop, continue) | REAPER → rack | yes, MIDI clock into a **MIDI Clock**; no song position |
 | Notes the rack plays (sequencer, arp) | rack → REAPER | yes, a **MIDI Out** into a port REAPER records from |
 | The rack's sound | rack → REAPER | yes, through PipeWire's graph (the rack is an ordinary audio client) |
-| REAPER's sound into the rack (a track to filter, to sample) | REAPER → rack | no: the rack has no audio input (*Audio In* is on the work list) |
+| REAPER's sound into the rack (a track to filter, to sample) | REAPER → rack | yes, in PulseRack FX (*Audio In*; the standalone rack's Audio In reads a sound card input) |
 | Knob automation | REAPER → rack | partly: CC from a MIDI track turns a learned knob (MIDI learn, or a **MIDI CC** module) |
 | The patch saved with the REAPER project | both | no: only as a separate `.rack` file beside the project |
 
@@ -99,7 +99,7 @@ Each is useful without the others; none needs anything from REAPER beyond what i
 |----------|---------------|------|
 | **Ports of its own** | a "PulseRack in" and "PulseRack out" ALSA sequencer port the rack creates, so no `snd-virmidi` and no Midi Through. libremidi can open virtual ports on ALSA. | small: a setting, two slots in `midi::Inputs` / `midi::Outputs`, the Device menus list them |
 | **Song position** (`F2`) | REAPER started mid-song puts the sequencer on the right step. MIDI Clock would pass on a position; the sequencer would need a "go to step" event, which `pcl_event_t` does not have (PulseCoreLib change, or done in the glue). | medium |
-| **Audio In** (on the work list) | REAPER's tracks into the rack: a send to the rack's input, through filters and the delay, back out. Also the planned Sampler's recording. | medium; already wanted |
+| **Audio In** (built) | REAPER's tracks into the rack: a send to the rack's input, through filters and the delay, back out. Also the planned Sampler's recording. | medium; already wanted |
 | **Several outputs** | separate stereo pairs per Audio Output module, so REAPER records voices on their own tracks. SDL3 can open more channels on one stream; PipeWire would show them as ports. | medium |
 | **rack-render options** | `--tempo`, `--stems` (one WAV per Audio Output), `--midi file.mid` (a REAPER item exported as MIDI, played into the MIDI In modules offline) | small to medium; the MIDI file reader is new code |
 | **OSC** | REAPER's OSC control surface sends transport and track values over UDP; the rack could listen for `/pulserack/<node>/<control>`. | medium; a new dependency or a small parser |
@@ -184,7 +184,7 @@ the rack: add modules, cable them and turn knobs as in the standalone rack.
   for separate recording or effects). Where there are none (the standalone rack, a host that leaves them out) every output
   plays on the main one. Each output gets the same clamp to ±1.
 * **PulseRack FX** is the same rack as an effect: the track's audio comes in through the new **Audio In** module (L, R and a
-  Level knob; silent in the standalone rack, which has no input yet). A new instance has a delay on each side (350 and 370 ms).
+  Level knob; in the standalone rack it reads a sound card input). A new instance has a delay on each side (350 and 370 ms).
 * **Tempo and transport.** The new **Host Clock** module (a module of its own, beside Clock and MIDI Clock) sends clock
   pulses on the host's beat grid at *Pulses per beat* (a pulse on every beat of the song, wherever playing starts), START
   when the host starts playing or jumps back (a loop, or the cursor moved back), STOP when it stops; nothing while it is

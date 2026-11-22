@@ -737,21 +737,30 @@ namespace
     static_assert(std::size(kOutParams) == OUT_COUNT);
 
     // ============================================================================================================
-    // Audio In The host's audio input in a plugin (docs/reaper.md, PulseRack FX): its two channels as
-    // signals, times Level. Silent where there is none (the standalone rack has no input yet).
+    // Audio In: a sound card input in the standalone rack (its Device: a capture slot), the host's
+    // audio input in a plugin (docs/reaper.md, PulseRack FX). Its two channels as signals, times
+    // Level; a mono input on both. Silent where there is none.
     struct AudioInNode
     {
         float level;
+        int   source; // a capture slot, kAudioInHost or kAudioInNone
     };
     bool ain_init(void *s, const NodeContext &, const float *p)
     {
         as<AudioInNode>(s)->level = p[0];
+        as<AudioInNode>(s)->source = kAudioInHost; // (until its device is set)
         return true;
     }
     void ain_process(void *s, NodeIo &io)
     {
-        const float level = as<AudioInNode>(s)->level;
-        const float *in[2] = { io.host->in[0], io.host->in[1] ? io.host->in[1] : io.host->in[0] };
+        const auto        *n = as<AudioInNode>(s);
+        const float        level = n->level;
+        const float *const *from = n->source == kAudioInHost ? io.host->in
+            : n->source >= 0 && (size_t)n->source < kCaptureSlots
+            ? io.host->capture[n->source]
+            : nullptr;
+        const float *in[2] = { from ? from[0] : nullptr,
+            from ? (from[1] ? from[1] : from[0]) : nullptr };
         for (int c = 0; c < 2; c++)
         {
             pcl_sample_t *o = io.sig_out[(size_t)c];
@@ -1257,6 +1266,8 @@ MidiTakeFn midi_source(const ModuleDesc &desc)
 
 bool has_midi_device(const ModuleDesc &desc) { return midi_sink(desc) || midi_source(desc); }
 
+bool takes_audio_in(const ModuleDesc &desc) { return &desc == &kAudioInDesc; }
+
 MidiPushFn midi_sink(const ModuleDesc &desc)
 {
     return &desc == &kMidiInDesc  ? midi_in_push
@@ -1269,6 +1280,11 @@ MidiPushFn midi_sink(const ModuleDesc &desc)
 // known here). The audio thread, as for a parameter. A MIDI In lets go of the notes it holds.
 bool midi_set_device(const ModuleDesc &desc, void *state, int device)
 {
+    if (&desc == &kAudioInDesc)
+    {
+        as<AudioInNode>(state)->source = device;
+        return true;
+    }
     if (&desc == &kMidiInDesc)
     {
         auto *m = as<MidiInNode>(state);
@@ -1319,9 +1335,9 @@ RACK_GLUE(kMidiOutDesc, "midi_out", "MIDI Out", kEvent, 6, MidiOutNode, kMidiOut
 RACK_GLUE(kAudioOutDesc, "out", "Audio Output", kUtility, 4, AudioOutNode, kOutPorts, kOutParams,
     out_init, nullptr, out_process, nullptr,
     "Sends a signal to the speakers; L alone plays on both");
-RACK_GLUE(kAudioInDesc, "audio_in", "Audio In", kUtility, 4, AudioInNode, kAudioInPorts,
+RACK_GLUE(kAudioInDesc, "audio_in", "Audio In", kUtility, 8, AudioInNode, kAudioInPorts,
     kAudioInParams, ain_init, nullptr, ain_process, nullptr,
-    "The host's audio in PulseRack FX, the plugin as an effect; silent in the rack");
+    "A sound card input (a microphone, a line in); in PulseRack FX, the track's audio");
 RACK_GLUE(kHostClockDesc, "host_clock", "Host Clock", kEvent, 6, HostClockNode, kHostClockPorts,
     kHostClockParams, hclk_init, hclk_reset, hclk_process, hclk_cap,
     "The DAW's tempo and transport in the plugin: clock pulses on its beats, with start and stop");

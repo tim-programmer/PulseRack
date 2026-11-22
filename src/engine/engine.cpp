@@ -258,6 +258,13 @@ Err Engine::set_param(uint32_t node, size_t param, float value)
 
 int Engine::device_code(const Node &n) const
 {
+    if (takes_audio_in(*n.desc))
+    {
+        if (!audio_in_slot_of)
+            return kAudioInHost;
+        const int slot = audio_in_slot_of(n.device);
+        return slot >= 0 ? slot : kAudioInNone;
+    }
     if (sends_midi(*n.desc))
     { // an output: `midi_out_slot_of` decides, for no name too (in a plugin that is the host)
         const int slot = midi_out_slot_of ? midi_out_slot_of(n.device) : -1;
@@ -277,11 +284,11 @@ Err Engine::set_device(uint32_t node, const std::string &name)
     Node *n = patch_.find(node);
     if (!n)
         return Err::NoSuchNode;
-    if (!has_midi_device(*n->desc))
-        return Err::NoSuchParam; // not a MIDI module: it has no device
+    if (!has_device(*n->desc))
+        return Err::NoSuchParam; // not a MIDI module or Audio In: it has no device
     n->device = name;
     auto it = live_.find(node);
-    if (it != live_.end() && has_midi_device(*it->second.desc))
+    if (it != live_.end() && has_device(*it->second.desc))
     {
         Cmd c { };
         c.type = Cmd::Device;
@@ -352,7 +359,7 @@ std::string Engine::sample_error(uint32_t node) const
 void Engine::refresh_devices()
 {
     for (const Node &n : patch_.nodes())
-        if (has_midi_device(*n.desc))
+        if (has_device(*n.desc))
             set_device(n.id, std::string(n.device));
 }
 
@@ -672,6 +679,9 @@ void Engine::render(size_t frames, float *left, float *right, const HostCall &ho
         hb.beat = host.beat + (host.playing ? (double)done * beats_per_sample : 0.0);
         for (int c = 0; c < 2; c++)
             hb.in[c] = host.in[c] ? host.in[c] + done : nullptr;
+        for (size_t k = 0; k < kCaptureSlots; k++)
+            for (int c = 0; c < 2; c++)
+                hb.capture[k][c] = host.capture[k][c] ? host.capture[k][c] + done : nullptr;
         for (size_t k = 0; k < kExtraOutputs; k++)
             for (int c = 0; c < 2; c++)
                 hb.out[k][c] = host.out[k][c] ? host.out[k][c] + done : nullptr;
