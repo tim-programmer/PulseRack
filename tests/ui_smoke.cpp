@@ -765,6 +765,28 @@ struct Driver
         e().perform(cx(), Editor::Then::Factory, factory_index("sequence"));
         CHECK(e().undo_stack.empty() && e().redo_stack.empty());
         CHECK(e().engine.apply_failures() == 0 && e().engine.nonfinite_samples() == 0);
+
+        // a patch opened over another: both number their modules from 1, so cables into the same
+        // inputs keep their views; each must be drawn again where the new patch has it (a click
+        // on its middle selects it), and in a colour of its own
+        e().perform(cx(), Editor::Then::Factory, factory_index("pop"));
+        wait();
+        e().perform(cx(), Editor::Then::Factory, factory_index("arpeggio"));
+        wait();
+        CHECK(patch.cables().size() == 8);
+        int              found = 0;
+        std::vector<int> colours;
+        for (const Cable &c : patch.cables())
+        {
+            click(cable_middle(c.to));
+            found += e().selected && *e().selected == c.to;
+            colours.push_back(e().cable_colour[{ c.to.node, c.to.port }]);
+        }
+        CHECK(found == (int)patch.cables().size());
+        std::sort(colours.begin(), colours.end());
+        CHECK(std::adjacent_find(colours.begin(), colours.end()) == colours.end());
+        e().perform(cx(), Editor::Then::Factory, factory_index("sequence"));
+        wait();
     }
 
     // ---- files: the toolbar's buttons, the Open menu, the unsaved-changes question, recovery. The

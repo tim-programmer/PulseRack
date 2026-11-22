@@ -3835,7 +3835,12 @@ void Editor::sync_cables(Ctx cx)
     for (auto it = cable_views.begin(); it != cable_views.end();)
     {
         if (patch.cable_into(PortRef { it->first.first, it->first.second }))
+        { // kept, and drawn again: a view is keyed by its input, and another patch (opened, or
+          // an undo step) may have a cable into the same input from elsewhere, between modules
+          // at other places, in another colour; a cached view would keep the old drawing
+            it->second.update(cx, [](CableView &, Ctx c) { c.notify(); });
             ++it;
+        }
         else
         {
             app.release(it->second);
@@ -3846,14 +3851,14 @@ void Editor::sync_cables(Ctx cx)
     for (const Cable &c : patch.cables())
     {
         const CableKey key { c.to.node, c.to.port };
+        if (!cable_colour.count(key)) // (also for a kept view: opening a patch clears the colours)
+            cable_colour[key] = next_colour++;
         if (cable_views.count(key))
             continue;
         auto v = app.new_view<CableView>();
         app.get(v)->ed = self;
         app.get(v)->to = c.to;
         cable_views[key] = v;
-        if (!cable_colour.count(key))
-            cable_colour[key] = next_colour++;
     }
     if (selected && !patch.cable_into(*selected))
         selected.reset();
