@@ -1,0 +1,311 @@
+# Wind stirs the leaves above a shallow brook. A near whistle and a distant trill trade calls over slow suspended chords in D.
+pulserack 1
+
+# Canopy. Each gust sweeps a soft band-pass upward as the wind grows louder; between gusts it falls almost silent.
+# A short delay on the right channel spreads the wind across the stereo field.
+node 1 noise x=0 y=0
+param 1 colour pink
+param 1 seed 2777
+node 2 biquad x=6 y=0
+param 2 type high-pass
+param 2 cutoff 250
+node 3 lfo x=14 y=0
+param 3 shape random_smooth
+param 3 frequency 0.137
+param 3 seed 14531
+node 4 svf x=22 y=0
+param 4 cutoff 650
+param 4 resonance 0.38
+param 4 mod_depth 1.3
+node 5 attenuverter x=30 y=0
+param 5 scale 0.5
+param 5 offset 0.45
+node 6 vca x=34 y=0
+param 6 gain 1.0
+node 37 delay x=40 y=0
+param 37 time 23
+param 37 feedback 0
+param 37 tone 20000
+param 37 mix 1
+param 37 glide 0
+cable 1.out -> 2.in
+cable 2.out -> 4.in
+cable 3.out -> 4.cutoff
+cable 3.out -> 5.in
+cable 4.bp -> 6.in
+cable 5.out -> 6.gain
+
+# Brook. Four droplet voices, each a resonant band-pass that sounds only for a moment.
+# Each voice has a random clock that fires at uneven times; each firing picks a new pitch
+# and gives the band a short decaying burst of noise. A soft rush of water runs beneath them.
+node 7 noise x=0 y=26
+param 7 colour white
+param 7 seed 4171
+node 8 vca x=6 y=26
+param 8 gain 0.18
+node 9 biquad x=10 y=26
+param 9 type low-pass
+param 9 cutoff 1700
+param 9 q 0.6
+node 13 mixer x=38 y=26
+param 13 level1 0.022
+param 13 level2 0.019
+param 13 level3 0.15
+node 14 mixer x=44 y=26
+param 14 level1 0.022
+param 14 level2 0.019
+param 14 level3 0.15
+cable 7.out -> 8.in
+cable 8.out -> 9.in
+cable 9.out -> 13.in3
+cable 9.out -> 14.in3
+node 38 lfo x=0 y=130
+param 38 shape random_step
+param 38 frequency 67
+param 38 unipolar 1
+param 38 seed 3301
+node 39 adsr x=8 y=130
+param 39 attack 3
+param 39 decay 40
+param 39 sustain 0
+param 39 release 40
+node 40 sah x=16 y=130
+param 40 rate 0
+param 40 seed 7741
+node 41 svf x=22 y=130
+param 41 cutoff 620
+param 41 resonance 0.9
+param 41 mod_depth 1.2
+node 42 vca x=30 y=130
+cable 38.out -> 39.gate
+cable 38.out -> 40.trig
+cable 40.out -> 41.cutoff
+cable 7.out -> 41.in
+cable 41.bp -> 42.in
+cable 39.out -> 42.gain
+cable 42.out -> 13.in1
+node 43 lfo x=34 y=130
+param 43 shape random_step
+param 43 frequency 77
+param 43 unipolar 1
+param 43 seed 5113
+node 44 adsr x=42 y=130
+param 44 attack 3
+param 44 decay 28
+param 44 sustain 0
+param 44 release 28
+node 45 sah x=50 y=130
+param 45 rate 0
+param 45 seed 1291
+node 46 svf x=56 y=130
+param 46 cutoff 1150
+param 46 resonance 0.9
+param 46 mod_depth 1.2
+node 47 vca x=64 y=130
+cable 43.out -> 44.gate
+cable 43.out -> 45.trig
+cable 45.out -> 46.cutoff
+cable 7.out -> 46.in
+cable 46.bp -> 47.in
+cable 44.out -> 47.gain
+cable 47.out -> 13.in2
+node 48 lfo x=0 y=156
+param 48 shape random_step
+param 48 frequency 74
+param 48 unipolar 1
+param 48 seed 9029
+node 49 adsr x=8 y=156
+param 49 attack 3
+param 49 decay 35
+param 49 sustain 0
+param 49 release 35
+node 50 sah x=16 y=156
+param 50 rate 0
+param 50 seed 6607
+node 51 svf x=22 y=156
+param 51 cutoff 830
+param 51 resonance 0.9
+param 51 mod_depth 1.2
+node 52 vca x=30 y=156
+cable 48.out -> 49.gate
+cable 48.out -> 50.trig
+cable 50.out -> 51.cutoff
+cable 7.out -> 51.in
+cable 51.bp -> 52.in
+cable 49.out -> 52.gain
+cable 52.out -> 14.in1
+node 53 lfo x=34 y=156
+param 53 shape random_step
+param 53 frequency 85
+param 53 unipolar 1
+param 53 seed 2203
+node 54 adsr x=42 y=156
+param 54 attack 3
+param 54 decay 25
+param 54 sustain 0
+param 54 release 25
+node 55 sah x=50 y=156
+param 55 rate 0
+param 55 seed 4423
+node 56 svf x=56 y=156
+param 56 cutoff 1520
+param 56 resonance 0.9
+param 56 mod_depth 1.2
+node 57 vca x=64 y=156
+cable 53.out -> 54.gate
+cable 53.out -> 55.trig
+cable 55.out -> 56.cutoff
+cable 7.out -> 56.in
+cable 56.bp -> 57.in
+cable 54.out -> 57.gain
+cable 57.out -> 14.in2
+
+# Near bird. Short and long whistles share a pitch and loudness contour.
+# The odd-length phrase slips past the chord changes, and its register drifts.
+node 15 clock x=0 y=52
+param 15 bpm 68
+param 15 ppqn 24
+node 16 seq x=6 y=52
+param 16 length 61
+param 16 division 5
+param 16 gate 2
+param 16 swing 1
+step 16 10 note=90 vel=94 gate=3 tie=0
+step 16 11 note=94 vel=86 gate=1 tie=0
+step 16 13 note=92 vel=91 gate=2 tie=0
+step 16 35 note=97 vel=76 gate=1 tie=0
+step 16 37 note=94 vel=93 gate=3 tie=0
+step 16 51 note=91 vel=86 gate=2 tie=0
+step 16 52 note=95 vel=83 gate=1 tie=0
+node 17 adsr x=22 y=52
+param 17 attack 32
+param 17 decay 110
+param 17 sustain 0.52
+param 17 release 42
+node 18 mixer x=30 y=52
+param 18 level1 0.72
+param 18 level2 0.25
+node 19 osc x=36 y=52
+param 19 waveform sine
+param 19 pitch_depth 0.76
+node 20 vca x=44 y=52
+cable 15.clock -> 16.in
+cable 16.out -> 17.note
+cable 16.out -> 19.note
+cable 17.out -> 18.in1
+cable 18.out -> 19.pitch
+cable 17.out -> 20.gain
+cable 19.out -> 20.in
+
+# Far bird. A wandering pulse opens a short window on a faster trill.
+# Both the time between calls and the speed of the syllables drift.
+node 21 lfo x=0 y=78
+param 21 shape random_smooth
+param 21 frequency 0.37
+param 21 seed 19271
+node 22 lfo x=8 y=78
+param 22 shape square
+param 22 frequency 0.153
+param 22 rate_depth 1.2
+param 22 pulse_width 0.091
+node 23 adsr x=16 y=78
+param 23 attack 75
+param 23 decay 290
+param 23 sustain 0.58
+param 23 release 78
+node 24 lfo x=24 y=78
+param 24 shape sine
+param 24 frequency 6.8
+param 24 rate_depth 0.42
+param 24 unipolar 1
+node 25 osc x=32 y=78
+param 25 waveform sine
+param 25 frequency 2680
+param 25 pitch_depth 0.37
+node 26 vca x=40 y=78
+node 27 vca x=44 y=78
+cable 21.out -> 22.rate
+cable 21.out -> 18.in2
+cable 22.out -> 23.gate
+cable 21.out -> 24.rate
+cable 24.out -> 25.pitch
+cable 24.out -> 26.gain
+cable 25.out -> 26.in
+cable 23.out -> 27.gain
+cable 26.out -> 27.in
+
+# Suspended chords emerge from the brook, with whole measures left to decay.
+node 28 seq x=0 y=104
+param 28 length 16
+param 28 division 96
+param 28 gate 84
+step 28 0 note=50 vel=85 gate=92 tie=0
+step 28 2 note=55 vel=78 gate=88 tie=0
+step 28 4 note=57 vel=73 gate=68 tie=0
+step 28 7 note=52 vel=81 gate=92 tie=0
+step 28 10 note=47 vel=74 gate=84 tie=0
+step 28 12 note=55 vel=84 gate=90 tie=0
+step 28 14 note=57 vel=76 gate=64 tie=0
+node 29 chord_voice x=16 y=104
+param 29 key D
+param 29 scale major
+param 29 shape sus2
+param 29 color 0.22
+param 29 detune 6
+param 29 pluck 0
+param 29 attack 500
+param 29 release 3900
+param 29 strum 148
+node 30 mixer x=36 y=104
+param 30 level1 0.52
+param 30 level2 0.027
+param 30 level3 0.018
+node 31 reverb x=42 y=104
+param 31 size 0.8
+param 31 decay 3.8
+param 31 predelay 26
+param 31 damping 0.42
+param 31 damping_hz 3100
+param 31 mix 0.62
+param 31 modulation 0.17
+cable 15.clock -> 28.in
+cable 28.out -> 29.note
+cable 29.out -> 30.in1
+cable 20.out -> 30.in2
+cable 27.out -> 30.in3
+cable 30.out -> 31.in
+
+# Stereo mix. The near bird sits to the left, the answering trill to the right.
+node 32 mixer x=52 y=52
+param 32 level1 0.24
+param 32 level2 0.06
+param 32 level3 0.83
+node 33 mixer x=52 y=78
+param 33 level1 0.1
+param 33 level2 0.16
+param 33 level3 0.83
+node 34 mixer x=58 y=0
+param 34 level1 0.6
+param 34 level2 0.74
+param 34 level3 0.94
+node 35 mixer x=58 y=26
+param 35 level1 0.6
+param 35 level2 0.83
+param 35 level3 0.94
+node 36 out x=64 y=0
+param 36 level 0.3
+cable 20.out -> 32.in1
+cable 27.out -> 32.in2
+cable 31.l -> 32.in3
+cable 20.out -> 33.in1
+cable 27.out -> 33.in2
+cable 31.r -> 33.in3
+cable 6.out -> 34.in1
+cable 13.out -> 34.in2
+cable 32.out -> 34.in3
+cable 6.out -> 37.in
+cable 37.out -> 35.in1
+cable 14.out -> 35.in2
+cable 33.out -> 35.in3
+cable 34.out -> 36.l
+cable 35.out -> 36.r
