@@ -40,6 +40,28 @@ const char *describe(Err e)
     return "?";
 }
 
+std::string clean_label(std::string_view text)
+{
+    std::string s(text);
+    for (char &c : s)
+        if (c == '\n' || c == '\r' || c == '\t')
+            c = ' ';
+    const size_t from = s.find_first_not_of(' ');
+    if (from == std::string::npos)
+        return { };
+    s = s.substr(from, s.find_last_not_of(' ') - from + 1);
+    if (s.size() > kMaxLabel)
+    {
+        size_t n = kMaxLabel;
+        while (n > 0 && ((unsigned char)s[n] & 0xC0) == 0x80)
+            n--; // not inside a character: s[n] starts the one that is cut off
+        s.resize(n);
+        while (!s.empty() && s.back() == ' ')
+            s.pop_back();
+    }
+    return s;
+}
+
 float clamp_param(const ParamDesc &p, float v)
 {
     if (std::isnan(v))

@@ -323,6 +323,45 @@ TEST(patchfile_a_step_with_no_options_is_the_default_step)
     CHECK(p.find(1)->steps[0] == StepData { } && p.find(1)->steps[5] == StepData { });
 }
 
+TEST(patchfile_a_module_keeps_its_label)
+{
+    Patch          p;
+    const uint32_t a = p.add_node(*find_module("mixer"), 0, 0),
+                   b = p.add_node(*find_module("osc"), 10, 0),
+                   c = p.add_node(*find_module("vca"), 20, 0);
+    p.find(a)->label = "Water L mix";
+    p.find(b)->label = "Bird #2"; // a '#' is part of the label, not a comment
+    const std::string text = save_patch(p);
+    // on the line after its node's
+    CHECK(text.find("x=0 y=0\nlabel " + std::to_string(a) + " Water L mix\n") != std::string::npos);
+    CHECK(text.find("label " + std::to_string(b) + " Bird #2\n") != std::string::npos);
+    CHECK(text.find("label " + std::to_string(c)) == std::string::npos); // none: no line
+    Patch back;
+    CHECK(load(text, back).ok && load(text, back).warnings.empty());
+    CHECK(back.find(a)->label == "Water L mix" && back.find(b)->label == "Bird #2");
+    CHECK(back.find(c)->label.empty());
+    CHECK(save_patch(back) == text);
+
+    // spaces inside are kept, those around it (and a CR, a tab) are not
+    CHECK(load("pulserack 1\nnode 1 vca\nlabel 1   Near  bird\tgain \t\r\n", back).ok);
+    CHECK(back.find(1)->label == "Near  bird gain");
+    // too long: cut to kMaxLabel bytes, never inside a character
+    CHECK(load("pulserack 1\nnode 1 vca\nlabel 1 " + std::string(60, 'x') + "\n", back).ok);
+    CHECK(back.find(1)->label == std::string(kMaxLabel, 'x'));
+    CHECK(clean_label(std::string(kMaxLabel - 1, 'x') + "\xc3\xa9") == std::string(kMaxLabel - 1, 'x'));
+    CHECK(clean_label("a\nb") == "a b" && clean_label("   ").empty());
+    // refused: no text, no such module, a bad id; of a module of an unknown type: skipped with it
+    CHECK(!load("pulserack 1\nnode 1 vca\nlabel 1\n", back).ok);
+    CHECK(!load("pulserack 1\nnode 1 vca\nlabel 1   \n", back).ok);
+    CHECK(!load("pulserack 1\nnode 1 vca\nlabel 2 x\n", back).ok);
+    CHECK(!load("pulserack 1\nnode 1 vca\nlabel one x\n", back).ok);
+    const LoadResult u = load("pulserack 1\nnode 1 from_the_future\nlabel 1 Future\n", back);
+    CHECK(u.ok && u.warnings.size() == 1);
+    // a label that would break the file is written on one line
+    p.find(a)->label = "a\nnode 9 osc";
+    CHECK(save_patch(p).find("\nnode 9") == std::string::npos);
+}
+
 TEST(patchfile_a_midi_module_keeps_its_device_by_name)
 {
     Patch          p;

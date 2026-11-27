@@ -7,7 +7,7 @@ target_include_directories(rack_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 add_test(NAME rack_tests COMMAND rack_tests)
 
 # The example patches, rendered by the real rack-render binary: it must load them without warnings and make sound.
-foreach(ex sequence arpeggio filter_sweep kick_drum chill pop edm metal drum_machine voices generative_chords bells fm_synth rnb_groove)
+foreach(ex sequence arpeggio filter_sweep kick_drum chill pop edm metal drum_machine voices generative_chords bells fm_synth rnb_groove alder_brook)
     add_test(NAME render_${ex}
              COMMAND rack-render ${PROJECT_SOURCE_DIR}/examples/${ex}.rack ${CMAKE_CURRENT_BINARY_DIR}/${ex}.wav 6)
     set_tests_properties(render_${ex} PROPERTIES PASS_REGULAR_EXPRESSION "peak 0\\.[0-9]*[1-9][0-9]*, rms 0\\.(00[1-9]|0[1-9]|[1-9])"
@@ -33,6 +33,8 @@ if(PULSERACK_BUILD_GUI)
     set_tests_properties(ui_close PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 180)
     add_test(NAME ui_undo COMMAND ui_smoke --undo)
     set_tests_properties(ui_undo PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 180)
+    add_test(NAME ui_labels COMMAND ui_smoke --labels)
+    set_tests_properties(ui_labels PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 180)
     add_test(NAME ui_steps COMMAND ui_smoke --steps)
     set_tests_properties(ui_steps PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 180)
     add_test(NAME ui_gaps COMMAND ui_smoke --gaps)

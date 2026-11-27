@@ -105,6 +105,12 @@ public:
     std::vector<std::string> device_menu_names(uint32_t node) const;
     void refresh_midi_panels(gpuic::Ctx cx); // their Device boxes show what is plugged in and on
 
+    // A module's own name (Node::label), shown in its title bar; empty gives back the type's name.
+    // Set from its menu's "Label..." box. One undo step.
+    void set_label(gpuic::Ctx cx, uint32_t node, const std::string &text);
+    // Opens the label box of a module (its menu's "Label..."), filled with its label and selected.
+    void edit_label(gpuic::Ctx cx, uint32_t node);
+
     // A Sampler's WAV file (Node::sample): its Sample box asks for one through sample_chooser
     // (the window's native dialog; the tests put their own here), and the answer comes back to
     // sample_chosen, which loads it. One undo step.
@@ -384,7 +390,7 @@ public:
     void                    redo(gpuic::Ctx cx);
     void restore(gpuic::Ctx cx, Patch target); // the patch, with the running modules following it
     void forget_view_state(gpuic::Ctx cx);     // drags, menus, selection, hover
-    bool search_focused(gpuic::Ctx cx);        // keys are the search box's then
+    bool search_focused(gpuic::Ctx cx); // keys are the search box's (or a label box's) then
 
     // ---- files. Each of New, Open, a factory patch and Recover asks first if there are unsaved
     // changes (the `ask` question); perform() does it without asking.
@@ -472,6 +478,11 @@ gp_point port_center(gpuic::Ctx cx, gpuic::Entity<Editor> ed, uint32_t node, siz
 // The middle of item `index` (from 0) of the control menu that is open (a right-click on a
 // control: "MIDI learn", "Forget its mapping" if it has one, "Cancel"); { -1, -1 } if none is.
 gp_point control_menu_item(gpuic::Ctx cx, gpuic::Entity<Editor> ed, int index);
+// The middle of item `index` (from 0) of the panel menu that is open (a right-click on a title:
+// "Delete ...", "Label..." or "Change label...", "Cancel"); { -1, -1 } if none is.
+gp_point panel_menu_item(gpuic::Ctx cx, gpuic::Entity<Editor> ed, int index);
+// The module whose label box is open (0: none).
+uint32_t label_box_node(gpuic::Ctx cx, gpuic::Entity<Editor> ed);
 // Is one of the rack's menus open (a panel's, a cable's, a control's, a MIDI module's device menu)?
 bool rack_menu_open(gpuic::Ctx cx, gpuic::Entity<Editor> ed);
 // The middle of a MIDI module's Device box ({ -1, -1 } for a module that has none), and of item

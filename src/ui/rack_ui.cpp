@@ -1641,7 +1641,9 @@ struct PanelView
                 .items_center()
                 .justify_center()
                 .overflow_hidden()
-                .child(label(std::string(d.name), L.width < 100 ? 9.f : 11.f, st::kText).font_bold())
+                .child(label(n->label.empty() ? std::string(d.name) : n->label,
+                    L.width < 100 ? 9.f : 11.f, st::kText)
+                        .font_bold())
 
                 .on_mouse_down([](PanelView &self, Ctx cx, const gp_mouse_event &ev)
                     { self.press_face(cx, ev); })
@@ -1717,6 +1719,8 @@ namespace
     // A control's right-click menu: under the control, its left edge at the control's (rack
     // pixels).
     constexpr float kControlMenuW = 240, kControlMenuPad = 4, kMenuItemH = 26;
+    // a panel's menu (and its label box): under the left end of its title bar
+    constexpr float kPanelMenuW = 180, kPanelMenuDx = 6, kPanelMenuDy = kTitleHeight + 2;
     Pt              control_menu_origin(const Node &n, size_t param)
     {
         const Rect &r = panel_layout(*n.desc).params[param];
@@ -1961,12 +1965,14 @@ struct RackView
     std::optional<PortRef> menu_cable; // or the cable whose menu is open, at menu_at (rack pixels)
     Pt                     menu_at;
     uint32_t               dev_node = 0; // or the MIDI module whose device menu is open
+    uint32_t               label_node = 0; // or the module whose label box is open
+    TextInput              label_input;    // that box (Enter sets the label, Escape leaves it)
 
     // At most one menu is open. Closes it; true if one was.
     bool close_menus()
     {
-        const bool any = menu_node || ctrl_node || menu_cable || dev_node;
-        menu_node = ctrl_node = dev_node = 0;
+        const bool any = menu_node || ctrl_node || menu_cable || dev_node || label_node;
+        menu_node = ctrl_node = dev_node = label_node = 0;
         menu_cable.reset();
         return any;
     }
@@ -2308,10 +2314,10 @@ struct RackView
             const uint32_t id = menu_node;
             content.child(div()
                     .absolute()
-                    .left(n->x * kHp + 6)
-                    .top(n->y * kHp + kTitleHeight + 2)
-                    .w(180)
-                    .p(4)
+                    .left(n->x * kHp + kPanelMenuDx)
+                    .top(n->y * kHp + kPanelMenuDy)
+                    .w(kPanelMenuW)
+                    .p(kControlMenuPad)
                     .rounded(5)
                     .bg(st::kSurfaceHi)
                     .border(1)
@@ -2326,12 +2332,39 @@ struct RackView
                             if (Editor *ed = self.ed.get(cx))
                                 ed->remove_module(cx, id);
                         }))
+                    .child(menu_item(n->label.empty() ? "Label..." : "Change label...", st::kText,
+                        [id](RackView &self, Ctx cx)
+                        {
+                            if (Editor *ed = self.ed.get(cx))
+                                ed->edit_label(cx, id);
+                        }))
                     .child(menu_item("Cancel", st::kText,
                         [](RackView &self, Ctx cx)
                         {
                             self.menu_node = 0;
                             cx.notify();
                         })));
+        }
+        if (const Node *n = label_node && label_input ? patch.find(label_node) : nullptr)
+        {
+            constexpr float kBoxW = 220;
+            content.child(div()
+                    .absolute()
+                    .left(n->x * kHp + kPanelMenuDx)
+                    .top(n->y * kHp + kPanelMenuDy)
+                    .w(kBoxW)
+                    .p(6)
+                    .rounded(5)
+                    .bg(st::kSurfaceHi)
+                    .border(1)
+                    .border_color(st::kBorder)
+                    .shadow(0, 6, 16, with_alpha(rgb(0x000000), 0.5f))
+                    .flex_col()
+                    .gap(4)
+                    .on_mouse_down([](RackView &) { })
+                    .child(label("Label for this " + std::string(n->desc->name), 11, st::kSubtext))
+                    .child(label_input.element())
+                    .child(label("Enter to set, empty for none, Esc to cancel", 10, st::kDim)));
         }
         // the content is scaled about its top left corner inside a box of its size on the screen
         // (a transform does not change what an element takes up in the layout)
@@ -2736,8 +2769,9 @@ std::string Editor::describe_item(uint32_t node, int item) const
     if (item >= 0 && (size_t)item < d.params.size())
         return describe(d, d.params[(size_t)item], n->params[(size_t)item]);
     if (item == kHoverTitle)
-        return std::string(d.name) + "  ·  " + std::string(d.description)
-            + "      drag the title to move it; right-click it to delete";
+        return (n->label.empty() ? std::string() : n->label + "  ·  ") + std::string(d.name)
+            + "  ·  " + std::string(d.description)
+            + "      drag the title to move it; right-click it to label or delete it";
     const int port = kHoverPort - item;
     if (port >= 0 && (size_t)port < d.ports.size())
     {
@@ -3521,9 +3555,8 @@ bool Editor::piano(Ctx cx, const gp_key_event &ev, bool down)
 {
     if (ev.mods & (GP_MOD_CTRL | GP_MOD_ALT | GP_MOD_SUPER))
         return false;
-    if (Browser *b = browser.get(cx);
-        b && b->search && cx.is_focused(Focus(b->search.focus(cx.app()))))
-        return false; // typing in the search box
+    if (search_focused(cx))
+        return false; // typing in the search box or a label box
     // A W S E D F T G Y H U J K O L P ; : the white keys on the home row, the black ones above
     static const std::pair<const char *, int> keys[] = { { "a", 0 }, { "w", 1 }, { "s", 2 },
         { "e", 3 }, { "d", 4 }, { "f", 5 }, { "t", 6 }, { "g", 7 }, { "y", 8 }, { "h", 9 },
@@ -4355,6 +4388,50 @@ void Editor::show_title()
     window.set_title(window_title.c_str());
 }
 
+void Editor::edit_label(Ctx cx, uint32_t node)
+{
+    const Node *n = engine.patch().find(node);
+    if (!n)
+        return;
+    const std::string now = n->label;
+    rack.update(cx,
+        [node, now](RackView &r, Ctx c)
+        {
+            r.close_menus();
+            r.label_node = node;
+            r.label_input.set_text(c, now);
+            r.label_input.select_all(c);
+            c.focus(Focus(r.label_input.focus(c.app())));
+            c.notify();
+        });
+}
+
+void Editor::set_label(Ctx cx, uint32_t node, const std::string &text)
+{
+    const Node *n = engine.patch().find(node);
+    if (!n)
+        return;
+    const std::string label = clean_label(text);
+    const std::string name(n->desc->name);
+    if (label != n->label)
+    {
+        checkpoint(cx, (label.empty() ? "Remove label of " : "Label ") + name);
+        engine.patch().find(node)->label = label;
+        touch(cx);
+        if (auto it = panels.find(node); it != panels.end())
+            it->second.update(cx, [](PanelView &, Ctx c) { c.notify(); });
+        say(cx,
+            label.empty() ? "The " + name + " shows its own name again."
+                          : "The " + name + " is labelled " + label + ".");
+    }
+    rack.update(cx,
+        [](RackView &r, Ctx c)
+        {
+            r.label_node = 0;
+            c.notify();
+        });
+}
+
 void Editor::touch(Ctx cx)
 {
     version = ++next_version;
@@ -4465,12 +4542,18 @@ void Editor::redo(Ctx cx)
 bool Editor::search_focused(Ctx cx)
 {
     Browser *b = browser.get(cx);
-    return b && b->search && cx.is_focused(Focus(b->search.focus(cx.app())));
+    if (b && b->search && cx.is_focused(Focus(b->search.focus(cx.app()))))
+        return true;
+    const RackView *r = rack.get(cx);
+    return r && r->label_node && r->label_input
+        && cx.is_focused(Focus(r->label_input.focus(cx.app())));
 }
 
 void Editor::close_overlays(Ctx cx)
 {
     learn_cancel(cx); // Escape
+    if (const RackView *r = rack.get(cx); r && r->label_node && search_focused(cx))
+        cx.blur(); // the label box that is closing lets go of the keyboard
     rack.update(cx,
         [](RackView &r, Ctx c)
         {
@@ -4768,6 +4851,27 @@ Entity<Editor> open_rack(App app, const Options &opt, std::string *error)
     e->rack = app.new_view<RackView>();
     app.get(e->rack)->ed = ed;
     app.get(e->rack)->scroll = app.new_scroll();
+    app.get(e->rack)->label_input = app.text_input()
+                                        .owner(e->rack)
+                                        .placeholder("A name, such as Water L mix")
+                                        .max_bytes(kMaxLabel)
+                                        .width(208)
+                                        .font_size(12)
+                                        .bg(st::kSurface)
+                                        .border_color(st::kBorder)
+                                        .focus_border_color(st::kAccent)
+                                        .text_color(st::kText)
+                                        .placeholder_color(st::kDim)
+                                        .on_submit(
+                                            [](RackView &self, Ctx cx)
+                                            {
+                                                const uint32_t node = self.label_node;
+                                                const std::string t = self.label_input.text(cx.app());
+                                                cx.blur();
+                                                if (Editor *ed = self.ed.get(cx); ed && node)
+                                                    ed->set_label(cx, node, t);
+                                            })
+                                        .build();
     e->drag_view = app.new_view<DragView>();
     app.get(e->drag_view)->ed = ed;
     e->chip = app.new_view<PointerChip>();
@@ -4978,6 +5082,29 @@ gp_point control_menu_item(Ctx cx, Entity<Editor> ed, int index)
     const Pt           at = control_menu_origin(*n, rv->ctrl_param);
     return { o.x + (at.x + kControlMenuW / 2 - vp.x) * vp.zoom,
         o.y + (at.y + kControlMenuPad + ((float)index + 0.5f) * kMenuItemH - vp.y) * vp.zoom };
+}
+
+gp_point panel_menu_item(Ctx cx, Entity<Editor> ed, int index)
+{
+    Editor     *e = ed.get(cx);
+    RackView   *rv = e ? e->rack.get(cx) : nullptr;
+    const Node *n = rv && rv->menu_node ? e->engine.patch().find(rv->menu_node) : nullptr;
+    if (!n)
+        return { -1, -1 };
+    const RackViewport vp = viewport_of(cx, *e);
+    const gp_point     o = rack_origin();
+    return { o.x + (n->x * kHp + kPanelMenuDx + kPanelMenuW / 2 - vp.x) * vp.zoom,
+        o.y
+            + (n->y * kHp + kPanelMenuDy + kControlMenuPad + ((float)index + 0.5f) * kMenuItemH
+                  - vp.y)
+            * vp.zoom };
+}
+
+uint32_t label_box_node(Ctx cx, Entity<Editor> ed)
+{
+    Editor   *e = ed.get(cx);
+    RackView *rv = e ? e->rack.get(cx) : nullptr;
+    return rv ? rv->label_node : 0;
 }
 
 bool rack_menu_open(Ctx cx, Entity<Editor> ed)

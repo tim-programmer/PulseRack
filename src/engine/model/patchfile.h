@@ -3,6 +3,7 @@
 //   # A short description             optional, the first line only: kept as Patch::about
 //   pulserack 1
 //   node 1 clock x=12 y=0
+//   label 1 Main clock                the module's own name: the rest of the line
 //   param 1 bpm 120                   a number; an enumerated choice by its name, a space as _
 //   step 2 0 note=48 vel=100 gate=0 tie=0
 //   key 5 0.5 on 60 100               a scripted key press: node, seconds, on|off, note, velocity

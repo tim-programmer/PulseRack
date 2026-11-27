@@ -34,6 +34,9 @@ struct Node
     std::string device;
     // A Sampler: the WAV file it plays, as a path (empty: none yet).
     std::string sample;
+    // A name the user gave this module ("Water L mix"), shown in its title bar instead of the
+    // type's name (empty: the type's name). One line, at most kMaxLabel bytes.
+    std::string label;
 };
 // A scripted key press for a Keyboard node, so a patch can play itself (rack-render, tests, factory
 // patches).
@@ -69,6 +72,11 @@ struct Macro
     uint16_t param = 0; // index into the descriptor's parameters
     bool     operator==(const Macro &) const = default;
 };
+
+inline constexpr size_t kMaxLabel = 40;
+// A label as it is kept: line breaks and tabs become spaces, the ends are trimmed, and it is cut to
+// kMaxLabel bytes (not inside a UTF-8 character).
+std::string clean_label(std::string_view text);
 
 enum class Err
 {

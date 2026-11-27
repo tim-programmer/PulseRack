@@ -1175,6 +1175,86 @@ struct Driver
         CHECK(e().engine.telemetry().commands_lost.load() == 0);
     }
 
+    // A module's label (Node::label): set from its menu's "Label..." box with the simulated mouse
+    // and keys, shown in its title bar, saved in the patch; one undo step; Escape leaves it.
+    void labels()
+    {
+        wait(0.4); // the first layout
+        const uint32_t mix = e().add_module(cx(), *find_module("mixer"));
+        wait();
+        const gp_point title = control_center(cx(), ed, mix, -1);
+        const size_t   undo0 = e().undo_stack.size();
+        CHECK(node(mix)->label.empty());
+
+        // right-click the title: the menu's second item opens the box, which takes the keyboard
+        click(title, GP_MOUSE_RIGHT);
+        wait(0.1);
+        CHECK(rack_menu_open(cx(), ed) && panel_menu_item(cx(), ed, 1).x >= 0);
+        click(panel_menu_item(cx(), ed, 1));
+        wait(0.1);
+        CHECK(label_box_node(cx(), ed) == mix && !rack_menu_open(cx(), ed));
+        CHECK(e().search_focused(cx()));
+        // typing goes into the box, not to the computer keyboard's notes
+        gp_simulate_text(app, "  Water L mix  ");
+        wait(0.1);
+        CHECK(e().held.empty());
+        gp_simulate_key(app, "enter", true);
+        gp_simulate_key(app, "enter", false);
+        wait(0.1);
+        CHECK(label_box_node(cx(), ed) == 0 && !e().search_focused(cx()));
+        CHECK(node(mix)->label == "Water L mix" && e().dirty);
+        CHECK(e().undo_stack.size() == undo0 + 1);
+        CHECK(save_patch(e().engine.patch()).find("label " + std::to_string(mix) + " Water L mix\n")
+            != std::string::npos);
+        // the hint line on the title names both
+        e().hover(cx(), mix, Editor::kHoverTitle, true);
+        CHECK(e().hint().find("Water L mix  ·  Mixer") == 0);
+        e().hover(cx(), mix, Editor::kHoverTitle, false);
+
+        // opened again, it holds the label; Escape closes it and changes nothing
+        click(title, GP_MOUSE_RIGHT);
+        wait(0.1);
+        click(panel_menu_item(cx(), ed, 1));
+        wait(0.1);
+        CHECK(label_box_node(cx(), ed) == mix);
+        gp_simulate_text(app, "something else");
+        gp_simulate_key(app, "escape", true);
+        gp_simulate_key(app, "escape", false);
+        wait(0.1);
+        CHECK(label_box_node(cx(), ed) == 0 && !e().search_focused(cx()));
+        CHECK(node(mix)->label == "Water L mix" && e().undo_stack.size() == undo0 + 1);
+
+        // a press on the rack closes it too, without setting anything
+        click(title, GP_MOUSE_RIGHT);
+        wait(0.1);
+        click(panel_menu_item(cx(), ed, 1));
+        wait(0.1);
+        gp_simulate_text(app, "x");
+        click({ title.x, title.y + 600 });
+        wait(0.1);
+        CHECK(label_box_node(cx(), ed) == 0 && node(mix)->label == "Water L mix");
+
+        // undo and redo
+        e().undo(cx());
+        wait(0.1);
+        CHECK(node(mix)->label.empty());
+        e().redo(cx());
+        wait(0.1);
+        CHECK(node(mix)->label == "Water L mix");
+
+        // emptied: the type's name again, one more step
+        e().edit_label(cx(), mix);
+        wait(0.1);
+        CHECK(label_box_node(cx(), ed) == mix);
+        gp_simulate_key(app, "backspace", true); // the text is selected: it all goes
+        gp_simulate_key(app, "backspace", false);
+        gp_simulate_key(app, "enter", true);
+        gp_simulate_key(app, "enter", false);
+        wait(0.1);
+        CHECK(node(mix)->label.empty() && e().undo_stack.size() == undo0 + 2);
+        CHECK(save_patch(e().engine.patch()).find("label ") == std::string::npos);
+    }
+
     void run()
     {
         wait(0.4); // the first layout
@@ -1533,8 +1613,8 @@ struct Driver
         // ---- with a menu open, the next press anywhere only closes it (it is used up)
         {
             const gp_point title = control_center(cx(), ed, osc, -1);
-            const gp_point knob = control(osc, "frequency");
-            const float    f0 = param(osc, "frequency");
+            const gp_point knob = control(osc, "pwm_depth"); // low on the panel: below its menu
+            const float    f0 = param(osc, "pwm_depth");
             const size_t   count = e().engine.patch().nodes().size();
             CHECK(!rack_menu_open(cx(), ed));
             click(title, GP_MOUSE_RIGHT); // the panel's menu
@@ -1543,7 +1623,7 @@ struct Driver
             // a drag on a knob of that panel: the menu is gone and the knob has not moved
             drag(knob, { knob.x, knob.y - 40 });
             wait(0.1);
-            CHECK(!rack_menu_open(cx(), ed) && param(osc, "frequency") == f0);
+            CHECK(!rack_menu_open(cx(), ed) && param(osc, "pwm_depth") == f0);
             // a double click would have put it at its default; a right press would open its menu
             click(title, GP_MOUSE_RIGHT);
             wait(0.1);
@@ -1569,7 +1649,7 @@ struct Driver
             wait(0.1);
             drag(knob, { knob.x, knob.y - 40 });
             wait(0.1);
-            CHECK(param(osc, "frequency") != f0);
+            CHECK(param(osc, "pwm_depth") != f0);
             click(knob, GP_MOUSE_LEFT, 2); // back to the default
             wait(0.1);
             // a control's menu closes the same way, and Escape closes any of them
@@ -2085,10 +2165,12 @@ int main(int argc, char **argv)
         std::printf("%d checks, %d failed\n", checks, failures);
         return failures ? 1 : 0;
     }
-    static bool sound = false, files = false, undo = false, steps = false, gaps = false;
+    static bool sound = false, files = false, undo = false, steps = false, gaps = false,
+                labels = false;
     sound = argc == 2 && !std::strcmp(argv[1], "--sound");
     files = argc == 2 && !std::strcmp(argv[1], "--files");
     undo = argc == 2 && !std::strcmp(argv[1], "--undo");
+    labels = argc == 2 && !std::strcmp(argv[1], "--labels");
     steps = argc == 2 && !std::strcmp(argv[1], "--steps");
     gaps = argc == 2 && !std::strcmp(argv[1], "--gaps");
     static std::string dir;
@@ -2126,6 +2208,8 @@ int main(int argc, char **argv)
                         Driver { co, app, ed }.files(dir);
                     else if (undo)
                         Driver { co, app, ed }.undo_redo();
+                    else if (labels)
+                        Driver { co, app, ed }.labels();
                     else if (steps)
                         Driver { co, app, ed }.steps();
                     else if (gaps)

@@ -217,6 +217,10 @@ cable 3.out   -> 4.l
 * `device <node> <name>` (after a MIDI In or MIDI CC node's parameters, and only if it has one): the MIDI input the
   module listens to, by name. The name is the rest of the line, so it may hold spaces and a `#` (`nanoKONTROL2 #2`): this
   record is recognised before a comment is cut off. See *midi.md*.
+* `label <node> <text>` (right after the node's line, and only if it has one): the module's own name ("Water L mix"),
+  shown in its title bar instead of the type's. The rest of the line, like `device`; one line, at most 40 bytes
+  (`kMaxLabel`; longer text is cut, never inside a UTF-8 character). A label for a module that is not defined yet is
+  refused; one for a module of an unknown type is skipped with it.
 * A file is rejected, not partly applied, if it has a syntax error. Limits are enforced while reading (maximum
   nodes, cables and line length) so a hostile file cannot make the loader allocate without bound.
 

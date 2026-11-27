@@ -607,3 +607,23 @@ its own capture and `ev.button` saying which. Two consequences here:
 gpuic's own events (the test's probe is gone); a second button pressed and released during a pan does not end it; a right
 or middle press and move on a knob does not turn it; a right drag on a title does not move the panel. **Not checked:** the
 real mouse.
+
+## As built: module labels (asked for after the Alder Brook example, 2026-11-28)
+
+The rack never showed which Mixer was which, so nothing on screen matched "mixer 13" in a patch file. A module can now
+have a **label** of its own (`Node::label`, saved as `label <node> <text>`; *patch-engine.md*).
+
+* **Shown** in the title bar instead of the type's name. The hint line on the title gives both
+  (`Water L mix  ·  Mixer  ·  ...`), so the type is never lost.
+* **Set** from the panel's menu (right-click the title): *Label...* (*Change label...* once it has one) opens a small box
+  under the title, filled with the label and selected. Enter sets it; an empty box gives back the type's name; Escape or
+  a press anywhere else leaves it as it was. One undo step (`Editor::set_label`).
+* While the box has the keyboard, the computer keyboard does not play notes and the arrow keys do not nudge modules
+  (`Editor::search_focused` covers the label box as well as the browser's search box).
+* `examples/alder_brook.rack` has a label on every module but the output, as an example.
+
+**Checked** (`ui_labels`, the simulated mouse and keys): the menu opens the box; typed text does not reach the piano;
+Enter sets the label (trimmed) and saves it; the hint line names both; Escape and a press on the rack leave it; undo and
+redo; an emptied box removes it. `rack_tests`: the file record (round trip, `#` inside, trimming, the 40-byte cut,
+refusals). Looked at in a screenshot: labels of up to 10 characters fit a 4 HP VCA. **Not checked:** the real mouse and
+keyboard.

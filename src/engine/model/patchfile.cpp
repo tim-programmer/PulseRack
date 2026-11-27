@@ -99,6 +99,8 @@ std::string save_patch(const Patch &patch)
         const ModuleDesc &d = *n->desc;
         s += "node " + std::to_string(n->id) + " " + std::string(d.id) + " x=" + num(n->x)
             + " y=" + num(n->y) + "\n";
+        if (const std::string l = clean_label(n->label); !l.empty())
+            s += "label " + std::to_string(n->id) + " " + l + "\n";
         for (size_t i = 0; i < d.params.size(); i++)
         {
             const ParamDesc &p = d.params[i];
@@ -181,12 +183,13 @@ LoadResult load_patch(std::string_view text, Patch &out)
         lineno++;
         if (line.size() > kMaxLine)
             return fail("line too long");
-        // A device or sample record is looked for before the comment is cut: its name is the rest
-        // of the line, and may hold a '#' ("nanoKONTROL2 #2", "take #3.wav").
+        // A device, sample or label record is looked for before the comment is cut: its name is
+        // the rest of the line, and may hold a '#' ("nanoKONTROL2 #2", "take #3.wav").
         std::string_view device_name;
         bool             is_device = false;
         if (const auto whole = split(line); header && !whole.empty()
-            && (whole[0] == "device" || whole[0] == "sample" || whole[0] == "map"))
+            && (whole[0] == "device" || whole[0] == "sample" || whole[0] == "map"
+                || whole[0] == "label"))
         {
             is_device = true;
             const size_t name_at = whole[0] == "map" ? 5 : 2; // the token the name starts at
@@ -402,6 +405,18 @@ LoadResult load_patch(std::string_view text, Patch &out)
             std::erase_if(p.macros, [&](const Macro &m)
                 { return m.index == index - 1 || (m.node == id && m.param == (uint16_t)pi); });
             p.macros.push_back(Macro { (uint8_t)(index - 1), id, (uint16_t)pi });
+        }
+        else if (t[0] == "label")
+        {
+            uint32_t id;
+            if (t.size() != 2 || !parse_uint(t[1], id, 1000000) || device_name.empty())
+                return fail("bad label record");
+            if (skipped.count(id))
+                continue;
+            Node *n = p.find(id);
+            if (!n)
+                return fail("label for a module that is not defined yet");
+            n->label = clean_label(device_name);
         }
         else if (t[0] == "sample")
         {
