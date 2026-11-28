@@ -128,13 +128,13 @@ TEST(melody_walks_the_scale_with_rests_and_accents)
     CHECK(small * 10 > total * 6); // mostly steps and repeats
 
     // Density takes steps away in a fixed order, but the first step always plays.
-    CHECK(melody_loop({ { "density", 0 } }).size() == 1);
-    const auto half = melody_loop({ { "density", 50 } }).size();
+    CHECK(melody_loop({ { "density", 0.f } }).size() == 1);
+    const auto half = melody_loop({ { "density", 50.f } }).size();
     CHECK(half > 8 && half < 28);
 
-    for (const auto &e : melody_loop({ { "accent", 0 }, { "density", 100 } }))
+    for (const auto &e : melody_loop({ { "accent", 0.f }, { "density", 100.f } }))
         CHECK(e.velocity < 100);
-    for (const auto &e : melody_loop({ { "accent", 100 }, { "density", 100 } }))
+    for (const auto &e : melody_loop({ { "accent", 100.f }, { "density", 100.f } }))
         CHECK(e.velocity > 100);
 }
 
