@@ -1442,7 +1442,7 @@ namespace
             }
         };
         voice_block(n.vc, *io.evt_in[0], io.frames, render,
-            [&](int event)
+            [&]([[maybe_unused]] int event)
             {
                 if constexpr (T == Tone::Bell)
                     if (event == VC_STRIKE)

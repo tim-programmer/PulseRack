@@ -115,7 +115,7 @@ TEST(melody_walks_the_scale_with_rests_and_accents)
     for (float seed = 1; seed <= 40; ++seed)
         for (float scale : { 0.f, 3.f })
         {
-            const auto notes = melody_loop({ { "seed", seed }, { "scale", scale }, { "density", 100 } });
+            const auto notes = melody_loop({ { "seed", seed }, { "scale", scale }, { "density", 100.f } });
             CHECK(notes.size() == 32 && notes[0].note == 60);
             for (size_t i = 1; i < notes.size(); ++i)
             {
@@ -148,7 +148,7 @@ TEST(chord_voice_strums_and_arpeggiates_from_a_single_note)
         const auto output = r.add("out");
         CHECK(r.cable(keys, "notes", voice, "note") == Err::Ok);
         CHECK(r.cable(voice, "out", output, "l") == Err::Ok);
-        r.param(voice, "arp", arp ? 1 : 0);
+        r.param(voice, "arp", arp ? 1.f : 0.f);
         r.param(voice, "strum", strum);
         r.param(voice, "rate", 10);
         // a near-pure tone to measure: the filter just above A4, no detune, no pluck

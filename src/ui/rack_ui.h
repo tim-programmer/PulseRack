@@ -327,7 +327,7 @@ public:
     bool                                  edge_near = false; // the pointer is in the edge band
     std::chrono::steady_clock::time_point edge_since { };    // since then
     std::chrono::steady_clock::time_point edge_last { };     // the last tick
-    void        edge_scroll_start(gpuic::Ctx cx, gp_point window);
+    void        edge_scroll_start(gpuic::Ctx cx, gp_point pos);
     void        edge_tick(gpuic::Ctx cx);
     uint32_t    selected_node = 0;
     gp_size                window_size { };
@@ -346,8 +346,8 @@ public:
     bool     pan_active = false;
     int      pan_button = 0;           // GP_MOUSE_*
     gp_point pan_p0 { }, pan_off0 { }; // the pointer and the scroll offset at the press
-    void     pan_begin(gpuic::Ctx cx, gp_point window, int button);
-    void     pan_move(gpuic::Ctx cx, gp_point window, int button);
+    void     pan_begin(gpuic::Ctx cx, gp_point pos, int button);
+    void     pan_move(gpuic::Ctx cx, gp_point pos, int button);
     void     pan_end(int button);
     void     select_node(gpuic::Ctx cx, uint32_t node); // 0: none
     // The arrow keys turn the control under the pointer, else the last one touched.
@@ -359,20 +359,20 @@ public:
     // connected input its cable is lifted off. Positions are window pixels.
     // Shift on a plugged output lifts its newest cable by the output end (a plain drag from an
     // output always makes a new cable).
-    void jack_press(gpuic::Ctx cx, PortRef jack, gp_point window, uint32_t mods = 0);
-    void jack_drag(gpuic::Ctx cx, gp_point window);
-    void jack_release(gpuic::Ctx cx, gp_point window);
+    void jack_press(gpuic::Ctx cx, PortRef jack, gp_point pos, uint32_t mods = 0);
+    void jack_drag(gpuic::Ctx cx, gp_point pos);
+    void jack_release(gpuic::Ctx cx, gp_point pos);
     // A press on a browser card, then moves: past a few pixels it becomes a drag; released on a
     // free place on the rack it adds the module there.
-    void module_drag_begin(gpuic::Ctx cx, const ModuleDesc &d, gp_point window);
-    void module_drag_move(gpuic::Ctx cx, gp_point window);
-    void module_drag_end(gpuic::Ctx cx, gp_point window);
+    void module_drag_begin(gpuic::Ctx cx, const ModuleDesc &d, gp_point pos);
+    void module_drag_move(gpuic::Ctx cx, gp_point pos);
+    void module_drag_end(gpuic::Ctx cx, gp_point pos);
     // A press on a panel's title or face: past a few pixels it becomes a move (see PanelDrag).
-    void panel_drag_begin(gpuic::Ctx cx, uint32_t node, gp_point window);
-    void panel_drag_move(gpuic::Ctx cx, gp_point window);
-    void panel_drag_end(gpuic::Ctx cx, gp_point window);
+    void panel_drag_begin(gpuic::Ctx cx, uint32_t node, gp_point pos);
+    void panel_drag_move(gpuic::Ctx cx, gp_point pos);
+    void panel_drag_end(gpuic::Ctx cx, gp_point pos);
     // Where a module dragged by its title's middle would land, for a pointer at `window`.
-    Slot drop_slot(gpuic::Ctx cx, const ModuleDesc &d, gp_point window);
+    Slot drop_slot(gpuic::Ctx cx, const ModuleDesc &d, gp_point pos);
 
     Pt          to_rack(gpuic::Ctx cx, gp_point window); // window pixels -> rack pixels
     std::string port_name(PortRef r) const;              // "Oscillator OUT"

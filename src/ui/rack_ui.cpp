@@ -3743,9 +3743,9 @@ bool Editor::piano(Ctx cx, const gp_key_event &ev, bool down)
 
 // ---- the rack scrolls under a drag held near its edge
 
-void Editor::edge_scroll_start(Ctx cx, gp_point window)
+void Editor::edge_scroll_start(Ctx cx, gp_point pos)
 {
-    last_pointer = window;
+    last_pointer = pos;
     if (!edge_task.active())
     {
         edge_near = false;
@@ -3809,7 +3809,7 @@ void Editor::edge_tick(Ctx cx)
 
 // ---- panels moved on the rack
 
-void Editor::panel_drag_begin(Ctx cx, uint32_t node, gp_point window)
+void Editor::panel_drag_begin(Ctx cx, uint32_t node, gp_point pos)
 {
     const Node *n = engine.patch().find(node);
     if (!n)
@@ -3817,35 +3817,35 @@ void Editor::panel_drag_begin(Ctx cx, uint32_t node, gp_point window)
     pdrag = PanelDrag { };
     pdrag.active = true;
     pdrag.node = node;
-    pdrag.start = window;
+    pdrag.start = pos;
     pdrag.x0 = n->x;
     pdrag.y0 = n->y;
-    const Pt q = to_rack(cx, window);
+    const Pt q = to_rack(cx, pos);
     pdrag.grab = { q.x - n->x * kHp, q.y - n->y * kHp };
-    edge_scroll_start(cx, window);
+    edge_scroll_start(cx, pos);
 }
 
 // ---- dragging the rack about: any button on empty rack, the middle button on a panel too
 
-void Editor::pan_begin(Ctx cx, gp_point window, int button)
+void Editor::pan_begin(Ctx cx, gp_point pos, int button)
 {
     RackView *rv = rack.get(cx);
     if (!rv)
         return;
     pan_active = true; // (a second button pressed meanwhile takes the drag over)
     pan_button = button;
-    pan_p0 = window;
+    pan_p0 = pos;
     pan_off0 = rv->scroll.offset(cx);
 }
 
 // The moves and the release come from gpuic to the element that was pressed, for whichever button
 // that was; only those of the button that began the drag count.
-void Editor::pan_move(Ctx cx, gp_point window, int button)
+void Editor::pan_move(Ctx cx, gp_point pos, int button)
 {
     if (!pan_active || button != pan_button)
         return;
     if (RackView *rv = rack.get(cx))
-        rv->scroll.to(cx, pan_off0.x - (window.x - pan_p0.x), pan_off0.y - (window.y - pan_p0.y));
+        rv->scroll.to(cx, pan_off0.x - (pos.x - pan_p0.x), pan_off0.y - (pos.y - pan_p0.y));
 }
 
 void Editor::pan_end(int button)
@@ -3854,7 +3854,7 @@ void Editor::pan_end(int button)
         pan_active = false;
 }
 
-void Editor::panel_drag_move(Ctx cx, gp_point window)
+void Editor::panel_drag_move(Ctx cx, gp_point pos)
 {
     if (!pdrag.active)
         return;
@@ -3864,11 +3864,11 @@ void Editor::panel_drag_move(Ctx cx, gp_point window)
         pdrag = PanelDrag { };
         return;
     }
-    last_pointer = window;
-    if (!pdrag.moved && std::hypot(window.x - pdrag.start.x, window.y - pdrag.start.y) < 4)
+    last_pointer = pos;
+    if (!pdrag.moved && std::hypot(pos.x - pdrag.start.x, pos.y - pdrag.start.y) < 4)
         return; // a click, so far
     pdrag.moved = true;
-    const Pt q = to_rack(cx, window);
+    const Pt q = to_rack(cx, pos);
     // the panel goes where the pointer takes it (its cables with it: their ends come from the
     // model)
     n->x = std::max(0.f, (q.x - pdrag.grab.x) / kHp);
@@ -3886,11 +3886,11 @@ void Editor::panel_drag_move(Ctx cx, gp_point window)
     drag_view.update(cx, [](DragView &, Ctx c) { c.notify(); });
 }
 
-void Editor::panel_drag_end(Ctx cx, gp_point window)
+void Editor::panel_drag_end(Ctx cx, gp_point pos)
 {
     if (!pdrag.active)
         return;
-    panel_drag_move(cx, window);
+    panel_drag_move(cx, pos);
     const PanelDrag d = pdrag;
     pdrag = PanelDrag { };
     drag_view.update(cx, [](DragView &, Ctx c) { c.notify(); });
@@ -3929,39 +3929,39 @@ void Editor::panel_drag_end(Ctx cx, gp_point window)
 
 // ---- modules dragged from the browser
 
-Slot Editor::drop_slot(Ctx cx, const ModuleDesc &d, gp_point window)
+Slot Editor::drop_slot(Ctx cx, const ModuleDesc &d, gp_point pos)
 { // the pointer holds the panel by the middle of its title
-    const Pt q = to_rack(cx, window);
+    const Pt q = to_rack(cx, pos);
     return { (int)std::lround((q.x - d.width_hp * kHp / 2) / kHp),
         (int)std::lround((q.y - kTitleHeight / 2) / kHp) };
 }
 
-void Editor::module_drag_begin(Ctx cx, const ModuleDesc &d, gp_point window)
+void Editor::module_drag_begin(Ctx cx, const ModuleDesc &d, gp_point pos)
 {
     mdrag = ModuleDrag { };
     mdrag.active = true;
     mdrag.desc = &d;
-    mdrag.start = mdrag.at = window;
-    edge_scroll_start(cx, window);
+    mdrag.start = mdrag.at = pos;
+    edge_scroll_start(cx, pos);
 }
 
-void Editor::module_drag_move(Ctx cx, gp_point window)
+void Editor::module_drag_move(Ctx cx, gp_point pos)
 {
     if (!mdrag.active)
         return;
-    mdrag.at = window;
-    last_pointer = window;
-    if (!mdrag.moved && std::hypot(window.x - mdrag.start.x, window.y - mdrag.start.y) < 4)
+    mdrag.at = pos;
+    last_pointer = pos;
+    if (!mdrag.moved && std::hypot(pos.x - mdrag.start.x, pos.y - mdrag.start.y) < 4)
         return; // a click, so far
     mdrag.moved = true;
     const gp_point     o = rack_origin();
     const RackViewport vp = viewport_of(cx, *this);
-    mdrag.over_rack = window.x >= o.x && window.y >= o.y && window.x < o.x + vp.w * vp.zoom
-        && window.y < o.y + vp.h * vp.zoom;
+    mdrag.over_rack = pos.x >= o.x && pos.y >= o.y && pos.x < o.x + vp.w * vp.zoom
+        && pos.y < o.y + vp.h * vp.zoom;
     const std::string name(mdrag.desc->name);
     if (mdrag.over_rack)
     {
-        const Slot s = drop_slot(cx, *mdrag.desc, window);
+        const Slot s = drop_slot(cx, *mdrag.desc, pos);
         mdrag.x = s.x;
         mdrag.y = s.y;
         mdrag.fits = !collides(engine.patch(), *mdrag.desc, s.x, s.y);
@@ -3975,11 +3975,11 @@ void Editor::module_drag_move(Ctx cx, gp_point window)
     chip.update(cx, [](PointerChip &, Ctx c) { c.notify(); });
 }
 
-void Editor::module_drag_end(Ctx cx, gp_point window)
+void Editor::module_drag_end(Ctx cx, gp_point pos)
 {
     if (!mdrag.active)
         return;
-    module_drag_move(cx, window);
+    module_drag_move(cx, pos);
     const ModuleDrag m = mdrag;
     mdrag = ModuleDrag { };
     drag_view.update(cx, [](DragView &, Ctx c) { c.notify(); });
@@ -4193,7 +4193,7 @@ namespace
     }
 } // namespace
 
-void Editor::jack_press(Ctx cx, PortRef jack, gp_point window, uint32_t mods)
+void Editor::jack_press(Ctx cx, PortRef jack, gp_point pos, uint32_t mods)
 {
     const Patch &p = engine.patch();
     const Node  *n = p.find(jack.node);
@@ -4215,8 +4215,8 @@ void Editor::jack_press(Ctx cx, PortRef jack, gp_point window, uint32_t mods)
                 drag.lift_output = true;
             }
     drag.fixed = drag.picked ? (drag.lift_output ? drag.picked->to : drag.picked->from) : jack;
-    drag.loose = to_rack(cx, window);
-    edge_scroll_start(cx, window);
+    drag.loose = to_rack(cx, pos);
+    edge_scroll_start(cx, pos);
     const Patch probe = without(p, drag.picked);
     for (const Node &m : probe.nodes())
         for (uint16_t k = 0; k < m.desc->ports.size(); k++)
@@ -4242,12 +4242,12 @@ void Editor::jack_press(Ctx cx, PortRef jack, gp_point window, uint32_t mods)
     drag_view.update(cx, [](DragView &, Ctx c) { c.notify(); });
 }
 
-void Editor::jack_drag(Ctx cx, gp_point window)
+void Editor::jack_drag(Ctx cx, gp_point pos)
 {
     if (!drag.active)
         return;
-    last_pointer = window;
-    drag.loose = to_rack(cx, window);
+    last_pointer = pos;
+    drag.loose = to_rack(cx, pos);
     const Patch &p = engine.patch();
     drag.over = jack_at(p, drag.loose.x, drag.loose.y);
     if (drag.over && *drag.over == drag.fixed)
@@ -4268,11 +4268,11 @@ void Editor::jack_drag(Ctx cx, gp_point window)
     drag_view.update(cx, [](DragView &, Ctx c) { c.notify(); });
 }
 
-void Editor::jack_release(Ctx cx, gp_point window)
+void Editor::jack_release(Ctx cx, gp_point pos)
 {
     if (!drag.active)
         return;
-    jack_drag(cx, window); // where it ends
+    jack_drag(cx, pos); // where it ends
     const CableDrag d = drag;
     drag = CableDrag { };
     drag_view.update(cx, [](DragView &, Ctx c) { c.notify(); });

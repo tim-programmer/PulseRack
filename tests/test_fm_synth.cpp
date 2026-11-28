@@ -113,7 +113,7 @@ TEST(fm_synth_arpeggiates_held_keys_on_its_clock)
     {
         FmRig f(kArpPluck);
         f.dry();
-        f.r.param(f.synth, "external", external ? 1 : 0); // nothing on CLOCK: no pulses
+        f.r.param(f.synth, "external", external ? 1.f : 0.f); // nothing on CLOCK: no pulses
         f.r.key(f.keys, 0, true, 60);
         f.r.key(f.keys, 0, true, 64);
         f.r.key(f.keys, 0, true, 67);

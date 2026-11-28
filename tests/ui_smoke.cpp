@@ -1937,9 +1937,9 @@ struct Driver
         click(fit);
         const RackViewport fitted = rack_viewport(cx(), ed);
         CHECK(fitted.zoom < 1 && fitted.w * fitted.zoom > e().window_size.w - 16);
-        for (const Node &n : patch.nodes())
+        for (const Node &placed : patch.nodes())
         {
-            const Rect r = node_rect(*n.desc, n.x, n.y);
+            const Rect r = node_rect(*placed.desc, placed.x, placed.y);
             CHECK(fitted.x <= r.x && fitted.y <= r.y);
             CHECK(r.right() <= fitted.x + fitted.w && r.bottom() <= fitted.y + fitted.h);
         }

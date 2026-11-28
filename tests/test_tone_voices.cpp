@@ -31,7 +31,7 @@ TEST(tone_voices_each_sound_on_both_outputs_and_differ)
     for (size_t t = 0; t < 3; t++)
     {
         ToneRig v(types[t][0], types[t][1], types[t][2]);
-        v.r.param(v.voice, "decay", t == 2 ? 1000 : 100); // (a bell rings; letting go damps it)
+        v.r.param(v.voice, "decay", t == 2 ? 1000.f : 100.f); // (a bell rings; letting go damps it)
         v.r.key(v.keys, 0.01, true, 57);
         v.r.key(v.keys, 0.12, false, 57);
         CHECK(v.r.compile());
