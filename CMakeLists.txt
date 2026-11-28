@@ -109,9 +109,13 @@ if(PULSERACK_MIDI)
     set(LIBREMIDI_NO_WINUWP ON CACHE BOOL "" FORCE)
     set(LIBREMIDI_NO_WINMIDI ON CACHE BOOL "" FORCE)
     set(LIBREMIDI_NO_KDMAPI ON CACHE BOOL "" FORCE)
-    FetchContent_Declare(libremidi GIT_REPOSITORY https://github.com/celtera/libremidi.git GIT_TAG v5.4.3 GIT_SHALLOW TRUE)
+    # v5.4.3 does not compile with MSVC 14.52 (19.52); the upstream fix (libremidi issue #277) is not in a release
+    # yet, so it is applied here. Drop the patch once a release after v5.4.3 is pinned.
+    FetchContent_Declare(libremidi GIT_REPOSITORY https://github.com/celtera/libremidi.git GIT_TAG v5.4.3 GIT_SHALLOW TRUE
+        PATCH_COMMAND ${CMAKE_COMMAND} -DPATCH=${CMAKE_CURRENT_SOURCE_DIR}/cmake/patches/libremidi-msvc-14.52.patch
+                      -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/apply_patch.cmake)
     FetchContent_MakeAvailable(libremidi)
-    message(STATUS "libremidi: ${libremidi_SOURCE_DIR} @ v5.4.3")
+    message(STATUS "libremidi: ${libremidi_SOURCE_DIR} @ v5.4.3 (+ MSVC 14.52 patch)")
 endif()
 
 add_library(rack_warnings INTERFACE)

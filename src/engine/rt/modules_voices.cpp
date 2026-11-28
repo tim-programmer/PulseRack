@@ -1546,7 +1546,11 @@ int chord_notes(int note, int key, int scale, int shape, const uint8_t *previous
             int voiced[4];
             for (int t = 0; t < tones; ++t)
                 voiced[t] = root[t] + (t < inversion ? 12 : 0);
-            std::sort(voiced, voiced + tones);
+            // An insertion sort of at most four notes: std::sort here trips GCC's -Warray-bounds at -O3,
+            // which cannot see that tones is at most 4.
+            for (int t = 1; t < tones; ++t)
+                for (int u = t; u > 0 && voiced[u - 1] > voiced[u]; --u)
+                    std::swap(voiced[u - 1], voiced[u]);
             const int gap = previous[0] - voiced[0];
             const int nearest_octave = 12 * ((gap + (gap >= 0 ? 6 : -6)) / 12);
             for (int shift = nearest_octave - 12; shift <= nearest_octave + 12; shift += 12)
