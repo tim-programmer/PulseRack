@@ -173,7 +173,7 @@ struct Driver
         const float  x = 0.125f * q[0].x + 0.375f * q[1].x + 0.375f * q[2].x + 0.125f * q[3].x;
         const float  y = 0.125f * q[0].y + 0.375f * q[1].y + 0.375f * q[2].y + 0.125f * q[3].y;
         const RackViewport vp = rack_viewport(cx(), ed);
-        return { rack_origin().x + x - vp.x, rack_origin().y + y - vp.y };
+        return { e().rack_origin().x + x - vp.x, e().rack_origin().y + y - vp.y };
     }
 
     void cables(uint32_t osc, uint32_t vca, uint32_t adsr)
@@ -212,6 +212,13 @@ struct Driver
         CHECK(into(vca, "in") && into(vca, "in")->from == P(osc, "out"));
         CHECK(peak() > 0.05f); // the engine took the cable at once: osc -> VCA -> out
         CHECK(e().cable_views.size() == patch.cables().size());
+
+        move(a);
+        wait();
+        CHECK(e().cable_focus == P(osc, "out"));
+        move(cable_middle(P(vca, "in")));
+        wait();
+        CHECK(e().cable_focus == P(vca, "in"));
 
         // ---- refused: an event input, a loop, an empty release
         drag(a, J(adsr, "note"));
@@ -276,7 +283,7 @@ struct Driver
         CHECK(!e().selected);
         CHECK(e().engine.apply_failures() == 0 && e().engine.nonfinite_samples() == 0);
     }
-    gp_point o() { return rack_origin(); }
+    gp_point o() { return e().rack_origin(); }
 
     // A panel moved by its face: it follows the pointer freely (over its neighbours, its cable with
     // it), the outline says where it would land, and the release puts it there or back.
@@ -814,8 +821,8 @@ struct Driver
     }
     gp_point ask_button(int which) // 0 Save, 1 Don't save, 2 Cancel
     {
-        const float l = (style::kWindowW - style::kAskW) / 2,
-                    t = (style::kWindowH - style::kAskH) / 2;
+        const float l = (e().window_size.w - style::kAskW) / 2,
+                    t = (e().window_size.h - style::kAskH) / 2;
         const float y = t + style::kAskH - 1 - style::kAskPad - style::kAskBtnH / 2;
         const float save_x = l + style::kAskW - 1 - style::kAskPad - style::kAskBtnW / 2;
         return { save_x - which * (style::kAskBtnW + style::kAskGap), y };
@@ -945,7 +952,12 @@ struct Driver
         gp_simulate_keystrokes(app, "ctrl-n");
         wait(0.15);
         CHECK(e().ask.shown);
-        click(ask_button(0));
+        gp_window_set_size(e().window, 900, 500);
+        wait(0.15);
+        CHECK(e().window_size.w == 900 && e().window_size.h == 500);
+        click(ask_button(0)); // still reachable after resizing the open dialog
+        gp_window_set_size(e().window, (int)style::kWindowW, (int)style::kWindowH);
+        wait(0.15);
         CHECK(patch.nodes().empty() && e().patch_name == "untitled" && !e().dirty
             && e().file_path.empty());
         CHECK(read_file(dir + "/one.rack", &text, &err)
@@ -1329,7 +1341,7 @@ struct Driver
         move(control_center(cx(), ed, osc, -1));
         wait(0.1);
         CHECK(e().hint().find(std::string(node(osc)->desc->description)) != std::string::npos);
-        move({ rack_origin().x + 900, rack_origin().y + 600 });
+        move({ e().rack_origin().x + 900, e().rack_origin().y + 600 });
         wait(0.1);
         CHECK(e().hover_text.empty() && e().hint() == e().status);
         // the wheel over a knob under the pointer: the hint shows the new value
@@ -1345,7 +1357,7 @@ struct Driver
         {
             const gp_point k0 = control(osc, "frequency");
             const gp_point spot { k0.x + 100,
-                rack_origin().y + 600 }; // empty rack, below the panels
+                e().rack_origin().y + 600 }; // empty rack, below the panels
             move(spot);
             wait(0.1);
             CHECK(e().hover_text.empty());
@@ -1599,7 +1611,7 @@ struct Driver
             click(control(osc, "waveform"), GP_MOUSE_RIGHT);
             wait(0.1);
             CHECK(control_menu_item(cx(), ed, 0).x >= 0);
-            click({ rack_origin().x + 900, rack_origin().y + 600 }); // empty rack: it closes
+            click({ e().rack_origin().x + 900, e().rack_origin().y + 600 }); // empty rack: it closes
             wait(0.1);
             CHECK(control_menu_item(cx(), ed, 0).x < 0 && param(osc, "waveform") == 2);
             e().settings.learn = { { 0, 1, 0, "" }, { 0, 2, 1, "" } };
@@ -1670,7 +1682,7 @@ struct Driver
             // the wheel still zooms the rack while a menu is open, and the menu stays
             click(title, GP_MOUSE_RIGHT);
             wait(0.1);
-            const gp_point empty { rack_origin().x + 900, rack_origin().y + 600 };
+            const gp_point empty { e().rack_origin().x + 900, e().rack_origin().y + 600 };
             move(empty);
             gp_simulate_wheel(app, empty.x, empty.y, 0, 1, 0);
             wait(0.1);
@@ -1695,7 +1707,7 @@ struct Driver
                 return n == "KeyStep" ? 0 : n == "Pads #2" ? 1 : -1;
             };
             const gp_point box = device_box_center(cx(), ed, mi);
-            const gp_point away { rack_origin().x + 900, rack_origin().y + 600 }; // empty rack
+            const gp_point away { e().rack_origin().x + 900, e().rack_origin().y + 600 }; // empty rack
             CHECK(box.x >= 0 && device_box_center(cx(), ed, osc).x < 0); // MIDI modules only
             CHECK(device_menu_item(cx(), ed, 0).x < 0);
             move(box);
@@ -1825,7 +1837,7 @@ struct Driver
         drag(title, { title.x, title.y + kPanelHeightHp * kHp });
         CHECK(node(vca)->x == 8 && node(vca)->y == kPanelHeightHp);
 
-        const gp_point o = rack_origin();
+        const gp_point o = e().rack_origin();
         vca_ = vca;
         cables(osc, vca, adsr);
         carry(osc, adsr);
@@ -1880,8 +1892,8 @@ struct Driver
         // edges, where holding a drag would scroll the rack (part 4)
         const Slot spot { (int)std::ceil(v.x / kHp) + 2, 2 * kPanelHeightHp };
         CHECK(!collides(patch, oscd, spot.x, spot.y));
-        const gp_point to { rack_origin().x + spot.x * kHp + oscd.width_hp * kHp / 2 - v.x,
-            rack_origin().y + spot.y * kHp + kTitleHeight / 2 - v.y };
+        const gp_point to { e().rack_origin().x + spot.x * kHp + oscd.width_hp * kHp / 2 - v.x,
+            e().rack_origin().y + spot.y * kHp + kTitleHeight / 2 - v.y };
         const gp_point card { style::kBrowserPad + 40,
             add_button(0).y + 32 }; // the card's text, not its button
         size_t         count = patch.nodes().size();
@@ -1916,6 +1928,25 @@ struct Driver
         // off the rack (onto the toolbar): nothing
         drag(card, { 600, style::kToolbarH / 2 }, 12);
         CHECK(patch.nodes().size() == count + 1 && hint_has("drop a module on the rack"));
+
+        // Fit must show the entire populated rack, including after hiding its browser.
+        const gp_point toggle { 60, e().window_size.h - style::kHintH / 2 };
+        const gp_point fit { e().window_size.w - 42, toggle.y };
+        click(toggle);
+        CHECK(!e().browser_visible && e().rack_origin().x == 0);
+        click(fit);
+        const RackViewport fitted = rack_viewport(cx(), ed);
+        CHECK(fitted.zoom < 1 && fitted.w * fitted.zoom > e().window_size.w - 16);
+        for (const Node &n : patch.nodes())
+        {
+            const Rect r = node_rect(*n.desc, n.x, n.y);
+            CHECK(fitted.x <= r.x && fitted.y <= r.y);
+            CHECK(r.right() <= fitted.x + fitted.w && r.bottom() <= fitted.y + fitted.h);
+        }
+        click(control_center(cx(), ed, dropped, -1));
+        CHECK(e().selected_node == dropped);
+        click(toggle);
+        CHECK(e().browser_visible && e().rack_origin().x == style::kBrowserW);
     }
 };
 } // namespace

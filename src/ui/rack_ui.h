@@ -204,6 +204,7 @@ public:
     using CableKey = std::pair<uint32_t, uint16_t>;
     std::map<CableKey, gpuic::Entity<CableView>> cable_views;  // one cached view per cable
     std::map<CableKey, int>                      cable_colour; // its palette entry, given in turn
+    std::optional<PortRef> cable_focus; // either end of the cables being traced
     int                                          next_colour = 0;
     std::optional<PortRef>                       selected; // the selected cable's input
     gpuic::Entity<DragView>                      drag_view;
@@ -329,8 +330,13 @@ public:
     void        edge_scroll_start(gpuic::Ctx cx, gp_point window);
     void        edge_tick(gpuic::Ctx cx);
     uint32_t    selected_node = 0;
-    // The rack's magnification (the wheel over the rack; Ctrl+0 puts it back to 1). The model stays
-    // in rack pixels: only RackView scales, and to_rack() and the viewport divide by it.
+    gp_size                window_size { };
+    bool                   browser_visible = true;
+    gp_point               rack_origin() const;
+    void                   toggle_browser(gpuic::Ctx cx);
+    void                   fit_patch(gpuic::Ctx cx);
+    void                   toggle_file_menu(gpuic::Ctx cx);
+    // The model stays in rack pixels. The wheel zooms around the pointer, Ctrl+0 resets to 1.
     float                  zoom = 1;
     static constexpr float kZoomMin = 0.4f, kZoomMax = 2.5f;
     void set_zoom(gpuic::Ctx cx, float z, gp_point about_window); // keeps that point where it is
@@ -435,6 +441,7 @@ public:
     // ---- for the views
     void sync_panels(gpuic::Ctx cx); // a view for every node, none for nodes that are gone
     void sync_cables(gpuic::Ctx cx); // the same for cables
+    void update_cable_focus(gpuic::Ctx cx);
     void refresh_cables_of(gpuic::Ctx cx, uint32_t node); // after a panel moved
     void refresh_rack(gpuic::Ctx cx);
 };
@@ -462,8 +469,6 @@ struct Options
 gpuic::Entity<Editor> open_rack(gpuic::App app, const Options &opt, std::string *error);
 
 // Where things are, in window pixels, for tests and for the browser's placement of new modules.
-// The rack's top-left corner in the window.
-gp_point rack_origin();
 // The visible rack area, in rack pixels (what the model uses): its top left corner and size. On the
 // screen it is w * zoom by h * zoom window pixels.
 struct RackViewport

@@ -35,9 +35,10 @@ build/src/rack-render examples/sequence.rack bass.wav 8                     # re
 build/src/pulserack-midi --list                                             # the MIDI inputs (a name as argument: print what it sends)
 ```
 
-`examples/` has five patches (a sequenced bass line, an arpeggio, a filter sweep, a voice for the computer keyboard, a voice
-for a MIDI keyboard); they are
-built into the program too, under *Open > Examples*. PulseCoreLib and gpuic are fetched from GitHub
+The patches in `examples/` are built into the program under *Open > Examples*.
+For a self-playing ambient piece with wind in the leaves, running water and birdsong, open [Alder brook](examples/alder_brook.rack).
+
+PulseCoreLib and gpuic are fetched from GitHub
 (branch `main`); to build against local checkouts, add `-DFETCHCONTENT_SOURCE_DIR_PULSECORELIB=/path/to/PulseCoreLib` and
 `-DFETCHCONTENT_SOURCE_DIR_GPUIC=/path/to/gpuic`. gpuic's own dependencies (SDL3, FreeType, HarfBuzz, FriBidi) must be installed
 (`-DPULSERACK_GPUIC_DEPENDENCIES=AUTO` lets gpuic download what is missing); `-DPULSERACK_BUILD_GUI=OFF` builds the engine alone.

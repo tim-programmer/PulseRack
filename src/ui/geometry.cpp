@@ -339,8 +339,10 @@ namespace
 {
     Rect column_rect(const Rect &area, int c, float y, float h)
     {
-        const float pitch = area.w / kGridColumns;
-        return { area.x + (float)c * pitch + 1, y, pitch - 2, h };
+        const float pitch = (area.w - kGridLabelW) / kGridColumns;
+        const float left = c > 0 && c % 4 == 0 ? 2.f : 1.f;
+        const float right = c % 4 == 3 ? 2.f : 1.f;
+        return { area.x + kGridLabelW + (float)c * pitch + left, y, pitch - left - right, h };
     }
 } // namespace
 
@@ -358,9 +360,10 @@ Rect StepGrid::tie_pad(int c) const
 }
 int StepGrid::column_at(float x) const
 {
-    if (x < area.x || x >= area.right())
+    if (x < area.x + kGridLabelW || x >= area.right())
         return -1;
-    return std::min(kGridColumns - 1, (int)((x - area.x) / (area.w / kGridColumns)));
+    const float pitch = (area.w - kGridLabelW) / kGridColumns;
+    return std::min(kGridColumns - 1, (int)((x - area.x - kGridLabelW) / pitch));
 }
 
 float note_fill(int note)

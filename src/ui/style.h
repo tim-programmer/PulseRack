@@ -15,7 +15,7 @@ using gpuic::rgb;
 
 // ---- chrome
 inline constexpr float kWindowW = 1400, kWindowH = 900;
-inline constexpr float kToolbarH = 36;
+inline constexpr float kToolbarH = 36, kCompactToolbarW = 1150;
 // the toolbar's file buttons, at fixed places (the Open menu hangs under its button)
 inline constexpr float kAppNameW = 76; // "PulseRack"
 inline constexpr float kToolGap = 6;
@@ -53,6 +53,7 @@ inline const Color kSurfaceHi = rgb(0x2c2f3a);
 inline const Color kBorder = rgb(0x30333f);
 inline const Color kText = rgb(0xe4e5ee);
 inline const Color kSubtext = rgb(0x9aa0b4);
+inline const Color kPanelValue = rgb(0xecf0f4);
 inline const Color kDim = rgb(0x6b7085);
 inline const Color kAccent = rgb(0x89b4fa);
 inline const Color kAccentHi = rgb(0xa6c4fb);

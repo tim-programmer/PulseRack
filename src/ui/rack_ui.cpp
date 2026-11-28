@@ -31,6 +31,26 @@ namespace
         return text(std::move(s)).text_size(size).text_color(c);
     }
 
+    template <class F> Element button(const char *text, float w, F &&f, bool enabled = true)
+    {
+        return div()
+            .w(w)
+            .h(st::kToolBtnH)
+            .flex_shrink_0()
+            .rounded(4)
+            .flex_row()
+            .items_center()
+            .justify_center()
+            .cursor_pointer()
+            .bg_gradient(180, { stop(rgb(0x343846), 0), stop(st::kSurfaceHi, 1) })
+            .hover_bg(st::kBorder)
+            .active_bg(st::kWell)
+            .border(1)
+            .border_color(st::kBorder)
+            .child(label(text, 12, enabled ? st::kText : st::kDim))
+            .on_click(std::forward<F>(f));
+    }
+
     Color with_alpha(Color c, float a)
     {
         c.a = a;
@@ -38,6 +58,13 @@ namespace
     }
 
     const Color kBlack = rgb(0x000000), kWhite = rgb(0xffffff);
+
+    constexpr float kOperatorHeaderH = 12;
+    bool operator_pair_knob(const ModuleDesc &d, const ParamDesc &p)
+    {
+        return d.id == "fm_synth" && p.id.starts_with("op")
+            && (p.id.ends_with("_ratio") || p.id.ends_with("_level"));
+    }
 
     // The Device box of a MIDI In or MIDI CC panel, and the Sample box of a Sampler: under its
     // controls, in the panel's pixels (inside its border). A click on it opens the device menu
@@ -102,6 +129,8 @@ struct HintLine
     Element        render(Ctx cx)
     {
         Editor *e = ed.get(cx);
+        if (!e)
+            return div();
         return div()
             .w_full()
             .h(st::kHintH)
@@ -111,39 +140,29 @@ struct HintLine
             .bg(st::kSurface)
             .border_top(1)
             .border_color(st::kBorder)
-            .child(label(e ? e->hint() : std::string(), 12, st::kSubtext));
+            .gap(8)
+            .child(button(e->browser_visible ? "Hide modules" : "Show modules", 102,
+                [](HintLine &self, Ctx c) { self.ed.get(c)->toggle_browser(c); }))
+            .child(div().flex_1().min_w(0).overflow_hidden()
+                    .child(label(e->hint(), 12, st::kSubtext).whitespace_pre()))
+            .child(label(std::to_string((int)std::lround(e->zoom * 100)) + "%", 12, st::kSubtext))
+            .child(button("Fit patch", 68,
+                [](HintLine &self, Ctx c) { self.ed.get(c)->fit_patch(c); }));
     }
 };
 
 struct Toolbar
 {
-    Entity<Editor>                    ed;
-    template <class F> static Element button(const char *text, float w, F &&f, bool enabled = true)
-    {
-        return div()
-            .w(w)
-            .h(st::kToolBtnH)
-            .flex_shrink_0()
-            .rounded(4)
-            .flex_row()
-            .items_center()
-            .justify_center()
-            .cursor_pointer()
-            .bg_gradient(180, { stop(rgb(0x343846), 0), stop(st::kSurfaceHi, 1) })
-            .hover_bg(st::kBorder)
-            .active_bg(st::kWell)
-            .border(1)
-            .border_color(st::kBorder)
-            .child(label(text, 12, enabled ? st::kText : st::kDim))
-            .on_click(std::forward<F>(f));
-    }
+    Entity<Editor> ed;
     Element render(Ctx cx)
     {
-        Editor      *e = ed.get(cx);
-        const size_t n = e ? e->engine.patch().nodes().size() : 0;
-        const bool   dirty = e && e->dirty;
-        if (e) // (the toolbar is redrawn whenever the name or the mark changes)
-            e->show_title();
+        Editor *e = ed.get(cx);
+        if (!e)
+            return div();
+        const size_t n = e->engine.patch().nodes().size();
+        const bool   dirty = e->dirty;
+        const bool   compact = e->window_size.w < st::kCompactToolbarW;
+        e->show_title();
         return div()
             .w_full()
             .h(st::kToolbarH)
@@ -168,15 +187,8 @@ struct Toolbar
                     .child(label("PulseRack", 13, st::kText).font_bold()))
             .child(button("New", st::kNewW,
                 [](Toolbar &self, Ctx cx) { self.ed.get(cx)->request(cx, Editor::Then::New); }))
-            .child(button("Open  v", st::kOpenW,
-                [](Toolbar &self, Ctx cx)
-                {
-                    Editor *e = self.ed.get(cx);
-                    e->file_menu_open = !e->file_menu_open;
-                    if (e->file_menu_open)
-                        e->examples_scroll.to(cx, 0, 0); // each opening starts at the top
-                    e->overlay.update(cx, [](Overlay &, Ctx c) { c.notify(); });
-                }))
+            .child(button("Open  ▾", st::kOpenW,
+                [](Toolbar &self, Ctx cx) { self.ed.get(cx)->toggle_file_menu(cx); }))
             .child(button(
                 "Save", st::kSaveW, [](Toolbar &self, Ctx cx) { self.ed.get(cx)->save(cx); }))
             .child(button("Save as", st::kSaveAsW,
@@ -184,24 +196,25 @@ struct Toolbar
             .child(div().w(8 - st::kToolGap))
             .child(button(
                 "Undo", st::kUndoW, [](Toolbar &self, Ctx cx) { self.ed.get(cx)->undo(cx); },
-                e && !e->undo_stack.empty()))
+                !e->undo_stack.empty()))
             .child(button(
                 "Redo", st::kRedoW, [](Toolbar &self, Ctx cx) { self.ed.get(cx)->redo(cx); },
-                e && !e->redo_stack.empty()))
+                !e->redo_stack.empty()))
             .child(div().w(8))
             // the name, with a mark while there are unsaved changes
             .child(dirty
                     ? glow(div().w(6).h(6).rounded_full().bg(st::kAccent), st::kAccent, 5, 0.6f)
                     : div())
-            .child(label(e ? e->patch_name : std::string(), 13, dirty ? st::kText : st::kSubtext))
+            .child(label(e->patch_name, 13, dirty ? st::kText : st::kSubtext)
+                    .whitespace_pre().overflow_hidden().min_w(0))
             .child(label(std::to_string(n) + (n == 1 ? " module" : " modules"), 12, st::kDim))
             .child(div().flex_1())
-            .child(e && e->shown_dropouts
+            .child(e->shown_dropouts
                     ? label(std::to_string(e->shown_dropouts)
                               + (e->shown_dropouts == 1 ? " dropout" : " dropouts"),
                           12, st::kDanger)
                     : div())
-            .child(e && e->hosted // (in a plugin the host has the sound and the MIDI)
+            .child(e->hosted // (in a plugin the host has the sound and the MIDI)
                     ? div().flex_row().items_center().h(st::kToolBtnH).px(6).child(
                           label(e->audio_status(), 12, st::kDim))
                     : div()
@@ -213,12 +226,13 @@ struct Toolbar
                           .cursor_pointer()
                           .hover_bg(st::kSurfaceHi)
                           .child(label(
-                              (e ? e->audio_status() + e->midi_status() : std::string()) + "  v",
-                              12, st::kDim))
+                              compact ? "Devices  ▾" : e->audio_status() + e->midi_status() + "  ▾",
+                              12, st::kSubtext))
                           .on_click([](Toolbar &self, Ctx cx)
                               { self.ed.get(cx)->open_device_menu(cx); }))
-            .child(e && e->hosted ? div() : div()
+            .child(e->hosted ? div() : div()
                     .w(st::kAudioW)
+                    .flex_shrink_0()
                     .justify_center()
                     .h(24)
                     .gap(6)
@@ -231,8 +245,8 @@ struct Toolbar
                     .active_bg(st::kWell)
                     .border(1)
                     .border_color(
-                        e && e->audio_running() ? with_alpha(st::kLedOn, 0.45f) : st::kBorder)
-                    .child(e && e->audio_running()
+                        e->audio_running() ? with_alpha(st::kLedOn, 0.45f) : st::kBorder)
+                    .child(e->audio_running()
                             ? glow(div().w(8).h(8).rounded_full().bg(st::kLedOn), st::kLedOn)
                             : div()
                                   .w(8)
@@ -363,6 +377,8 @@ struct Browser
 
     Element render(Ctx cx)
     {
+        if (Editor *e = ed.get(cx); !e || !e->browser_visible)
+            return div().w(0).h(0);
         const std::string q = search ? lower(search.text(cx.app())) : std::string();
         Element           chips = div().flex_row().flex_wrap().gap(6).h(st::kChipsH).pt(8);
         chips.child(chip("All", "", st::kText));
@@ -1008,6 +1024,14 @@ struct PanelView
                             cx.notify();
                         }));
         }
+        auto row_label = [&](const char *name, Rect row)
+        {
+            w.child(div().absolute().left(g.area.x).top(row.y).w(kGridLabelW - 2).h(row.h)
+                    .flex_col().justify_center().child(label(name, 10, st::kText)));
+        };
+        row_label("Pitch", g.note_bar(0));
+        row_label("On", g.on_pad(0));
+        row_label("Tie", g.tie_pad(0));
         for (int c = 0; c < kGridColumns; c++)
         {
             const size_t    i = (size_t)(page * kGridColumns + c);
@@ -1408,10 +1432,18 @@ struct PanelView
         const ParamDesc &p = d.params[i];
         const float      t = to_travel(p, value);
         Element          cell
-            = div().absolute().left(r.x).top(r.y).w(r.w).h(r.h).flex_col().items_center().gap(2);
+            = div().absolute().left(r.x).top(r.y).w(r.w).h(r.h).flex_col().items_center().gap(1);
+        std::string_view caption = p.name;
+        if (operator_pair_knob(d, p))
+        {
+            cell.pt(kOperatorHeaderH);
+            caption = p.id.ends_with("_ratio") ? "Ratio" : "Level";
+        }
+        // Keep a numbered mixer fader's short caption on one line in its narrow cell.
+        const float name_size = p.control == Control::Slider && r.w < 40 ? 10.f : 11.f;
         Element name = div().w(r.w).flex_row().justify_center().child(
-            label(std::string(p.name), 9, st::kText).text_center());
-        Element val = label(format_value(p, value), 9, st::kSubtext);
+            label(std::string(caption), name_size, st::kText).text_center());
+        Element val = label(format_value(p, value), 11, st::kPanelValue).text_center();
         switch (p.control)
         {
         case Control::Knob:
@@ -1549,7 +1581,7 @@ struct PanelView
                     .w(c.w)
                     .flex_row()
                     .justify_center()
-                    .child(label(std::string(p.name), 8, st::kText).whitespace_pre()))
+                    .child(label(std::string(p.name), p.name.size() > 6 ? 9.f : 10.f, st::kText).whitespace_pre()))
             .on_hover([i](PanelView &self, Ctx cx, bool inside)
                 { self.ed.get(cx)->hover(cx, self.node, Editor::kHoverPort - (int)i, inside); })
             .cursor_pointer()
@@ -1654,6 +1686,20 @@ struct PanelView
                 .on_hover([](PanelView &self, Ctx cx, bool inside)
                     { self.ed.get(cx)->hover(cx, self.node, Editor::kHoverTitle, inside); }));
 
+        if (d.id == "fm_synth")
+        {
+            // A shared backing pairs each operator's ratio with its level.
+            for (int op = 1; op <= 4; ++op)
+            {
+                const std::string prefix = "op" + std::to_string(op);
+                const Rect &a = L.params[(size_t)find_param(d, prefix + "_ratio")];
+                const Rect &b = L.params[(size_t)find_param(d, prefix + "_level")];
+                p.child(div().absolute().left(a.x - 1).top(a.y - 2)
+                        .w(b.right() - a.x + 2).h(a.h).rounded(4)
+                        .bg(with_alpha(kBlack, 0.16f)).items_center()
+                        .child(label("OP " + std::to_string(op), 10, st::kText).font_bold()));
+            }
+        }
         for (size_t i = 0; i < d.params.size(); i++)
             if (d.params[i].control != Control::Hidden)
                 p.child(control(d, i, n->params[i], L.params[i], cc.chip));
@@ -1800,6 +1846,8 @@ struct CableView
 {
     Entity<Editor> ed;
     PortRef        to; // the cable into this input
+    bool           stroke_hovered = false;
+    std::optional<PortRef> plug_hovered;
 
     Element render(Ctx cx)
     {
@@ -1812,18 +1860,33 @@ struct CableView
             return div(); // gone, or lifted off and drawn by the drag view
         const Pt    a = jack_center(*p.find(c->from.node), c->from.port);
         const Pt    b = jack_center(*p.find(c->to.node), c->to.port);
-        const bool  sel = e->selected && *e->selected == to;
+        const bool traced = e->cable_focus == c->from || e->cable_focus == c->to;
+        const bool dim = e->cable_focus.has_value() && !traced;
+        const float width = traced ? 6.f : 4.5f;
         const auto  it = e->cable_colour.find({ to.node, to.port });
         const Color col = st::cable_colour(it == e->cable_colour.end() ? 0 : it->second);
+        auto endpoint = [&](Pt at, PortRef port)
+        {
+            Element end = plug(at, col);
+            end.on_hover([port](CableView &self, Ctx cx, bool inside)
+                {
+                    if (inside)
+                        self.plug_hovered = port;
+                    else if (self.plug_hovered == port)
+                        self.plug_hovered.reset();
+                    self.ed.get(cx)->hover(cx, port.node, Editor::kHoverPort - port.port, inside);
+                });
+            return end;
+        };
         // a press near either end is a press on that jack (the plug covers it); elsewhere it
         // selects the cable, and a right-click opens its menu
         return div()
             .absolute()
             .left(0)
             .top(0)
-            .child(cable_shadow_element(cable_curve(a, b), sel ? 7.f : 4.5f))
+            .child(dim ? div() : cable_shadow_element(cable_curve(a, b), width))
             .child(cable_curve_element(
-                cable_curve(a, b), with_alpha(col, sel ? 1.f : 0.9f), sel ? 7.f : 4.5f)
+                cable_curve(a, b), with_alpha(col, dim ? 0.18f : traced ? 1.f : 0.9f), width)
                     .hit_tolerance(4)
                     .cursor_pointer()
                     .on_mouse_down(
@@ -1856,11 +1919,14 @@ struct CableView
                     .on_hover(
                         [](CableView &self, Ctx cx, bool inside)
                         {
+                            self.stroke_hovered = inside;
                             self.ed.get(cx)->hover(
                                 cx, self.to.node, Editor::kHoverCable - self.to.port, inside);
                         }))
-            .child(plug(a, col))
-            .child(plug(b, col));
+            .child(traced ? ring(a, 10, col, 2) : div())
+            .child(traced ? ring(b, 10, col, 2) : div())
+            .child(endpoint(a, c->from))
+            .child(endpoint(b, c->to));
     }
 };
 
@@ -2091,8 +2157,14 @@ struct RackView
                     .gap(6)
                     .child(label("An empty rack", 22, st::kSubtext).font_bold())
                     .child(label(
-                        "Add a module from the list on the left, or drag one here.", 13, st::kDim))
-                    .child(label("Open > Examples has patches to start from.", 13, st::kDim)));
+                        e->browser_visible ? "Add a module from the list on the left, or drag one here."
+                                           : "Show the module browser to add a module.", 13, st::kSubtext))
+                    .child(div().w(126).h(28).rounded(4).bg(st::kSurfaceHi)
+                            .border(1).border_color(st::kBorder).cursor_pointer()
+                            .items_center().justify_center().hover_bg(st::kBorder)
+                            .child(label("Open example…", 13, st::kAccentHi))
+                            .on_click([](RackView &self, Ctx c)
+                                { self.ed.get(c)->toggle_file_menu(c); })));
 
         const uint32_t lifted = e->pdrag.active && e->pdrag.moved ? e->pdrag.node : 0;
         auto           place = [&](uint32_t id, Entity<PanelView> &pv)
@@ -2508,7 +2580,8 @@ struct Overlay
         Editor *e = ed.get(cx);
         if (!e || (!e->file_menu_open && !e->ask.shown && !e->device_menu_open))
             return div();
-        Element layer = div().absolute().left(0).top(0).w(8000).h(8000);
+        const gp_size size = e->window_size;
+        Element layer = div().absolute().left(0).top(0).w(size.w).h(size.h);
         // gpuic offers the wheel to the innermost handler under the pointer before any scroller, and
         // the layer does not hide the handlers under it: the rack would zoom (or a knob turn) under
         // an open menu. The layer uses the wheel up; over a menu, the menu scrolls its rows itself.
@@ -2517,11 +2590,9 @@ struct Overlay
         {
             layer.bg(with_alpha(rgb(0x000000), 0.45f));
             layer.on_mouse_down([](Overlay &) { });
+            layer.flex_col().items_center().justify_center();
             layer.child(div()
-                    .absolute()
-                    .left((st::kWindowW - st::kAskW) / 2)
-                    .top((st::kWindowH - st::kAskH) / 2)
-                    .w(st::kAskW)
+                    .w(std::min(st::kAskW, size.w))
                     .h(st::kAskH)
                     .p(st::kAskPad)
                     .gap(10)
@@ -2548,18 +2619,14 @@ struct Overlay
         }
         layer.on_mouse_down([](Overlay &self, Ctx c) { self.ed.get(c)->close_overlays(c); });
         // a menu ends at the window's bottom (what does not fit scrolls inside it)
-        float avail = st::kWindowH - st::kToolbarH - st::kHintH;
-        if (RackView *r = e->rack.get(cx))
-            if (const gp_size vp = r->scroll.viewport(cx); vp.h > 0)
-                avail = vp.h; // the rack's height, as of the last layout (the window may be resized)
-        const float menu_h = std::max(120.f, avail + st::kHintH - 6);
+        const float menu_h = std::max(0.f, size.h - st::kToolbarH - 4);
         if (e->device_menu_open)
         { // the output devices, under the audio status
             Element menu = div()
                                .absolute()
-                               .left(st::kWindowW - 12 - st::kAudioW - st::kDeviceMenuW)
+                               .left(std::max(0.f, size.w - 12 - st::kAudioW - st::kDeviceMenuW))
                                .top(st::kToolbarH - 2)
-                               .w(st::kDeviceMenuW)
+                               .w(std::min(st::kDeviceMenuW, size.w))
                                .p(4)
                                .flex_col()
                                .rounded(5)
@@ -2635,6 +2702,9 @@ struct Overlay
                 rows.child(item("Forget the MIDI learn mappings  ("
                         + std::to_string(e->settings.learn.size()) + ")",
                     "", [](Overlay &self, Ctx c) { self.ed.get(c)->forget_learned(c); }));
+            if (size.w < st::kCompactToolbarW)
+                rows.child(div().px(10).py(6).border_top(1).border_color(st::kBorder)
+                        .child(label(e->audio_status() + e->midi_status(), 11, st::kSubtext)));
             menu.child(std::move(rows));
             layer.child(std::move(menu));
             return layer;
@@ -2642,9 +2712,9 @@ struct Overlay
         // the Open menu, under its button, no taller than the window: the examples scroll inside it
         Element menu = div()
                            .absolute()
-                           .left(st::kOpenX)
+                           .left(std::clamp(size.w - st::kFileMenuW, 0.f, st::kOpenX))
                            .top(st::kToolbarH - 2)
-                           .w(st::kFileMenuW)
+                           .w(std::min(st::kFileMenuW, size.w))
                            .max_h(menu_h)
                            .p(4)
                            .flex_col()
@@ -2698,6 +2768,15 @@ struct Root
             .flex_col()
             .bg(st::kBase)
             .text_color(st::kText)
+            .on_layout([](Root &self, Ctx cx, gp_size size)
+                {
+                    Editor *e = self.ed.get(cx);
+                    if (size.w == e->window_size.w && size.h == e->window_size.h)
+                        return;
+                    e->window_size = size;
+                    e->toolbar.update(cx, [](Toolbar &, Ctx c) { c.notify(); });
+                    e->overlay.update(cx, [](Overlay &, Ctx c) { c.notify(); });
+                })
             .child(e->toolbar.cached())
             .child(div()
                     .flex_row()
@@ -2746,7 +2825,8 @@ namespace
         const gp_point off = r->scroll.offset(cx);
         gp_size        vp = r->scroll.viewport(cx);
         if (vp.w <= 0 || vp.h <= 0) // before the first layout: the window minus the chrome
-            vp = { st::kWindowW - st::kBrowserW, st::kWindowH - st::kToolbarH - st::kHintH };
+            vp = { e.window_size.w - e.rack_origin().x,
+                e.window_size.h - st::kToolbarH - st::kHintH };
         const float z = e.zoom;
         return { off.x / z, off.y / z, vp.w / z, vp.h / z, z };
     }
@@ -2825,9 +2905,13 @@ std::string Editor::describe_item(uint32_t node, int item) const
     const int in_port = kHoverCable - item;
     if (in_port >= 0 && (size_t)in_port < d.ports.size())
         if (const Cable *c = engine.patch().cable_into(PortRef { node, (uint16_t)in_port }))
-            return "Cable  " + port_name(c->from) + "  ->  " + port_name(c->to)
-                + "      click to select (then Delete); right-click for its menu; drag a plug to "
-                  "move it";
+        {
+            const std::string route = port_name(c->from) + "  ->  " + port_name(c->to);
+            if (selected == c->to)
+                return "Selected the cable " + route + ".      Delete or Backspace removes it.";
+            return "Cable  " + route
+                + "      click to select (then Delete); right-click for its menu; drag a plug to move it";
+        }
     return { };
 }
 
@@ -2848,7 +2932,8 @@ Pt Editor::to_rack(Ctx cx, gp_point w)
 
 void Editor::set_zoom(Ctx cx, float z, gp_point about)
 {
-    z = std::clamp(z, kZoomMin, kZoomMax);
+    // Fit can show a large patch below the usual wheel limit. Zoom in smoothly from there.
+    z = std::clamp(z, std::min(zoom, kZoomMin), kZoomMax);
     if ((zoom - 1) * (z - 1) < 0)
         z = 1; // passing 100 % stops there
     RackView *rv = rack.get(cx);
@@ -2866,6 +2951,54 @@ void Editor::set_zoom(Ctx cx, float z, gp_point about)
               "%");
     hint_line.update(cx, [](HintLine &, Ctx c) { c.notify(); });
     refresh_rack(cx);
+}
+
+void Editor::toggle_browser(Ctx cx)
+{
+    const Browser *b = browser.get(cx);
+    if (browser_visible && b && b->search && cx.is_focused(Focus(b->search.focus(cx.app()))))
+        cx.blur();
+    browser_visible = !browser_visible;
+    browser.update(cx, [](Browser &, Ctx c) { c.notify(); });
+    rack.update(cx, [](RackView &, Ctx c) { c.notify(); });
+    hint_line.update(cx, [](HintLine &, Ctx c) { c.notify(); });
+}
+
+void Editor::fit_patch(Ctx cx)
+{
+    RackView *rv = rack.get(cx);
+    const gp_size view = rv->scroll.viewport(cx);
+    if (view.w <= 0 || view.h <= 0)
+        return;
+
+    const Patch &patch = engine.patch();
+    float left = 0, top = 0, right = 0, bottom = 0;
+    if (!patch.nodes().empty())
+    {
+        left = patch.nodes().front().x * kHp;
+        top = patch.nodes().front().y * kHp;
+        for (const Node &n : patch.nodes())
+        {
+            const Rect r = node_rect(*n.desc, n.x, n.y);
+            left = std::min(left, r.x);
+            top = std::min(top, r.y);
+            right = std::max(right, r.right());
+            bottom = std::max(bottom, r.bottom());
+        }
+        // The Bezier lies inside its control points, including the loop below the last row.
+        for (const Cable &c : patch.cables())
+        {
+            const auto curve = cable_curve(jack_center(*patch.find(c.from.node), c.from.port),
+                jack_center(*patch.find(c.to.node), c.to.port));
+            bottom = std::max({ bottom, curve[1].y, curve[2].y });
+        }
+    }
+    constexpr float margin = 12;
+    zoom = std::min({ 1.f, std::max(1.f, view.w - 2 * margin) / std::max(1.f, right - left),
+        std::max(1.f, view.h - 2 * margin) / std::max(1.f, bottom - top) });
+    rv->scroll.to(cx, std::max(0.f, left * zoom - margin), std::max(0.f, top * zoom - margin));
+    refresh_rack(cx);
+    say(cx, "Fit patch to the rack.");
 }
 
 // ---- sound
@@ -3548,6 +3681,8 @@ void Editor::tick(Ctx cx)
     {
         load_pct = load;
         toolbar.update(cx, [](Toolbar &, Ctx c) { c.notify(); });
+        if (device_menu_open && window_size.w < st::kCompactToolbarW)
+            overlay.update(cx, [](Overlay &, Ctx c) { c.notify(); });
     }
 }
 
@@ -3895,7 +4030,48 @@ void Editor::sync_cables(Ctx cx)
     }
     if (selected && !patch.cable_into(*selected))
         selected.reset();
+    update_cable_focus(cx);
     refresh_rack(cx);
+}
+
+void Editor::update_cable_focus(Ctx cx)
+{
+    const Patch &patch = engine.patch();
+    std::optional<PortRef> focus = selected;
+    if (hover_node && hover_item <= kHoverPort && hover_item > kHoverCable)
+    {
+        const PortRef port { hover_node, (uint16_t)(kHoverPort - hover_item) };
+        for (const Cable &c : patch.cables())
+            if (c.from == port || c.to == port)
+            {
+                focus = port;
+                break;
+            }
+    }
+    // Hover events also reach controls under a cable. Track the stroke and its plugs
+    // independently so leaving a plug for the same stroke keeps the route lit.
+    bool found_stroke = false;
+    for (auto it = cable_views.rbegin(); it != cable_views.rend(); ++it)
+    {
+        const CableView *view = it->second.get(cx);
+        if (view->plug_hovered)
+        {
+            focus = view->plug_hovered;
+            hover_text = describe_item(focus->node, kHoverPort - focus->port);
+            break;
+        }
+        if (!found_stroke && view->stroke_hovered)
+        {
+            focus = view->to;
+            hover_text = describe_item(focus->node, kHoverCable - focus->port);
+            found_stroke = true;
+        }
+    }
+    if (focus == cable_focus)
+        return;
+    cable_focus = focus;
+    for (auto &[key, view] : cable_views)
+        view.update(cx, [](CableView &, Ctx c) { c.notify(); });
 }
 
 void Editor::refresh_cables_of(Ctx cx, uint32_t node)
@@ -3984,7 +4160,6 @@ bool Editor::nudge(Ctx cx, int steps, bool fine)
 
 void Editor::select_cable(Ctx cx, std::optional<PortRef> to)
 {
-    const std::optional<PortRef> old = selected;
     if (to && selected_node)
     { // one or the other
         const uint32_t was = selected_node;
@@ -3993,17 +4168,9 @@ void Editor::select_cable(Ctx cx, std::optional<PortRef> to)
             it->second.update(cx, [](PanelView &, Ctx c) { c.notify(); });
     }
     selected = to && engine.patch().cable_into(*to) ? to : std::nullopt;
-    for (const auto &k : { old, selected })
-        if (k)
-            if (auto it = cable_views.find({ k->node, k->port }); it != cable_views.end())
-                it->second.update(cx, [](CableView &, Ctx v) { v.notify(); });
+    update_cable_focus(cx);
     if (selected)
-    {
-        const Cable *c = engine.patch().cable_into(*selected);
-        say(cx,
-            "Selected the cable " + port_name(c->from) + "  ->  " + port_name(c->to)
-                + ".      Delete or Backspace removes it.");
-    }
+        say(cx, describe_item(selected->node, kHoverCable - selected->port));
 }
 
 void Editor::delete_selected(Ctx cx)
@@ -4157,16 +4324,12 @@ void Editor::hover(Ctx cx, uint32_t node, int item, bool inside)
     {
         hover_node = node;
         hover_item = item;
-        hover_text = describe_item(node, item);
     }
     else if (hover_node == node
         && hover_item == item) // a late leave of something else changes nothing
-    {
         hover_node = 0;
-        hover_text.clear();
-    }
-    else
-        return;
+    hover_text = hover_node ? describe_item(hover_node, hover_item) : std::string();
+    update_cable_focus(cx);
     hint_line.update(cx, [](HintLine &, Ctx c) { c.notify(); });
 }
 
@@ -4549,6 +4712,14 @@ bool Editor::search_focused(Ctx cx)
         && cx.is_focused(Focus(r->label_input.focus(cx.app())));
 }
 
+void Editor::toggle_file_menu(Ctx cx)
+{
+    file_menu_open = !file_menu_open;
+    if (file_menu_open)
+        examples_scroll.to(cx, 0, 0);
+    overlay.update(cx, [](Overlay &, Ctx c) { c.notify(); });
+}
+
 void Editor::close_overlays(Ctx cx)
 {
     learn_cancel(cx); // Escape
@@ -4912,7 +5083,7 @@ Entity<Editor> open_rack(App app, const Options &opt, std::string *error)
             if (Editor *e = ed.get(cx))
             { // about the middle of the view
                 const RackViewport vp = rack_viewport(cx, ed);
-                const gp_point     o = rack_origin();
+                const gp_point     o = e->rack_origin();
                 e->set_zoom(cx, 1, { o.x + vp.w * vp.zoom / 2, o.y + vp.h * vp.zoom / 2 });
             }
         });
@@ -4999,6 +5170,7 @@ Entity<Editor> open_rack(App app, const Options &opt, std::string *error)
     w.title = "PulseRack";
     w.width = opt.width > 0 ? opt.width : (int)st::kWindowW;
     w.height = opt.height > 0 ? opt.height : (int)st::kWindowH;
+    e->window_size = { (float)w.width, (float)w.height };
     w.parent = opt.parent;
     e->window = app.open_window(w, root);
     if (e->hosted)
@@ -5040,7 +5212,10 @@ Entity<Editor> open_rack(App app, const Options &opt, std::string *error)
     return ed;
 }
 
-gp_point rack_origin() { return { st::kBrowserW, st::kToolbarH }; }
+gp_point Editor::rack_origin() const
+{
+    return { browser_visible ? st::kBrowserW : 0.f, st::kToolbarH };
+}
 
 RackViewport rack_viewport(Ctx cx, Entity<Editor> ed)
 {
@@ -5055,7 +5230,7 @@ gp_point control_center(Ctx cx, Entity<Editor> ed, uint32_t node, int param)
     if (!n)
         return { -1, -1 };
     const RackViewport vp = viewport_of(cx, *e);
-    const gp_point     o = rack_origin();
+    const gp_point     o = e->rack_origin();
     // a point of the panel (in panel pixels) on the screen
     auto at = [&](float x, float y) -> gp_point
     {
@@ -5066,7 +5241,8 @@ gp_point control_center(Ctx cx, Entity<Editor> ed, uint32_t node, int param)
     const PanelLayout &L = panel_layout(*n->desc);
     const Rect        &r = L.params[(size_t)param];
     if (n->desc->params[(size_t)param].control == Control::Knob)
-        return at(kPanelBorder + r.x + r.w / 2, kPanelBorder + r.y + kKnobSize / 2);
+        return at(kPanelBorder + r.x + r.w / 2, kPanelBorder + r.y + kKnobSize / 2
+            + (operator_pair_knob(*n->desc, n->desc->params[(size_t)param]) ? kOperatorHeaderH : 0));
     return at(kPanelBorder + r.x + r.w / 2, kPanelBorder + r.y + r.h / 2);
 }
 
@@ -5078,7 +5254,7 @@ gp_point control_menu_item(Ctx cx, Entity<Editor> ed, int index)
     if (!n)
         return { -1, -1 };
     const RackViewport vp = viewport_of(cx, *e);
-    const gp_point     o = rack_origin();
+    const gp_point     o = e->rack_origin();
     const Pt           at = control_menu_origin(*n, rv->ctrl_param);
     return { o.x + (at.x + kControlMenuW / 2 - vp.x) * vp.zoom,
         o.y + (at.y + kControlMenuPad + ((float)index + 0.5f) * kMenuItemH - vp.y) * vp.zoom };
@@ -5092,7 +5268,7 @@ gp_point panel_menu_item(Ctx cx, Entity<Editor> ed, int index)
     if (!n)
         return { -1, -1 };
     const RackViewport vp = viewport_of(cx, *e);
-    const gp_point     o = rack_origin();
+    const gp_point     o = e->rack_origin();
     return { o.x + (n->x * kHp + kPanelMenuDx + kPanelMenuW / 2 - vp.x) * vp.zoom,
         o.y
             + (n->y * kHp + kPanelMenuDy + kControlMenuPad + ((float)index + 0.5f) * kMenuItemH
@@ -5121,7 +5297,7 @@ gp_point device_box_center(Ctx cx, Entity<Editor> ed, uint32_t node)
     if (!n || !has_device(*n->desc))
         return { -1, -1 };
     const RackViewport vp = viewport_of(cx, *e);
-    const gp_point     o = rack_origin();
+    const gp_point     o = e->rack_origin();
     const Rect         r = device_box(panel_layout(*n->desc));
     return { o.x + (n->x * kHp + kPanelBorder + r.x + r.w / 2 - vp.x) * vp.zoom,
         o.y + (n->y * kHp + kPanelBorder + r.y + r.h / 2 - vp.y) * vp.zoom };
@@ -5134,7 +5310,7 @@ gp_point sample_box_center(Ctx cx, Entity<Editor> ed, uint32_t node)
     if (!n || !takes_sample(*n->desc))
         return { -1, -1 };
     const RackViewport vp = viewport_of(cx, *e);
-    const gp_point     o = rack_origin();
+    const gp_point     o = e->rack_origin();
     const Rect         r = device_box(panel_layout(*n->desc));
     return { o.x + (n->x * kHp + kPanelBorder + r.x + r.w / 2 - vp.x) * vp.zoom,
         o.y + (n->y * kHp + kPanelBorder + r.y + r.h / 2 - vp.y) * vp.zoom };
@@ -5148,7 +5324,7 @@ gp_point device_menu_item(Ctx cx, Entity<Editor> ed, int index)
     if (!n || index < 0 || (size_t)index > e->device_menu_names(n->id).size())
         return { -1, -1 };
     const RackViewport vp = viewport_of(cx, *e);
-    const gp_point     o = rack_origin();
+    const gp_point     o = e->rack_origin();
     const Pt           at = device_menu_origin(*n);
     return { o.x + (at.x + kDeviceMenuW / 2 - vp.x) * vp.zoom,
         o.y + (at.y + kControlMenuPad + ((float)index + 0.5f) * kMenuItemH - vp.y) * vp.zoom };
@@ -5161,7 +5337,7 @@ gp_point port_center(Ctx cx, Entity<Editor> ed, uint32_t node, size_t port)
     if (!n || port >= n->desc->ports.size())
         return { -1, -1 };
     const RackViewport vp = viewport_of(cx, *e);
-    const gp_point     o = rack_origin();
+    const gp_point     o = e->rack_origin();
     const Rect        &j = panel_layout(*n->desc).jacks[port];
     return { o.x + (n->x * kHp - vp.x + kPanelBorder + j.x + j.w / 2) * vp.zoom,
         o.y + (n->y * kHp - vp.y + kPanelBorder + j.y + j.h / 2) * vp.zoom };

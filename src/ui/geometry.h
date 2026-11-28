@@ -109,7 +109,7 @@ int resolve_overlaps(Patch &p);
 // ---- the sequencer's step grid (milestone 6): between its controls and its jacks, 16 columns of
 // one page of the 64 steps; above them, the page tabs. In the panel's pixels.
 inline constexpr int   kGridColumns = 16, kGridPages = 4;
-inline constexpr float kGridTabH = 16, kGridNoteH = 92, kGridPadH = 13;
+inline constexpr float kGridTabH = 16, kGridNoteH = 92, kGridPadH = 13, kGridLabelW = 29;
 inline constexpr int   kGridNoteLow = 24, kGridNoteHigh = 108; // the note bar's range: C1 .. C8
 inline constexpr float kGridPxPerSemitone = 4;                 // a drag on a note bar
 struct StepGrid
